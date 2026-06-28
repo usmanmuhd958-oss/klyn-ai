@@ -1,18 +1,12 @@
-import { AgentExecutor, AgentResult } from "../executor/AgentExecutor";
-import { AgentMemory } from "../memory/AgentMemory";
+import { AgentExecutor } from "../executor/AgentExecutor";
+import { SupabaseAgentMemory } from "../memory/SupabaseAgentMemory";
 import { AgentTask, AgentType } from "../types/agent.types";
-
-export interface RuntimeResult {
-  taskId: string;
-  success: boolean;
-  results: AgentResult[];
-}
 
 export class AgentRuntime {
   private executor = new AgentExecutor();
-  private memory = new AgentMemory();
+  private memory = new SupabaseAgentMemory();
 
-  async run(task: AgentTask): Promise<RuntimeResult> {
+  async run(task: AgentTask) {
     const pipeline: AgentType[] = [
       "planner",
       "research",
@@ -23,25 +17,27 @@ export class AgentRuntime {
       "docs",
     ];
 
-    const results: AgentResult[] = [];
+    const results: any[] = [];
 
     for (const agent of pipeline) {
+      // 1. EXECUTE AGENT
       const result = await this.executor.execute(agent, task);
 
-      // save each step into memory (local for now)
-      await this.memory.save(task.id, {
+      // 2. AUTO-PERSIST (NO MANUAL CALL ANYMORE)
+      await this.memory.saveExecution({
+        taskId: task.id,
         agent,
         result,
-        timestamp: Date.now(),
       });
 
       results.push(result);
 
-      // STOP execution if failure happens
+      // 3. FAIL FAST CONTROL (ENTERPRISE SAFETY)
       if (!result.success) {
         return {
           taskId: task.id,
           success: false,
+          failedAt: agent,
           results,
         };
       }
