@@ -1,0 +1,43 @@
+{
+  "id": 1,
+  "type": "build",
+  "payload": "login system",
+  "status": "done",
+  "ts": 123
+}
+{
+  "id": "f74efd42",
+  "type": "plan",
+  "payload": "design a scalable authentication system",
+  "status": "pending",
+  "node": "local"
+}
+{
+  "id": "0de85d3f",
+  "type": "plan",
+  "payload": "cf278d::Plan for: Build high-performance real-time analytics",
+  "status": "pending",
+  "node": "local"
+}
+{
+  "id": "9798afbc",
+  "type": "plan",
+  "payload": "7a6ca6::Plan for: Design a distributed notification microservice",
+  "status": "pending",
+  "node": "local"
+}
+{
+  "id": "2547b11a",
+  "type": "plan",
+  "payload": "413b3e::Plan for: Design a distributed notification microservice",
+  "status": "pending",
+  "node": "local"
+}
+{
+  "id": "0df7bfd2",
+  "type": "plan",
+  "payload": "b10c52::Plan for: Design a distributed notification microservice",
+  "status": "pending",
+  "node": "local"
+}
+{"id":,"status":"done"}

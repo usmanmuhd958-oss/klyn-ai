@@ -1,0 +1,6 @@
+{
+  "module": "KLYN Auth",
+  "tier": "Enterprise Gateway",
+  "status": "Architected",
+  "components": ["session_manager", "token_validator", "secure_vault"]
+}
