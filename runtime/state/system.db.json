@@ -1,0 +1,9 @@
+{
+  "kernel": "running",
+  "mode": "microkernel",
+  "jobs": {
+    "active": null,
+    "completed": [],
+    "failed": []
+  }
+}
