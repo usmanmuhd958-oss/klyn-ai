@@ -1,0 +1,191 @@
+.
+├── .git
+│   ├── HEAD
+│   ├── config
+│   ├── description
+│   ├── hooks
+│   │   ├── applypatch-msg.sample
+│   │   ├── commit-msg.sample
+│   │   ├── fsmonitor-watchman.sample
+│   │   ├── post-update.sample
+│   │   ├── pre-applypatch.sample
+│   │   ├── pre-commit.sample
+│   │   ├── pre-merge-commit.sample
+│   │   ├── pre-push.sample
+│   │   ├── pre-rebase.sample
+│   │   ├── pre-receive.sample
+│   │   ├── prepare-commit-msg.sample
+│   │   ├── push-to-checkout.sample
+│   │   ├── sendemail-validate.sample
+│   │   └── update.sample
+│   ├── index
+│   ├── info
+│   │   └── exclude
+│   ├── logs
+│   │   ├── HEAD
+│   │   └── refs
+│   │       ├── heads
+│   │       └── remotes
+│   ├── objects
+│   │   ├── info
+│   │   └── pack
+│   │       ├── pack-ab75f3797dc6c60b9450bae96d0d6fecb93af849.idx
+│   │       ├── pack-ab75f3797dc6c60b9450bae96d0d6fecb93af849.pack
+│   │       └── pack-ab75f3797dc6c60b9450bae96d0d6fecb93af849.rev
+│   ├── packed-refs
+│   └── refs
+│       ├── heads
+│       │   └── main
+│       ├── remotes
+│       │   └── origin
+│       └── tags
+├── .gitignore
+├── LICENSE
+├── README.md
+├── agents
+│   ├── coder.sh
+│   ├── executor.sh
+│   ├── lib
+│   │   └── agent-core.sh
+│   ├── planner.sh
+│   └── reviewer.sh
+├── ai-self-rewrite.log
+├── apps
+│   ├── api
+│   ├── docs
+│   └── web
+├── boot
+│   └── kernel_boot.sh
+├── boot.sh
+├── core
+│   ├── event-bus.sh
+│   ├── pipeline.sh
+│   └── router.sh
+├── dev-klyn.sh
+├── index.ts
+├── infrastructure
+│   ├── docker
+│   ├── kubernetes
+│   └── terraform
+├── kernel
+│   ├── daemon.sh
+│   ├── kernel.sh
+│   └── types.sh
+├── klyn-ai-os
+│   ├── .env
+│   ├── LICENSE
+│   ├── README.md
+│   ├── apps
+│   │   ├── api
+│   │   ├── docs
+│   │   └── web
+│   ├── infrastructure
+│   │   ├── docker
+│   │   ├── kubernetes
+│   │   ├── monitoring
+│   │   └── terraform
+│   ├── kernel
+│   │   └── daemon.sh
+│   ├── klyn-ai-self-rewrite.sh
+│   ├── packages
+│   │   ├── agent-runtime
+│   │   │   └── src
+│   │   ├── ai-gateway
+│   │   │   └── src
+│   │   ├── ai-orchestrator
+│   │   │   └── src
+│   │   ├── auth
+│   │   │   └── src
+│   │   ├── database
+│   │   │   └── src
+│   │   ├── observability
+│   │   │   └── src
+│   │   ├── shared
+│   │   │   └── src
+│   │   └── workflow-engine
+│   │       └── src
+│   ├── services
+│   │   ├── ai-workers
+│   │   ├── embedding-workers
+│   │   └── indexing-workers
+│   └── tests
+│       ├── e2e
+│       ├── integration
+│       └── unit
+├── klyn-ai-self-rewrite.sh
+├── klyn-dev.sh
+├── klyn-enterprise.sh
+├── klyn-gen.sh
+├── klyn-mf-gen.sh
+├── klyn-nl-gen.sh
+├── klyn-self-rewrite.sh
+├── klyn.sh
+├── logs
+├── output
+│   ├── auto_1782792198.sh
+│   ├── auto_1782793388.sh
+│   ├── build_1782811084.sh
+│   ├── build_1782811415.sh
+│   ├── build_1782812049.txt
+│   ├── code_1782810547.sh
+│   ├── code_1782812414.sh
+│   ├── generated_1782777304.sh
+│   └── login_system_contract.json
+├── packages
+│   ├── agent-runtime
+│   │   └── src
+│   │       ├── executor
+│   │       ├── memory
+│   │       ├── runtime
+│   │       └── types
+│   ├── ai-gateway
+│   │   └── src
+│   │       ├── AIModelRouter.ts
+│   │       ├── gateway
+│   │       ├── providers
+│   │       └── types
+│   ├── ai-orchestrator
+│   │   └── src
+│   │       ├── AIOrchestrator.ts
+│   │       ├── ExecutionPipeline.ts
+│   │       ├── KlynAIKernel.ts
+│   │       ├── KlynOS.ts
+│   │       └── SelfImprovementEngine.ts
+│   ├── shared
+│   │   └── src
+│   └── workflow-engine
+│       └── src
+│           └── WorkflowEngine.ts
+├── runtime
+│   ├── daemon.pid
+│   ├── events
+│   │   ├── events.db
+│   │   ├── latest.json
+│   │   └── latest_event.json
+│   ├── events.log
+│   ├── health.json
+│   ├── logs
+│   │   ├── engine.log
+│   │   ├── events.log
+│   │   ├── kernel.log
+│   │   ├── recovery.log
+│   │   └── router.log
+│   ├── memory
+│   ├── queue
+│   │   └── jobs.db
+│   ├── queue.db
+│   ├── state
+│   │   └── state.db
+│   └── state.db
+├── self-rewrite.log
+├── services
+│   └── ai-workers
+├── setup-klyn-os.sh
+├── snapshot.txt
+├── tests
+│   ├── e2e
+│   ├── integration
+│   └── unit
+└── tsconfig.json
+
+98 directories, 91 files
