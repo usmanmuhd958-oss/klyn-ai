@@ -1,6 +1,5 @@
-node2|ALIVE|0|1782861395
-node1|ALIVE|0|1782861395
-node3|ALIVE|0|1782861397
-node1|ALIVE|0|1782862144
-node2|ALIVE|0|1782862144
-node3|ALIVE|0|1782862145
+{
+  "node": "node-3",
+  "status": "alive",
+  "last_seen": "2026-07-02T13:27:56+01:00"
+}
