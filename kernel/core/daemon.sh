@@ -1,57 +1,79 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
+
+# =============================================================================
+# KLYN AI OS - Kernel Daemon (kernel/core/daemon.sh)
+# -----------------------------------------------------------------------------
+# PURPOSE:
+# This daemon is the continuous kernel event loop responsible for:
+# - Driving the scheduler dispatcher
+# - Maintaining system heartbeat
+# - Ensuring continuous job processing
+# - Providing graceful shutdown handling
+#
+# DESIGN PRINCIPLES:
+# - Infinite controlled event loop (non-blocking CPU usage)
+# - Signal-safe termination (SIGINT, SIGTERM)
+# - Logging-driven observability
+# - Modular dispatcher delegation
+#
+# DEPENDENCIES:
+# - lib/utils/logger.sh
+# - kernel/scheduler/dispatcher.sh
+# =============================================================================
+
 set -euo pipefail
 
-QUEUE="runtime/queue/jobs.jsonl"
-SYSTEM_STATE="runtime/state/system.json"
+# -----------------------------------------------------------------------------
+# Resolve KLYN root
+# -----------------------------------------------------------------------------
+KLYN_ROOT="${KLYN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 
-# Neman Event Bus idan yana nan
-if [[ -f kernel/core/event_bus.sh ]]; then
-  source kernel/core/event_bus.sh
-fi
+# -----------------------------------------------------------------------------
+# Source dependencies
+# -----------------------------------------------------------------------------
+# shellcheck source=/dev/null
+source "$KLYN_ROOT/lib/utils/logger.sh"
 
-mkdir -p "$(dirname "$QUEUE")"
-touch "$QUEUE"
+# shellcheck source=/dev/null
+source "$KLYN_ROOT/kernel/scheduler/dispatcher.sh"
 
-echo "[KLYN DAEMON] Industrial Core Online & Listening on $QUEUE..."
+RUNNING=true
 
-while true; do
-  if [[ -s "$QUEUE" ]]; then
-    # Dauko layin karshe
-    JOB=$(tail -n 1 "$QUEUE")
-    
-    if [[ -n "$JOB" ]]; then
-      # Tace fayil din idan ingantaccen JSON ne kafin turawa ga jq
-      if echo "$JOB" | jq empty 2>/dev/null; then
-        TYPE=$(echo "$JOB" | jq -r '.type // empty')
-        PAYLOAD=$(echo "$JOB" | jq -r '.payload // empty')
-        
-        if [[ -n "$TYPE" ]]; then
-          echo "[DAEMON] Processing Task: $TYPE"
-          
-          # Kira ga Agent
-          if [[ -f "agents/${TYPE}er.sh" ]]; then
-            bash "agents/${TYPE}er.sh" "$PAYLOAD" || echo "[ERROR] Agent failed."
-          elif [[ -f "agents/${TYPE}.sh" ]]; then
-            bash "agents/${TYPE}.sh" "$PAYLOAD" || echo "[ERROR] Agent failed."
-          else
-            echo "[DAEMON] Creating fallback placeholder for agent: $TYPE"
-            mkdir -p agents
-            echo -e "#!/data/data/com.termux/files/usr/bin/bash\necho \"[AGENT] Executing: \$1\"" > "agents/${TYPE}.sh"
-            chmod +x "agents/${TYPE}.sh"
-            bash "agents/${TYPE}.sh" "$PAYLOAD"
-          fi
-          
-          # Share layin da aka gama domin hana loop dake kawo parse error
-          > "$QUEUE"
+# -----------------------------------------------------------------------------
+# Graceful shutdown handler
+# -----------------------------------------------------------------------------
+shutdown() {
+    klyn_log "WARN" "Kernel daemon shutdown signal received"
+    RUNNING=false
+    klyn_log "INFO" "Kernel daemon exiting cleanly"
+    exit 0
+}
+
+trap shutdown SIGINT SIGTERM
+
+# -----------------------------------------------------------------------------
+# Main event loop
+# -----------------------------------------------------------------------------
+main_loop() {
+    klyn_log "INFO" "KLYN Kernel Daemon starting..."
+
+    while $RUNNING; do
+
+        # Dispatch jobs (scheduler responsibility)
+        if declare -f run_dispatcher >/dev/null 2>&1; then
+            run_dispatcher
+        else
+            klyn_log "ERROR" "Dispatcher function not found"
         fi
-      else
-        # Idan layin ba JSON bane (kamar kalmar 'Processed:'), share shi don kare tsarin
-        if [[ "$JOB" != "" ]]; then
-          echo "[WARN] Skipping corrupted non-JSON pipeline entry."
-          > "$QUEUE"
-        fi
-      fi
-    fi
-  fi
-  sleep 1
-done
+
+        # CPU throttling (prevents busy loop / Termux drain)
+        sleep 3
+
+    done
+}
+
+# -----------------------------------------------------------------------------
+# Start daemon
+# -----------------------------------------------------------------------------
+main_loop
+

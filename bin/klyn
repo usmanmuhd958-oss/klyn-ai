@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
+KLYN_ROOT="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
+source "$KLYN_ROOT/lib/utils/logger.sh"
+PID_DIR="$KLYN_ROOT/runtime/pids"
+mkdir -p "$PID_DIR"
+
+print_help() {
+    cat <<HELPMENU
+
+KLYN AI OS - Command Interface
+
+USAGE: klyn <command>
+COMMANDS: start, stop, status, logs, help
+HELPMENU
+}
+
+case "${1:-help}" in
+    start)  bash "$KLYN_ROOT/kernel/core/bootstrap.sh" & klyn_log "INFO" "Kernel bootstrap launched" ;;
+    stop)   klyn_log "WARN" "Stopping system..." ;;
+    status) echo "Active Processes: $(ls -1 "$PID_DIR" 2>/dev/null | wc -l)" ;;
+    logs)   tail -n 50 "$KLYN_ROOT/runtime/logs/system.log" ;;
+    *)      print_help ;;
+esac
