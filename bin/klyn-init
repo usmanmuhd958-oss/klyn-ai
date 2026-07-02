@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+KLYN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+source "$KLYN_ROOT/lib/core/lifecycle.sh"
+source "$KLYN_ROOT/lib/utils/logger.sh"
+
+klyn_log "INFO" "Initializing KLYN AI OS..."
+
+set_state "BOOTING"
+klyn_log "INFO" "State set to BOOTING"
+
+set_state "INITIALIZING"
+klyn_log "INFO" "State set to INITIALIZING"
+
+# Simulate system setup
+mkdir -p runtime/logs runtime/pids runtime/state runtime/metrics
+
+set_state "READY"
+klyn_log "INFO" "System is READY"
+

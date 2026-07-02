@@ -1,58 +1,29 @@
 #!/data/data/com.termux/files/usr/bin/bash
+set +u   # prevent crash on missing args (important for workers)
 
-ID=$1
-JOBS="runtime/jobs.jsonl"
-LOCKDIR="runtime/locks"
-LOG="runtime/system.log"
+source core/logger.sh 2>/dev/null || true
 
-mkdir -p "$LOCKDIR"
+JOB_ID="${1:-}"
+PAYLOAD="${2:-}"
 
-log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [WORKER-$ID] [$1] $2" >> "$LOG"
+if [[ -z "$JOB_ID" ]]; then
+  echo "[WORKER][ERROR] Missing JOB_ID"
+  exit 1
+fi
+
+log "INFO" "WORKER" "Started job ID=$JOB_ID"
+
+# Simulated safe execution block
+{
+  echo "[WORKER] Processing payload: ${PAYLOAD:-empty}"
+
+  # TODO: replace with real AI / Supabase / execution logic
+  sleep 2
+
+} || {
+  log "ERROR" "WORKER" "Job failed ID=$JOB_ID"
+  exit 1
 }
 
-claim_job() {
-    TMP="runtime/tmp.$$"
-
-    while true; do
-        FOUND=0
-        > "$TMP"
-
-        while IFS= read -r line; do
-            [ -z "$line" ] && continue
-
-            STATUS=$(echo "$line" | cut -d'|' -f1)
-            AGENT=$(echo "$line" | cut -d'|' -f2)
-            TASK=$(echo "$line" | cut -d'|' -f3)
-            JOBID=$(echo "$line" | cut -d'|' -f4)
-
-            if [ "$STATUS" = "QUEUED" ] && [ ! -f "$LOCKDIR/$JOBID.lock" ]; then
-
-                touch "$LOCKDIR/$JOBID.lock"
-
-                log "CLAIM" "Job $JOBID claimed → $AGENT"
-
-                # Execute agent
-                if [ -f "agents/${AGENT}.sh" ]; then
-                    bash "agents/${AGENT}.sh" "$TASK" >/dev/null 2>&1
-                    log "DONE" "$AGENT completed $TASK"
-                else
-                    log "ERROR" "Missing agent $AGENT"
-                fi
-
-                echo "DONE|$AGENT|$TASK|$JOBID" >> "$TMP"
-                FOUND=1
-            else
-                echo "$line" >> "$TMP"
-            fi
-
-        done < "$JOBS"
-
-        mv "$TMP" "$JOBS"
-
-        # Idle sleep
-        sleep 1
-    done
-}
-
-claim_job
+log "SUCCESS" "WORKER" "Completed job ID=$JOB_ID"
+exit 0

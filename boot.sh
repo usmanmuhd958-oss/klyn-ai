@@ -1,78 +1,87 @@
-#!/bin/bash
+#!/data/data/com.termux/files/usr/bin/bash
 set -euo pipefail
 
-BASE_DIR="$(pwd)"
-
-SCHEDULER="core/scheduler.sh"
-RECOVERY="core/recovery.sh"
-
-LOG_FILE="runtime/logs/events.log"
-PID_DIR="runtime/lock/pids"
-LOCK_DIR="runtime/lock"
-
-mkdir -p runtime/logs runtime/lock runtime/lock/pids runtime/ledger runtime/cluster
-
-echo "[BOOT] Initializing KLYN AI OS v6..."
-
 # ================================
-# 1. CLEAN STALE STATE
+# KLYN OS v6 - ENTERPRISE BOOT KERNEL
 # ================================
-echo "[BOOT] Cleaning stale runtime state..."
 
-rm -f runtime/lock/*.lock 2>/dev/null || true
-rm -f runtime/lock/pids/*.pid 2>/dev/null || true
-rm -f runtime/lock/pids/*.ts 2>/dev/null || true
-rm -f runtime/lock/pids/*.status 2>/dev/null || true
+PROJECT_DIR="$HOME/klyn-ai-os"
+RUNTIME_DIR="$PROJECT_DIR/runtime"
+LOG_DIR="$PROJECT_DIR/logs"
 
-touch "$LOG_FILE"
+PID_SCHED="$RUNTIME_DIR/scheduler.pid"
+PID_BOOT="$RUNTIME_DIR/boot.pid"
+SCHED_LOG="$LOG_DIR/scheduler.log"
+BOOT_LOG="$LOG_DIR/boot.log"
 
-# ================================
-# 2. START CORE PROCESSES
-# ================================
-echo "[BOOT] Launching kernel subsystems..."
+log() {
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] [BOOT] [$1] $2"
+}
 
-# scheduler
-bash "$SCHEDULER" >> "$LOG_FILE" 2>&1 &
-SCHEDULER_PID=$!
+cleanup() {
+  log "SHUTDOWN" "Stopping all KLYN OS processes..."
 
-# recovery
-bash "$RECOVERY" >> "$LOG_FILE" 2>&1 &
-RECOVERY_PID=$!
-
-echo "[BOOT] Scheduler PID: $SCHEDULER_PID"
-echo "[BOOT] Recovery PID : $RECOVERY_PID"
-
-# ================================
-# 3. GRACEFUL SHUTDOWN HANDLER
-# ================================
-shutdown() {
-  echo ""
-  echo "[BOOT] Shutdown signal received. Cleaning up..."
-
-  if kill -0 "$SCHEDULER_PID" 2>/dev/null; then
-    kill "$SCHEDULER_PID" 2>/dev/null || true
+  if [[ -f "$PID_SCHED" ]]; then
+    kill "$(cat "$PID_SCHED")" 2>/dev/null || true
+    rm -f "$PID_SCHED"
   fi
 
-  if kill -0 "$RECOVERY_PID" 2>/dev/null; then
-    kill "$RECOVERY_PID" 2>/dev/null || true
-  fi
-
-  rm -f runtime/lock/*.lock 2>/dev/null || true
-  rm -f runtime/lock/pids/*.pid 2>/dev/null || true
-  rm -f runtime/lock/pids/*.ts 2>/dev/null || true
-  rm -f runtime/lock/pids/*.status 2>/dev/null || true
-
-  echo "[BOOT] KLYN OS v6 shutdown complete."
+  rm -f "$PID_BOOT"
+  log "OK" "Shutdown complete"
   exit 0
 }
 
-trap shutdown SIGINT SIGTERM
+trap cleanup SIGINT SIGTERM
+
+cd "$PROJECT_DIR"
+mkdir -p runtime logs kernel
+
+echo $$ > "$PID_BOOT"
+
+log "START" "KLYN OS v6 initializing..."
+
+# Validate core files
+if [[ ! -f "kernel/scheduler.sh" ]]; then
+  log "ERROR" "Missing kernel/scheduler.sh"
+  exit 1
+fi
+
+chmod +x kernel/scheduler.sh || true
+
+# Prevent duplicate scheduler
+if [[ -f "$PID_SCHED" ]] && kill -0 "$(cat "$PID_SCHED")" 2>/dev/null; then
+  log "WARN" "Scheduler already running"
+else
+  log "SPAWN" "Launching scheduler..."
+
+  nohup ./kernel/scheduler.sh >> "$SCHED_LOG" 2>&1 &
+  echo $! > "$PID_SCHED"
+fi
+
+log "OK" "System online"
 
 # ================================
-# 4. KEEP ALIVE LOOP
+# WATCHDOG LOOP (SELF-HEALING KERNEL)
 # ================================
-echo "[BOOT] System online. Press Ctrl+C to stop."
+FAIL_COUNT=0
 
 while true; do
+
+  if [[ ! -f "$PID_SCHED" ]] || ! kill -0 "$(cat "$PID_SCHED")" 2>/dev/null; then
+    log "FAIL" "Scheduler crashed"
+
+    ((FAIL_COUNT++))
+
+    if [[ "$FAIL_COUNT" -ge 3 ]]; then
+      log "CRITICAL" "Too many failures — stopping system"
+      exit 1
+    fi
+
+    log "RECOVERY" "Restarting scheduler..."
+
+    nohup ./kernel/scheduler.sh >> "$SCHED_LOG" 2>&1 &
+    echo $! > "$PID_SCHED"
+  fi
+
   sleep 5
 done
