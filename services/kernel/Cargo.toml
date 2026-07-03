@@ -1,0 +1,33 @@
+[package]
+name = "klyn-kernel"
+version = "6.0.0"
+edition = "2021"
+authors = ["KLYN AI OS Contributors"]
+license = "Apache-2.0"
+
+[dependencies]
+tokio = { workspace = true }
+tonic = { workspace = true }
+prost = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+bytes = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+dashmap = { workspace = true }
+parking_lot = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+rocksdb = "0.21"
+sha2 = "0.10"
+rand = "0.8"
+futures = "0.3"
+pin-project = "1.1"
+
+[dev-dependencies]
+tempfile = "3.8"
+proptest = "1.3"
