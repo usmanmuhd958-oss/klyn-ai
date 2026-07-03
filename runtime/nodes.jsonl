@@ -1,5 +1,15 @@
 {
+  "node": "node-2",
+  "status": "alive",
+  "last_seen": "2026-07-03T00:08:26+01:00"
+}
+{
   "node": "node-1",
   "status": "alive",
-  "last_seen": "2026-07-02T14:01:53+01:00"
+  "last_seen": "2026-07-03T00:08:26+01:00"
+}
+{
+  "node": "node-3",
+  "status": "alive",
+  "last_seen": "2026-07-03T00:08:26+01:00"
 }
