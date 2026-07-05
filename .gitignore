@@ -1,12 +1,7 @@
-.klyn_kernel.secret
-.run/
-logs/
-*.log
-__pycache__/
-node_modules/
 runtime/
+tmp/
+archive/
 *.pid
-*.json
-*.jsonl
+*.log
 .env
-klyn-ai-os/.env
+.env.*

@@ -1,17 +1,9 @@
-#!/data/data/com.termux/files/usr/bin/bash
-
-echo "[WATCHDOG] active"
+#!/usr/bin/env bash
 
 while true; do
-
-  echo "{\"time\":$(date +%s),\"status\":\"alive\"}" \
-    > runtime/state/heartbeat.json
-
-  # restart kernel if scheduler dies
-  if ! pgrep -f scheduler.sh >/dev/null; then
-    echo "[WATCHDOG] scheduler crashed → restarting"
+  if ! pgrep -f "kernel/scheduler.sh" >/dev/null; then
+    echo "[WATCHDOG] restarting scheduler..."
     bash kernel/scheduler.sh &
   fi
-
   sleep 5
 done

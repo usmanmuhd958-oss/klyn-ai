@@ -1,36 +1,12 @@
 #!/usr/bin/env bash
+set -Eeuo pipefail
 
-# =============================================================================
-# KLYN AI OS - CLI Router (lib/core/cli_router.sh)
-# -----------------------------------------------------------------------------
-# PURPOSE:
-# This module provides a centralized command routing system for KLYN AI OS.
-# It decouples CLI parsing from execution logic, enabling scalable command
-# registration and modular expansion.
-#
-# DESIGN GOALS:
-# - Centralized command dispatch (single routing authority)
-# - Clean separation between CLI and business logic
-# - Extensible case-based command registry
-# - Integrated logging for observability
-# - Graceful handling of unknown commands
-#
-# DEPENDENCIES:
-# - lib/utils/logger.sh
-# =============================================================================
+export KLYN_ROOT="${KLYN_ROOT:-$HOME/klyn-ai-os}"
 
-set -euo pipefail
-
-KLYN_ROOT="${KLYN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
-
-# shellcheck source=/dev/null
 source "$KLYN_ROOT/lib/utils/logger.sh"
 
-# -----------------------------------------------------------------------------
-# COMMAND REGISTRY (single source of truth)
-# -----------------------------------------------------------------------------
 print_help() {
-    cat <<EOF
+cat <<HELP
 
 KLYN AI OS - Command Reference
 
@@ -48,3 +24,14 @@ SYSTEM INFO:
   CLI Router Version: v1.0
   Architecture: Modular Kernel Dispatch Layer
 
+HELP
+}
+
+route() {
+    local cmd="${1:-help}"
+
+    case "$cmd" in
+        help) print_help ;;
+        *) echo "Unknown command: $cmd" ;;
+    esac
+}

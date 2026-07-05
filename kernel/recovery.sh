@@ -1,5 +1,11 @@
-#!/data/data/com.termux/files/usr/bin/bash
-recover_state() {
-  echo "[DEBUG] Recovery: Scanning system state logs for self-healing..."
-  touch runtime/state/system.state
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+recover_runtime() {
+    mkdir -p runtime/{logs,pids,state}
+
+    find runtime/pids \
+        -name '*.pid' \
+        -type f \
+        -delete
 }

@@ -1,1 +1,8 @@
-{"status": "running", "last_heartbeat": 1782825482}
+{
+  "status":"healthy",
+  "score":"100",
+  "workers":"4",
+  "queue":"0",
+  "uptime":" 05:59:57 up  1:02,  load average: 32.60, 33.26, 31.70",
+  "time":"2026-07-05T05:59:57+01:00"
+}

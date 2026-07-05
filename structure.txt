@@ -1,0 +1,417 @@
+.
+├── LICENSE
+├── README.md
+├── agents
+│   ├── coder.sh
+│   ├── core
+│   ├── executor.sh
+│   ├── lib
+│   │   └── agent-core.sh
+│   ├── planner.sh
+│   ├── reviewer.sh
+│   └── tools
+├── ai-self-rewrite.log
+├── api
+├── apps
+│   ├── api
+│   ├── docs
+│   └── web
+├── bin
+│   ├── klyn
+│   └── klyn-init
+├── boot
+│   └── kernel_boot.sh
+├── boot.sh
+├── boot_v6.py
+├── boot_v6.sh
+├── cluster
+│   ├── heartbeat.sh
+│   ├── init.sh
+│   ├── master.sh
+│   ├── node.sh
+│   ├── node.sh.save
+│   ├── node.sh.save.1
+│   └── node.sh.save.2
+├── config
+├── core
+│   ├── api.sh
+│   ├── cleanup.sh
+│   ├── dispatcher.sh
+│   ├── event-bus.sh
+│   ├── evolution.sh
+│   ├── heartbeat.sh
+│   ├── kernel.sh
+│   ├── logger.sh
+│   ├── migrate_jobs_to_json.sh
+│   ├── multi_llm.sh
+│   ├── orchestrator.sh
+│   ├── pipeline.sh
+│   ├── recovery.sh
+│   ├── router.sh
+│   ├── scheduler.sh
+│   ├── system_gc.sh
+│   ├── vault.sh
+│   ├── watchdog.sh
+│   └── worker.sh
+├── data_plane
+│   ├── logs
+│   ├── output
+│   └── state
+├── diagnostics_report.txt
+├── explore.sh
+├── index.ts
+├── infrastructure
+│   ├── docker
+│   ├── kubernetes
+│   └── terraform
+├── init_v6_fs.sh
+├── inspect_models.py
+├── install_klyn_v6.py
+├── jobs.db
+├── jobs.jsonl
+├── kernel
+│   ├── api
+│   │   └── syscall.sh
+│   ├── boot_supervisor.sh
+│   ├── bootstrap.sh
+│   ├── bus.sh
+│   ├── cluster
+│   │   ├── dispatcher.sh
+│   │   └── node.sh
+│   ├── core
+│   │   ├── daemon.sh
+│   │   ├── event_bus.sh
+│   │   ├── microkernel.sh
+│   │   ├── scheduler.sh
+│   │   └── watchdog.sh
+│   ├── daemon.sh
+│   ├── io
+│   ├── kernel.sh
+│   ├── microkernel.sh
+│   ├── modules
+│   │   └── example.plugin.sh
+│   ├── recovery
+│   ├── recovery.sh
+│   ├── router
+│   ├── scheduler
+│   │   └── dispatcher.sh
+│   ├── scheduler.sh
+│   ├── security
+│   ├── types.sh
+│   ├── v4
+│   │   ├── cluster
+│   │   ├── event_bus.sh
+│   │   ├── microkernel.sh
+│   │   ├── node.sh
+│   │   ├── recovery
+│   │   ├── recovery.sh
+│   │   ├── scheduler
+│   │   └── scheduler.sh
+│   ├── v5
+│   │   ├── cluster
+│   │   ├── consensus
+│   │   ├── core
+│   │   ├── recovery
+│   │   ├── router
+│   │   └── scheduler
+│   ├── v6
+│   │   ├── boot_v6.sh
+│   │   ├── bootstrap.sh
+│   │   ├── cluster
+│   │   ├── consensus
+│   │   ├── core
+│   │   ├── network
+│   │   ├── recovery
+│   │   ├── router
+│   │   ├── scheduler
+│   │   ├── utils
+│   │   └── validate_v6.sh
+│   ├── watchdog.sh
+│   └── worker.sh
+├── klyn-ai-os
+│   ├── LICENSE
+│   ├── README.md
+│   ├── apps
+│   │   ├── api
+│   │   ├── docs
+│   │   └── web
+│   ├── boot_v6.py
+│   ├── infrastructure
+│   │   ├── docker
+│   │   ├── kubernetes
+│   │   ├── monitoring
+│   │   └── terraform
+│   ├── kernel
+│   │   ├── cluster
+│   │   ├── core
+│   │   ├── daemon.sh
+│   │   ├── recovery
+│   │   └── scheduler
+│   ├── klyn-ai-self-rewrite.sh
+│   ├── packages
+│   │   ├── agent-runtime
+│   │   ├── ai-gateway
+│   │   ├── ai-orchestrator
+│   │   ├── auth
+│   │   ├── database
+│   │   ├── observability
+│   │   ├── shared
+│   │   └── workflow-engine
+│   ├── services
+│   │   ├── ai-workers
+│   │   ├── embedding-workers
+│   │   └── indexing-workers
+│   └── tests
+│       ├── e2e
+│       ├── integration
+│       └── unit
+├── klyn-os-snapshot.tar.gz
+├── klyn_state.json
+├── lib
+│   ├── core
+│   │   ├── cli_router.sh
+│   │   ├── lease_manager.sh
+│   │   ├── lifecycle.sh
+│   │   ├── plugin_loader.sh
+│   │   ├── security.sh
+│   │   └── telemetry.sh
+│   └── utils
+│       └── logger.sh
+├── logs
+│   ├── kernel.log
+│   ├── orchestrator.log
+│   └── scheduler.log
+├── m-D
+├── modules
+│   └── generic-module.sh
+├── monitor.sh
+├── node_modules
+│   ├── @supabase
+│   │   ├── auth-js
+│   │   ├── functions-js
+│   │   ├── phoenix
+│   │   ├── postgrest-js
+│   │   ├── realtime-js
+│   │   ├── storage-js
+│   │   └── supabase-js
+│   ├── iceberg-js
+│   │   ├── LICENSE
+│   │   ├── README.md
+│   │   ├── dist
+│   │   └── package.json
+│   └── tslib
+│       ├── CopyrightNotice.txt
+│       ├── LICENSE.txt
+│       ├── README.md
+│       ├── SECURITY.md
+│       ├── modules
+│       ├── package.json
+│       ├── tslib.d.ts
+│       ├── tslib.es6.html
+│       ├── tslib.es6.js
+│       ├── tslib.es6.mjs
+│       ├── tslib.html
+│       └── tslib.js
+├── output
+│   ├── 1782902817.txt
+│   ├── auto_1782792198.sh
+│   ├── auto_1782793388.sh
+│   ├── build.log
+│   ├── build_1782811084.sh
+│   ├── build_1782811415.sh
+│   ├── build_1782812049.txt
+│   ├── code_1782810547.sh
+│   ├── code_1782812414.sh
+│   ├── code_1782902375.txt
+│   ├── code_1782903393.txt
+│   ├── generated_1782777304.sh
+│   ├── login_system_contract.json
+│   └── module.sh
+├── package-lock.json
+├── package.json
+├── packages
+│   ├── agent-runtime
+│   │   └── src
+│   ├── ai-gateway
+│   │   └── src
+│   ├── ai-orchestrator
+│   │   └── src
+│   ├── shared
+│   │   └── src
+│   └── workflow-engine
+│       └── src
+├── run_test.sh
+├── runtime
+│   ├── audit
+│   │   └── report.txt
+│   ├── boot.pid
+│   ├── cluster
+│   │   ├── heartbeats
+│   │   ├── node-1.jobs
+│   │   ├── nodes
+│   │   ├── nodes.jsonl
+│   │   └── queue
+│   ├── daemon.pid
+│   ├── events
+│   │   ├── events.db
+│   │   ├── events.jsonl
+│   │   ├── latest.json
+│   │   └── latest_event.json
+│   ├── events.log
+│   ├── evolution.conf
+│   ├── global_events.db
+│   ├── health.json
+│   ├── jobs
+│   ├── jobs.db
+│   ├── jobs.jsonl
+│   ├── jobs_archive.db
+│   ├── jobs_archive.jsonl
+│   ├── kernel.pid
+│   ├── klyn.pid
+│   ├── leases
+│   │   └── shared.resource.lock
+│   ├── ledger
+│   │   └── jobs.jsonl
+│   ├── lock
+│   │   ├── pids
+│   │   ├── scheduler.lock
+│   │   └── timestamps
+│   ├── locks
+│   │   ├── 1782861410.lock
+│   │   ├── 1782861412.lock
+│   │   └── shared_resource.lock
+│   ├── logs
+│   │   ├── race.log
+│   │   ├── scheduler.log
+│   │   ├── system.log
+│   │   └── system.log.lock
+│   ├── memory
+│   ├── metrics
+│   ├── metrics.db
+│   ├── nodes
+│   │   └── nodes.db
+│   ├── nodes.jsonl
+│   ├── pids
+│   │   ├── kernel.pid
+│   │   └── scheduler.pid
+│   ├── procs
+│   ├── queue
+│   │   └── jobs.jsonl
+│   ├── queue.db
+│   ├── queues
+│   ├── results.txt
+│   ├── scheduler.pid
+│   ├── state
+│   │   ├── heartbeat.json
+│   │   ├── kernel.pid
+│   │   ├── kernel.state
+│   │   ├── queue.pointer
+│   │   ├── state.db
+│   │   ├── state.json
+│   │   ├── system.db.json
+│   │   ├── system.json
+│   │   └── system.state
+│   ├── state.db
+│   ├── state.log
+│   ├── system.log
+│   ├── tmp
+│   ├── tmp.23443
+│   ├── tmp.23597
+│   ├── users
+│   │   └── alice.role
+│   ├── v4
+│   │   ├── cluster
+│   │   ├── ledger
+│   │   ├── logs
+│   │   ├── queue
+│   │   └── state
+│   ├── v5
+│   │   ├── cluster
+│   │   ├── health
+│   │   ├── ledger
+│   │   ├── logs
+│   │   ├── models
+│   │   ├── nodes
+│   │   ├── queue
+│   │   ├── recovery
+│   │   └── state
+│   ├── v6
+│   │   ├── cluster
+│   │   ├── ledger
+│   │   ├── locks
+│   │   ├── logs
+│   │   ├── nodes
+│   │   ├── queue
+│   │   └── state
+│   ├── vault
+│   │   └── code.txt
+│   └── workspace
+├── scripts
+│   ├── doctor.sh
+│   └── metrics.sh
+├── self-rewrite.log
+├── services
+│   ├── ai-workers
+│   └── v5
+├── snapshot
+│   ├── agents
+│   │   ├── coder.sh
+│   │   ├── executor.sh
+│   │   ├── lib
+│   │   ├── planner.sh
+│   │   └── reviewer.sh
+│   ├── boot.sh
+│   ├── core
+│   │   ├── event-bus.sh
+│   │   ├── pipeline.sh
+│   │   └── router.sh
+│   ├── index.ts
+│   ├── kernel
+│   │   ├── daemon.sh
+│   │   ├── kernel.sh
+│   │   └── types.sh
+│   ├── klyn.sh
+│   ├── output
+│   │   ├── auto_1782792198.sh
+│   │   ├── auto_1782793388.sh
+│   │   ├── build_1782811084.sh
+│   │   ├── build_1782811415.sh
+│   │   ├── build_1782812049.txt
+│   │   ├── code_1782810547.sh
+│   │   ├── code_1782812414.sh
+│   │   ├── generated_1782777304.sh
+│   │   └── login_system_contract.json
+│   └── runtime
+│       ├── daemon.pid
+│       ├── events
+│       ├── events.log
+│       ├── health.json
+│       ├── logs
+│       ├── memory
+│       ├── queue
+│       ├── queue.db
+│       ├── state
+│       └── state.db
+├── snapshot.txt
+├── staging
+│   └── services
+│       ├── api-gateway
+│       ├── auth
+│       ├── data-sync
+│       └── registry
+├── stats.sh
+├── structure.txt
+├── supabase.sh
+├── test_lease.sh
+├── test_rbac.sh
+├── tests
+│   ├── e2e
+│   ├── integration
+│   └── unit
+├── tsconfig.json
+├── upgrade_kernel.py
+├── upgrade_to_v6_kernel.py
+├── verify_matrix.py
+└── worker.sh
+
+194 directories, 221 files

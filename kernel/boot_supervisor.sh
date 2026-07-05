@@ -5,13 +5,13 @@ set -euo pipefail
 # KLYN AI OS - SUPERVISOR CORE
 # ==============================
 
-BASE_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+BASE_DIR="$HOME/klyn-ai-os"
 
 RUNTIME_DIR="$BASE_DIR/runtime"
 STATE_DIR="$RUNTIME_DIR/state"
 LOG_DIR="$RUNTIME_DIR/logs"
 
-SCHEDULER="$BASE_DIR/kernel/scheduler/scheduler.sh"
+SCHEDULER="$BASE_DIR/kernel/scheduler.sh"
 RECOVERY="$BASE_DIR/kernel/v6/recovery/recovery.sh"
 
 PID_FILE="$STATE_DIR/scheduler.pid"
@@ -80,4 +80,11 @@ main_loop() {
   done
 }
 
-main_loop
+
+supervisor_boot() {
+    main_loop
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    supervisor_boot
+fi

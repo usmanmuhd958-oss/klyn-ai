@@ -1,25 +1,73 @@
 #!/usr/bin/env bash
-set -euo pipefail
-SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
-KLYN_ROOT="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
-source "$KLYN_ROOT/lib/utils/logger.sh"
-PID_DIR="$KLYN_ROOT/runtime/pids"
-mkdir -p "$PID_DIR"
+set -Eeuo pipefail
 
-print_help() {
-    cat <<HELPMENU
+ROOT="$HOME/klyn-ai-os"
+cd "$ROOT"
 
-KLYN AI OS - Command Interface
+source kernel/init.sh
 
-USAGE: klyn <command>
-COMMANDS: start, stop, status, logs, help
-HELPMENU
-}
+cmd="${1:-help}"
+sub="${2:-}"
 
-case "${1:-help}" in
-    start)  bash "$KLYN_ROOT/kernel/core/bootstrap.sh" & klyn_log "INFO" "Kernel bootstrap launched" ;;
-    stop)   klyn_log "WARN" "Stopping system..." ;;
-    status) echo "Active Processes: $(ls -1 "$PID_DIR" 2>/dev/null | wc -l)" ;;
-    logs)   tail -n 50 "$KLYN_ROOT/runtime/logs/system.log" ;;
-    *)      print_help ;;
+case "$cmd" in
+    service)
+        case "$sub" in
+            start) start_service "$3" "kernel/services/${3}.sh" ;;
+            stop) stop_service "$3" ;;
+            restart)
+                stop_service "$3"
+                start_service "$3" "kernel/services/${3}.sh"
+                ;;
+            status) service_status "$3" ;;
+            deps) start_with_deps "$3" ;;
+            ls) list_services ;;
+            *) echo "klyn service {start|stop|restart|status|deps|ls}" ;;
+        esac
+        ;;
+
+    agent)
+        case "$sub" in
+            ls) list_agents ;;
+            register) register_agent "$3" "$4" ;;
+            show) agent_status "$3" ;;
+            *) echo "klyn agent {ls|register|show}" ;;
+        esac
+        ;;
+
+    metrics)
+        metrics_export
+        ;;
+
+    health)
+        health_check_service "${2:-scheduler}"
+        ;;
+
+    snapshot)
+        snapshot_state
+        ;;
+
+    doctor)
+        echo "=== KLYN Doctor ==="
+        metrics_export
+        ;;
+
+    *)
+        cat <<USAGE
+klyn service start <name>
+klyn service stop <name>
+klyn service restart <name>
+klyn service status <name>
+klyn service deps <name>
+klyn service ls
+
+klyn agent ls
+klyn agent register <name> <model>
+klyn agent show <name>
+
+klyn metrics
+klyn health [service]
+klyn snapshot
+klyn doctor
+USAGE
+        ;;
 esac

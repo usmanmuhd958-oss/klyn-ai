@@ -1,6 +1,3 @@
 {
-  "kernel": "v3",
-  "status": "starting",
-  "mode": "safe-microkernel",
-  "active_job": null
+  "status":"running"
 }
