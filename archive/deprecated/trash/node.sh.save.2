@@ -1,0 +1,61 @@
+#!/data/data/com.termux/files/usr/bin/bash
+
+NODE_ID=$1
+JOBS="runtime/jobs.jsonl"
+NODE_FILE="runtime/nodes.jsonl"
+LOCKDIR="runtime/locks"
+LOG="runtime/system.log"
+
+mkdir -p runtime/locks
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [NODE-$NODE_ID] [$1] $2" >> "$LOG"
+}
+
+register_node() {
+    echo "$NODE_ID|ALIVE|0|$(date +%s)" >> "$NODE_FILE"
+}
+
+update_heartbeat() {
+    sed -i "s|$NODE_ID|.*|$NODE_ID|ALIVE|$RANDOM|$(date +%s)|g" "$NODE_FILE" 2>/dev/null
+}
+
+process_jobs() {
+    TMP="runtime/tmp.$$"
+
+    while true; do
+        > "$TMP"
+
+        while IFS= read -r line; do
+            [ -z "$line" ] && continue
+
+            STATUS=$(echo "$line" | cut -d'|' -f1)
+            AGENT=$(echo "$line" | cut -d'|' -f2)
+            TASK=$(echo "$line" | cut -d'|' -f3)
+            JOBID=$(echo "$line" | cut -d'|' -f4)
+            ASSIGNED=$(echo "$line" | cut -d'|' -f5)
+
+            if [ "$STATUS" = "QUEUED" ] && [ "$ASSIGNED" = "$NODE_ID" ]; then
+
+                touch "$LOCKDIR/$JOBID.lock"
+
+                log "RUN" "Executing $AGENT → $TASK"
+
+                if [ -f "agents/${AGENT}.sh" ]; then
+                    bash "agents/${AGENT}.sh" "$TASK" >/dev/null 2>&1
+                fi
+
+                echo "DONE|$AGENT|$TASK|$JOBID|$NODE_ID" >> "$TMP"
+
+            else
+                echo "$line" >> "$TMP"
+            fi
+
+        done < "$JOBS"
+
+        mv "$TMP" "$JOBS"
+        sleep 2
+    done
+}
+
+register_node
+process_jobs

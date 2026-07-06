@@ -1,7 +1,7 @@
+node_modules/
 runtime/
-tmp/
-archive/
-*.pid
 *.log
-.env
-.env.*
+*.db
+*.lock
+*.pid
+.DS_Store

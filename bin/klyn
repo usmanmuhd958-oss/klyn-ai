@@ -1,73 +1,39 @@
-#!/usr/bin/env bash
-set -Eeuo pipefail
+#!/bin/bash
+export PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-ROOT="$HOME/klyn-ai-os"
-cd "$ROOT"
-
-source kernel/init.sh
-
-cmd="${1:-help}"
-sub="${2:-}"
-
-case "$cmd" in
-    service)
-        case "$sub" in
-            start) start_service "$3" "kernel/services/${3}.sh" ;;
-            stop) stop_service "$3" ;;
-            restart)
-                stop_service "$3"
-                start_service "$3" "kernel/services/${3}.sh"
-                ;;
-            status) service_status "$3" ;;
-            deps) start_with_deps "$3" ;;
-            ls) list_services ;;
-            *) echo "klyn service {start|stop|restart|status|deps|ls}" ;;
-        esac
-        ;;
-
-    agent)
-        case "$sub" in
-            ls) list_agents ;;
-            register) register_agent "$3" "$4" ;;
-            show) agent_status "$3" ;;
-            *) echo "klyn agent {ls|register|show}" ;;
-        esac
-        ;;
-
-    metrics)
-        metrics_export
-        ;;
-
-    health)
-        health_check_service "${2:-scheduler}"
-        ;;
-
-    snapshot)
-        snapshot_state
-        ;;
-
-    doctor)
-        echo "=== KLYN Doctor ==="
-        metrics_export
-        ;;
-
-    *)
-        cat <<USAGE
-klyn service start <name>
-klyn service stop <name>
-klyn service restart <name>
-klyn service status <name>
-klyn service deps <name>
-klyn service ls
-
-klyn agent ls
-klyn agent register <name> <model>
-klyn agent show <name>
-
-klyn metrics
-klyn health [service]
-klyn snapshot
-klyn doctor
-USAGE
-        ;;
-esac
+if [ "$#" -eq 0 ]; then
+    clear
+    echo "╔══════════════════════════════════════╗"
+    echo "║        KLYN AI OS v11 Enterprise     ║"
+    echo "╠══════════════════════════════════════╣"
+    echo "║ 1) Start OS                          ║"
+    echo "║ 2) Status (health)                   ║"
+    echo "║ 3) Logs (tail)                       ║"
+    echo "║ 4) Run agent                         ║"
+    echo "║ 5) Dashboard (port 4000)             ║"
+    echo "║ 6) List services                     ║"
+    echo "║ 7) Self‑improve                      ║"
+    echo "║ 0) Exit                              ║"
+    echo "╚══════════════════════════════════════╝"
+    read -p "> " CHOICE
+    case $CHOICE in
+        1) bash "$PROJECT_ROOT/boot.sh" ;;
+        2) bash "$PROJECT_ROOT/scripts/health_check.sh" ;;
+        3) tail -f "$PROJECT_ROOT/runtime/logs/supervisor.log" ;;
+        4) read -p "Agent: " AGENT; read -p "Task: " TASK; bash "$PROJECT_ROOT/agents/src/$AGENT.sh" "$TASK" ;;
+        5) node "$PROJECT_ROOT/apps/web/server.js" & ;;
+        6) bash -c "source $PROJECT_ROOT/kernel/src/services/process_manager.sh; list_services" ;;
+        7) bash "$PROJECT_ROOT/agents/src/self_improver.sh" ;;
+        0) exit ;;
+        *) echo "Invalid option" ;;
+    esac
+else
+    case "$1" in
+        start) bash "$PROJECT_ROOT/boot.sh" ;;
+        status) bash "$PROJECT_ROOT/scripts/health_check.sh" ;;
+        agent) shift; bash "$PROJECT_ROOT/agents/src/$1.sh" "${@:2}" ;;
+        list) bash -c "source $PROJECT_ROOT/kernel/src/services/process_manager.sh; list_services" ;;
+        improve) bash "$PROJECT_ROOT/agents/src/self_improver.sh" ;;
+        *) echo "Usage: klyn {start|status|agent|list|improve}" ;;
+    esac
+fi
