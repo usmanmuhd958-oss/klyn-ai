@@ -1,5 +1,5 @@
 #!/bin/bash
-PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "$0")/.." \&\& pwd)}"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PASS=0; FAIL=0
 log() { if [ "$1" = "OK" ]; then echo "[PASS] $2"; ((PASS++)); else echo "[FAIL] $2"; ((FAIL++)); fi; }
 [ -d "$PROJECT_ROOT/runtime" ] && log OK "Runtime directory" || log FAIL "Runtime directory missing"
