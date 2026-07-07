@@ -1,14 +1,11 @@
 #!/bin/bash
 export PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-
-api_status() {
-    pgrep -f "node api/server.js" >/dev/null && echo "api (RUNNING)" || echo "api (DEAD)"
-}
+api_status() { pgrep -f "node api/server.js" >/dev/null && echo "api (RUNNING)" || echo "api (DEAD)"; }
 
 if [ "$#" -eq 0 ]; then
     clear
     echo "╔══════════════════════════════════════╗"
-    echo "║     KLYN AI OS v14 Platinum          ║"
+    echo "║     KLYN AI OS v15 Supreme           ║"
     echo "╠══════════════════════════════════════╣"
     echo "║ 1) Start OS                          ║"
     echo "║ 2) Status (health)                   ║"
@@ -17,26 +14,43 @@ if [ "$#" -eq 0 ]; then
     echo "║ 5) Dashboard (port 4000)             ║"
     echo "║ 6) List services                     ║"
     echo "║ 7) Self‑improve                      ║"
+    echo "║ 8) Plugin install <name>             ║"
+    echo "║ 9) Deploy to cloud                   ║"
     echo "║ 0) Exit                              ║"
     echo "╚══════════════════════════════════════╝"
     read -p "> " CHOICE
     case $CHOICE in
         1) bash "$PROJECT_ROOT/boot.sh" ;;
-        2) bash "$PROJECT_ROOT/scripts/health_check.sh" ;;
-        3) tail -f "$PROJECT_ROOT/runtime/logs/api.log" ;;
+        2) node "$PROJECT_ROOT/scripts/health_check.js" ;;
+        3) tail -f "$PROJECT_ROOT/runtime/logs/system.jsonl" ;;
         4) read -p "Agent: " AGENT; read -p "Task: " TASK; bash "$PROJECT_ROOT/agents/src/$AGENT.sh" "$TASK" ;;
         5) node "$PROJECT_ROOT/apps/web/server.js" & ;;
         6) api_status ;;
         7) bash "$PROJECT_ROOT/agents/src/self_improver.sh" ;;
+        8) read -p "Plugin name: " PLUGIN; bash "$PROJECT_ROOT/bin/klyn" plugin install "$PLUGIN" ;;
+        9) bash "$PROJECT_ROOT/scripts/deploy_cloud.sh" ;;
         0) exit ;;
     esac
 else
     case "$1" in
         start) bash "$PROJECT_ROOT/boot.sh" ;;
-        status) bash "$PROJECT_ROOT/scripts/health_check.sh" ;;
+        status) node "$PROJECT_ROOT/scripts/health_check.js" ;;
         agent) shift; bash "$PROJECT_ROOT/agents/src/$1.sh" "${@:2}" ;;
         list) api_status ;;
         improve) bash "$PROJECT_ROOT/agents/src/self_improver.sh" ;;
-        *) echo "Usage: klyn {start|status|agent|list|improve}" ;;
+        plugin)
+            if [ "$2" = "install" ]; then
+                name="$3"
+                url=$(jq -r ".$name" "$PROJECT_ROOT/plugins/marketplace/index.json" 2>/dev/null)
+                if [ "$url" != "null" ]; then
+                    curl -s "$url" | bash
+                    echo "Plugin $name installed"
+                else
+                    echo "Plugin not found"
+                fi
+            fi
+            ;;
+        deploy) bash "$PROJECT_ROOT/scripts/deploy_cloud.sh" ;;
+        *) echo "Usage: klyn {start|status|agent|list|improve|plugin install <name>|deploy}" ;;
     esac
 fi
