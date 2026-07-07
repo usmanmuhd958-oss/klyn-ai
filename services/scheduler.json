@@ -1,7 +1,0 @@
-{
-  "name": "scheduler",
-  "command": "bash kernel/scheduler.sh",
-  "restart": "always",
-  "depends": ["queue"],
-  "healthcheck": "health_check"
-}

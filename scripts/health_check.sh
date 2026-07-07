@@ -2,13 +2,19 @@
 PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 PASS=0; FAIL=0
 
-log() { if [ "$1" = "OK" ]; then echo "[PASS] $2"; ((PASS++)); else echo "[FAIL] $2"; ((FAIL++)); fi; }
+log() {
+    if [ "$1" = "OK" ]; then echo "[PASS] $2"; ((PASS++)); else echo "[FAIL] $2"; ((FAIL++)); fi
+}
 
-[ -d "$PROJECT_ROOT/runtime" ] && log OK "Runtime" || log FAIL "Runtime missing"
-[ -f "$PROJECT_ROOT/runtime/pids/api.pid" ] && kill -0 $(cat "$PROJECT_ROOT/runtime/pids/api.pid") 2>/dev/null && log OK "API running" || log FAIL "API not running"
-[ -d "$PROJECT_ROOT/runtime/queue" ] && log OK "Job queue" || log FAIL "Job queue missing"
+[ -d "$PROJECT_ROOT/runtime" ] && log OK "Runtime directory" || log FAIL "Runtime directory missing"
 
-if node "$PROJECT_ROOT/kernel/src/services/state_engine.js" health 2>/dev/null; then
+if pgrep -f "node api/server.js" >/dev/null 2>&1; then
+    log OK "API running"
+else
+    log FAIL "API not running"
+fi
+
+if node "$PROJECT_ROOT/kernel/src/services/state_engine.js" health >/dev/null 2>&1; then
     log OK "State engine"
 else
     log FAIL "State engine offline"

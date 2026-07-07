@@ -1,10 +1,18 @@
 #!/bin/bash
 export PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+api_status() {
+    if pgrep -f "node api/server.js" >/dev/null 2>&1; then
+        echo "api (RUNNING)"
+    else
+        echo "api (DEAD)"
+    fi
+}
+
 if [ "$#" -eq 0 ]; then
     clear
     echo "╔══════════════════════════════════════╗"
-    echo "║        KLYN AI OS v11 Enterprise     ║"
+    echo "║        KLYN AI OS v13 Enterprise     ║"
     echo "╠══════════════════════════════════════╣"
     echo "║ 1) Start OS                          ║"
     echo "║ 2) Status (health)                   ║"
@@ -19,20 +27,19 @@ if [ "$#" -eq 0 ]; then
     case $CHOICE in
         1) bash "$PROJECT_ROOT/boot.sh" ;;
         2) bash "$PROJECT_ROOT/scripts/health_check.sh" ;;
-        3) tail -f "$PROJECT_ROOT/runtime/logs/supervisor.log" ;;
+        3) tail -f "$PROJECT_ROOT/runtime/logs/api.log" ;;
         4) read -p "Agent: " AGENT; read -p "Task: " TASK; bash "$PROJECT_ROOT/agents/src/$AGENT.sh" "$TASK" ;;
         5) node "$PROJECT_ROOT/apps/web/server.js" & ;;
-        6) bash -c "source $PROJECT_ROOT/kernel/src/services/process_manager.sh; list_services" ;;
+        6) api_status ;;
         7) bash "$PROJECT_ROOT/agents/src/self_improver.sh" ;;
         0) exit ;;
-        *) echo "Invalid option" ;;
     esac
 else
     case "$1" in
         start) bash "$PROJECT_ROOT/boot.sh" ;;
         status) bash "$PROJECT_ROOT/scripts/health_check.sh" ;;
         agent) shift; bash "$PROJECT_ROOT/agents/src/$1.sh" "${@:2}" ;;
-        list) bash -c "source $PROJECT_ROOT/kernel/src/services/process_manager.sh; list_services" ;;
+        list) api_status ;;
         improve) bash "$PROJECT_ROOT/agents/src/self_improver.sh" ;;
         *) echo "Usage: klyn {start|status|agent|list|improve}" ;;
     esac
