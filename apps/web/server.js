@@ -9,7 +9,7 @@ const server = http.createServer((req, res) => {
         res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end(html);
     } else if (req.url === '/api/health') {
-        exec('bash ../../scripts/health_check.sh', (err, stdout) => {
+        exec('node ../../scripts/health_check.js', (err, stdout) => {
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ status: err ? 'unhealthy' : 'healthy' }));
         });
