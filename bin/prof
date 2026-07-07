@@ -1,0 +1,57 @@
+#!/usr/bin/env node
+const { execSync, spawn } = require('child_process');
+const readline = require('readline');
+const path = require('path');
+
+const PROJECT_ROOT = process.env.PROJECT_ROOT || path.join(__dirname, '..');
+const PROMPT = '👑 Prof> ';
+
+const commands = {
+  start:  { fn: () => exec('bash boot.sh') },
+  status: { fn: () => exec('node scripts/health_check.js') },
+  agent:  { fn: (args) => exec(`bash agents/src/${args[0]}.sh "${args.slice(1).join(' ')}"`) },
+  logs:   { fn: () => { const p = spawn('tail', ['-f', 'runtime/logs/system.jsonl'], { cwd: PROJECT_ROOT, stdio: 'inherit' }); return p; } },
+  list:   { fn: () => exec('pgrep -f "node api/server.js" >/dev/null && echo "api (RUNNING)" || echo "api (DEAD)"') },
+  improve:{ fn: () => exec('bash agents/src/self_improver.sh') },
+  plugin: { fn: (args) => {
+    if (args[0] === 'install' && args[1]) {
+      const idx = require(path.join(PROJECT_ROOT, 'plugins/marketplace/index.json'));
+      const url = idx[args[1]];
+      if (url) exec(`curl -s ${url} | bash`);
+      else console.log('Plugin not found');
+    } else console.log('Usage: plugin install <name>');
+  }},
+  deploy: { fn: () => exec('bash scripts/deploy_cloud.sh') },
+  exit:   { fn: () => process.exit(0) }
+};
+
+function exec(cmd) {
+  try {
+    const out = execSync(cmd, { cwd: PROJECT_ROOT, stdio: 'pipe' }).toString();
+    console.log(out);
+  } catch (e) {
+    console.error(e.stderr ? e.stderr.toString() : e.message);
+  }
+}
+
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+  prompt: PROMPT,
+  completer: (line) => {
+    const hits = Object.keys(commands).filter(c => c.startsWith(line));
+    return [hits.length ? hits : Object.keys(commands), line];
+  }
+});
+
+rl.prompt();
+rl.on('line', (line) => {
+  const [cmd, ...args] = line.trim().split(/\s+/);
+  if (commands[cmd]) {
+    commands[cmd].fn(args);
+  } else if (cmd) {
+    console.log(`Unknown command: ${cmd}`);
+  }
+  rl.prompt();
+});
+rl.on('close', () => console.log('\nGoodbye.'));
