@@ -5,3 +5,4 @@ runtime/
 *.lock
 *.pid
 .DS_Store
+config/ai_keys.env
