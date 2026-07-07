@@ -1,53 +1,88 @@
-async function callOpenAI(prompt) {
-  if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY is not set');
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o',
-      messages: [{ role: 'user', content: prompt }]
-    })
-  });
-  const data = await res.json();
-  if (data.error) throw new Error(`OpenAI error: ${data.error.message}`);
-  return data.choices[0].message.content;
+const fs = require('fs');
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '..', '..', 'config', 'ai_keys.env') });
+
+const providers = {
+  openai: {
+    keyEnv: 'OPENAI_API_KEY',
+    endpoint: 'https://api.openai.com/v1/chat/completions',
+    model: 'gpt-4o',
+    buildBody: (prompt) => ({ model: 'gpt-4o', messages: [{ role: 'user', content: prompt }] }),
+    parseResponse: (data) => data.choices[0].message.content
+  },
+  anthropic: {
+    keyEnv: 'ANTHROPIC_API_KEY',
+    endpoint: 'https://api.anthropic.com/v1/messages',
+    model: 'claude-opus-4-20240229',
+    buildBody: (prompt) => ({ model: 'claude-opus-4-20240229', max_tokens: 1024, messages: [{ role: 'user', content: prompt }] }),
+    parseResponse: (data) => data.content[0].text
+  },
+  gemini: {
+    keyEnv: 'GEMINI_API_KEY',
+    endpoint: null,
+    model: 'gemini-2.5-pro',
+    buildUrl: (prompt) => `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${process.env.GEMINI_API_KEY}`,
+    parseResponse: (data) => data.candidates[0].content.parts[0].text
+  },
+  deepseek: {
+    keyEnv: 'DEEPSEEK_API_KEY',
+    endpoint: 'https://api.deepseek.com/v1/chat/completions',
+    model: 'deepseek-r1',
+    buildBody: (prompt) => ({ model: 'deepseek-r1', messages: [{ role: 'user', content: prompt }] }),
+    parseResponse: (data) => data.choices[0].message.content
+  }
+};
+
+async function callProvider(name, prompt) {
+  const p = providers[name];
+  if (!p) throw new Error(`Unknown provider: ${name}`);
+  if (!process.env[p.keyEnv]) throw new Error(`${p.keyEnv} not set`);
+
+  if (p.endpoint) {
+    const res = await fetch(p.endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${process.env[p.keyEnv]}`
+      },
+      body: JSON.stringify(p.buildBody(prompt))
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    return p.parseResponse(data);
+  } else {
+    // Gemini uses different API
+    const url = p.buildUrl(prompt);
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    return p.parseResponse(data);
+  }
 }
 
 async function bestEffortCall(prompt, preferredProvider) {
-  const providers = {
-    openai: callOpenAI,
-    // other providers can be added similarly
-  };
-  const order = preferredProvider ? [preferredProvider] : Object.keys(providers);
-  for (const provider of order) {
+  const order = preferredProvider ? [preferredProvider, ...Object.keys(providers).filter(p => p !== preferredProvider)] : Object.keys(providers);
+  for (const name of order) {
     try {
-      console.error(`[INFO] Trying provider: ${provider}...`);
-      const result = await providers[provider](prompt);
-      console.error(`[INFO] ${provider} succeeded`);
-      return result;
+      return await callProvider(name, prompt);
     } catch (e) {
-      console.error(`[FAIL] ${provider}: ${e.message}`);
+      console.error(`[${name}] failed: ${e.message}`);
     }
   }
-  throw new Error('All providers failed. Please set at least one API key.');
+  throw new Error('All AI providers failed');
 }
 
-// CLI mode
 if (require.main === module) {
   const agent = process.argv[2];
-  const task = process.argv[3] || 'no task';
-  const prompt = `You are the ${agent} agent. ${task}. Provide a complete solution.`;
+  const task = process.argv.slice(3).join(' ');
+  const prompt = `You are the ${agent} agent in Klyn AI OS. Task: ${task}. Provide a complete solution.`;
   bestEffortCall(prompt)
-    .then(result => {
-      console.log(result);
-      process.exit(0);
-    })
-    .catch(err => {
-      console.error(err.message);
-      process.exit(1);
-    });
+    .then(r => { console.log(r); process.exit(0); })
+    .catch(e => { console.error(e.message); process.exit(1); });
 }
+
 module.exports = { bestEffortCall };

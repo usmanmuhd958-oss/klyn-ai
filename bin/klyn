@@ -2,17 +2,13 @@
 export PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 api_status() {
-    if pgrep -f "node api/server.js" >/dev/null 2>&1; then
-        echo "api (RUNNING)"
-    else
-        echo "api (DEAD)"
-    fi
+    pgrep -f "node api/server.js" >/dev/null && echo "api (RUNNING)" || echo "api (DEAD)"
 }
 
 if [ "$#" -eq 0 ]; then
     clear
     echo "╔══════════════════════════════════════╗"
-    echo "║        KLYN AI OS v13 Enterprise     ║"
+    echo "║     KLYN AI OS v14 Platinum          ║"
     echo "╠══════════════════════════════════════╣"
     echo "║ 1) Start OS                          ║"
     echo "║ 2) Status (health)                   ║"

@@ -1,14 +1,21 @@
-const express = require('express');
+const http = require('http');
+const fs = require('fs');
 const path = require('path');
 const { exec } = require('child_process');
-const app = express();
-app.use(express.static(path.join(__dirname, 'public')));
-app.get('/api/health', (req, res) => {
-    exec('bash ../../scripts/health_check.sh', (err, stdout) => {
-        res.json({ status: err ? 'unhealthy' : 'healthy', details: stdout });
-    });
+
+const server = http.createServer((req, res) => {
+    if (req.url === '/' || req.url === '/index.html') {
+        const html = `<!DOCTYPE html><html><head><title>Klyn OS</title><style>body{background:#0f0f23;color:#0f0;font-family:monospace;padding:2rem}h1{color:#0f0}</style></head><body><h1>👑 Klyn AI OS v14</h1><div id="status">Checking...</div><script>fetch('/api/health').then(r=>r.json()).then(d=>document.getElementById('status').innerHTML='Status: '+d.status)</script></body></html>`;
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(html);
+    } else if (req.url === '/api/health') {
+        exec('bash ../../scripts/health_check.sh', (err, stdout) => {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ status: err ? 'unhealthy' : 'healthy' }));
+        });
+    } else {
+        res.writeHead(404);
+        res.end();
+    }
 });
-app.get('/api/agents', (req, res) => {
-    res.json(['coder', 'planner', 'reviewer', 'researcher']);
-});
-app.listen(4000, () => console.log('Dashboard on http://localhost:4000'));
+server.listen(4000, () => console.log('Dashboard on port 4000'));
