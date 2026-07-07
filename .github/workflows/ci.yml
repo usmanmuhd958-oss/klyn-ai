@@ -1,0 +1,14 @@
+name: Klyn OS CI
+on: [push, pull_request]
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install
+      - run: node api/server.js &
+      - run: sleep 3
+      - run: node scripts/health_check.js
