@@ -7,3 +7,4 @@ runtime/
 .DS_Store
 config/ai_keys.env
 config/ai_keys.env
+llama.cpp/
