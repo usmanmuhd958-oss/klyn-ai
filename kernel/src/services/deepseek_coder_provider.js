@@ -8,7 +8,7 @@ const MODEL_PATH = path.join(PROJECT_ROOT, 'llama.cpp', 'models', 'deepseek-code
 
 async function callDeepSeekCoder(prompt) {
   if (!fs.existsSync(MODEL_PATH)) {
-    throw new Error('Model not found. Run the download command first.');
+    throw new Error('Model not found. Run the download script first.');
   }
   return new Promise((resolve, reject) => {
     const llama = spawn(LLAMA_PATH, [
