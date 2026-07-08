@@ -1,8 +1,14 @@
 image: node:18
 
 stages:
+  - test
   - audit
   - health
+
+unit_tests:
+  stage: test
+  script:
+    - bash scripts/run_tests.sh
 
 code_audit:
   stage: audit
@@ -10,15 +16,6 @@ code_audit:
     - apt-get update && apt-get install -y shellcheck
   script:
     - bash scripts/ai_code_review.sh
-    - if [ -s runtime/logs/audit_fixes.diff ]; then
-        echo "Applying suggested fixes...";
-        patch -p1 < runtime/logs/audit_fixes.diff;
-        git add -A;
-        git commit -m "🤖 Automated code audit fix" || true;
-        git push origin HEAD:main;
-      fi
-  only:
-    - main
 
 health_check:
   stage: health
@@ -27,5 +24,3 @@ health_check:
     - node api/server.js &
     - sleep 3
     - node scripts/health_check.js
-  only:
-    - main
