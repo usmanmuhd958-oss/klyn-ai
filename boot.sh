@@ -28,6 +28,9 @@ echo "✅ Keep‑alive started"
 # Start auto‑scaler (optional)
 nohup bash "$PROJECT_ROOT/kernel/src/services/autoscaler.sh" > "$PROJECT_ROOT/runtime/logs/autoscaler.log" 2>&1 &
 echo "✅ Auto‑scaler started"
+# Autonomous Self‑Improvement Engine (runs every 6 hours)
+nohup bash \"$PROJECT_ROOT/kernel/src/services/improvement_scheduler.sh\" > \"$PROJECT_ROOT/runtime/logs/autonomous_improver.log\" 2>&1 &
+echo \"✅ Autonomous Self‑Improvement (every 6h)\"
 mkdir -p "$PROJECT_ROOT/runtime/logs"
 nohup node "$PROJECT_ROOT/apps/web/admin.js" > "$PROJECT_ROOT/runtime/logs/admin.log" 2>&1 &
 echo "✅ Admin Dashboard (port 5000)"

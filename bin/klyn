@@ -13,6 +13,7 @@ if [ "$#" -eq 0 ]; then
     echo "║ 4) Run agent                         ║"
     echo "║ 5) Dashboard (port 4000)             ║"
     echo "║ 6) List services                     ║"
+║ 8) Autonomous self‑improve             ║
     echo "║ 7) Self‑improve                      ║"
     echo "║ 8) Plugin install <name>             ║"
     echo "║ 9) Deploy to cloud                   ║"
@@ -27,6 +28,7 @@ if [ "$#" -eq 0 ]; then
         5) node "$PROJECT_ROOT/apps/web/server.js" & ;;
         6) api_status ;;
         7) bash "$PROJECT_ROOT/agents/src/self_improver.sh" ;;
+        8) node "$PROJECT_ROOT/kernel/src/services/autonomous_improver.js" ;;
         8) read -p "Plugin name: " PLUGIN; bash "$PROJECT_ROOT/bin/klyn" plugin install "$PLUGIN" ;;
         9) bash "$PROJECT_ROOT/scripts/deploy_cloud.sh" ;;
         0) exit ;;
