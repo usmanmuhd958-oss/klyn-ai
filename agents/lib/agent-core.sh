@@ -1,3 +1,4 @@
+#!/bin/bash
 #!/data/data/com.termux/files/usr/bin/bash
 source kernel/types.sh
 
