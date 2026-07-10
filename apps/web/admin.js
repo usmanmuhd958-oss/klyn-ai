@@ -99,4 +99,4 @@ fetch('/api/audit/recent').then(r=>r.json()).then(d=>{
     res.end();
   }
 });
-server.listen(PORT, () => console.log(`Enterprise Admin Dashboard on port ${PORT}`));
+server.listen(PORT, "::", "0.0.0.0", () => console.log(`Enterprise Admin Dashboard on port ${PORT}`));
