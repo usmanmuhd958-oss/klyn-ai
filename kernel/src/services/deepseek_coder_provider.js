@@ -2,28 +2,30 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-const PROJECT_ROOT = path.join(__dirname, '..', '..');
-const LLAMA_PATH = path.join(PROJECT_ROOT, 'llama.cpp', 'build', 'bin', 'main');
+const PROJECT_ROOT = '/data/data/com.termux/files/home/klyn-ai-os';
+const LLAMA_PATH = path.join(PROJECT_ROOT, 'llama.cpp', 'build', 'bin', 'llama-cli');
 const MODEL_PATH = path.join(PROJECT_ROOT, 'llama.cpp', 'models', 'deepseek-coder-6.7b-instruct.Q4_K_M.gguf');
 
 async function callDeepSeekCoder(prompt) {
+  if (!fs.existsSync(LLAMA_PATH)) {
+    throw new Error(`llama-cli binary not found at ${LLAMA_PATH}`);
+  }
   if (!fs.existsSync(MODEL_PATH)) {
-    throw new Error('Model not found. Run the download script first.');
+    throw new Error(`Model not found at ${MODEL_PATH}`);
   }
   return new Promise((resolve, reject) => {
     const llama = spawn(LLAMA_PATH, [
       '-m', MODEL_PATH,
-      '--prompt', `<|begin▁of▁sentence|>${prompt}<|end▁of▁sentence|>`,
+      '-p', `<|begin▁of▁sentence|>${prompt}<|end▁of▁sentence|>`,
       '--temp', '0.2',
-      '--max-tokens', '1024',
-      '--no-display-prompt'
+      '-n', '1024'
     ]);
     let result = '';
     llama.stdout.on('data', (data) => { result += data.toString(); });
     llama.stderr.on('data', (data) => { console.error(data.toString()); });
     llama.on('close', (code) => {
       if (code === 0) resolve(result.trim());
-      else reject(new Error(`llama exited with code ${code}`));
+      else reject(new Error(`llama-cli exited with code ${code}`));
     });
   });
 }
