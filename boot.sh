@@ -28,6 +28,9 @@ echo "✅ Keep‑alive started"
 # Start auto‑scaler (optional)
 nohup bash "$PROJECT_ROOT/kernel/src/services/autoscaler.sh" > "$PROJECT_ROOT/runtime/logs/autoscaler.log" 2>&1 &
 echo "✅ Auto‑scaler started"
+# Admin Dashboard (Enterprise Grid)
+nohup node \"$PROJECT_ROOT/apps/web/admin.js\" > \"$PROJECT_ROOT/runtime/logs/admin.log\" 2>&1 &
+echo \"✅ Admin Dashboard (port 5000)\"
 
 echo ""
 echo "🔐 API secured with JWT (admin / klyn)"
