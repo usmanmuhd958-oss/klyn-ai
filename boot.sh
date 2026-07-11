@@ -33,6 +33,13 @@ echo "✅ Auto‑scaler started"
 mkdir -p "$PROJECT_ROOT/runtime/logs"
 nohup node "$PROJECT_ROOT/apps/web/admin.js" > "$PROJECT_ROOT/runtime/logs/admin.log" 2>&1 &
 echo "✅ Admin Dashboard (port 5000)"
+# Global API Gateway (port 8000)
+nohup bash api/gateway.sh > runtime/logs/gateway.log 2>&1 &
+echo "✅ Global API Gateway (port 8000)"
+
+# Web Code Editor (port 8080)
+nohup bash dashboard/web_editor.sh > runtime/logs/web_editor.log 2>&1 &
+echo "✅ Web Code Editor (port 8080)"
 
 # Autonomous Self‑Improvement Scheduler (runs every 6 hours)
 nohup bash "$PROJECT_ROOT/kernel/src/services/improvement_scheduler.sh" > "$PROJECT_ROOT/runtime/logs/autonomous_improver.log" 2>&1 &
