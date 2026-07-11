@@ -1,57 +1,25 @@
-#!/usr/bin/env node
-const { execSync, spawn } = require('child_process');
-const readline = require('readline');
-const path = require('path');
+#!/bin/bash
+PROJECT_ROOT="/data/data/com.termux/files/home/klyn-ai-os"
+cd "$PROJECT_ROOT"
 
-const PROJECT_ROOT = process.env.PROJECT_ROOT || path.join(__dirname, '..');
-const PROMPT = '👑 supashell> ';
+echo "👑 Klyn AI OS v23 – Enterprise Supashell"
+echo "Type 'help' for commands"
 
-const commands = {
-  start:  { fn: () => exec('bash boot.sh') },
-  status: { fn: () => exec('node scripts/health_check.js') },
-  agent:  { fn: (args) => exec(`bash agents/src/${args[0]}.sh "${args.slice(1).join(' ')}"`) },
-  logs:   { fn: () => { const p = spawn('tail', ['-f', 'runtime/logs/system.jsonl'], { cwd: PROJECT_ROOT, stdio: 'inherit' }); return p; } },
-  list:   { fn: () => exec('pgrep -f "node api/server.js" >/dev/null && echo "api (RUNNING)" || echo "api (DEAD)"') },
-  improve:{ fn: () => exec('bash agents/src/self_improver.sh') },
-  plugin: { fn: (args) => {
-    if (args[0] === 'install' && args[1]) {
-      const idx = require(path.join(PROJECT_ROOT, 'plugins/marketplace/index.json'));
-      const url = idx[args[1]];
-      if (url) exec(`curl -s ${url} | bash`);
-      else console.log('Plugin not found');
-    } else console.log('Usage: plugin install <name>');
-  }},
-  deploy: { fn: () => exec('bash scripts/deploy_cloud.sh') },
-  exit:   { fn: () => process.exit(0) }
-};
-
-function exec(cmd) {
-  try {
-    const out = execSync(cmd, { cwd: PROJECT_ROOT, stdio: 'pipe' }).toString();
-    console.log(out);
-  } catch (e) {
-    console.error(e.stderr ? e.stderr.toString() : e.message);
-  }
-}
-
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-  prompt: PROMPT,
-  completer: (line) => {
-    const hits = Object.keys(commands).filter(c => c.startsWith(line));
-    return [hits.length ? hits : Object.keys(commands), line];
-  }
-});
-
-rl.prompt();
-rl.on('line', (line) => {
-  const [cmd, ...args] = line.trim().split(/\s+/);
-  if (commands[cmd]) {
-    commands[cmd].fn(args);
-  } else if (cmd) {
-    console.log(`Unknown command: ${cmd}`);
-  }
-  rl.prompt();
-});
-rl.on('close', () => console.log('\nGoodbye.'));
+while true; do
+  read -r -p "supashell> " cmd args
+  case "$cmd" in
+    start) bash boot.sh ;;
+    status) node scripts/health_check.js ;;
+    sysinfo) echo "CPU: $(top -bn1 | grep 'Cpu(s)' | awk '{print $2+$4}')%  Mem: $(free -m | awk '/Mem:/ {printf "%dMB free", $4}')  Disk: $(df -h /data | awk 'NR==2 {print $5 " used"}')" ;;
+    top) top -bn1 | head -15 ;;
+    services) for svc in api metrics admin web_editor gateway collaboration; do pgrep -f "node.*${svc}" >/dev/null && echo "$svc: RUNNING" || echo "$svc: DEAD"; done ;;
+    agent) bash agents/src/local_intelligence.sh "$args" ;;
+    edit) bash agents/src/ai_code_editor.sh "$args" ;;
+    improve) bash agents/src/autonomous_improver.sh ;;
+    backup) bash scripts/backup_rotate.sh ;;
+    project) shift; bash bin/klyn-project "$@" ;;
+    help) echo "Commands: start, status, sysinfo, top, services, agent, edit, improve, backup, project, exit" ;;
+    exit) exit 0 ;;
+    *) echo "Unknown: $cmd. Type 'help'" ;;
+  esac
+done
