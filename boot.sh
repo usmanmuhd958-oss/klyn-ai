@@ -1,53 +1,63 @@
 #!/bin/bash
 export PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
-mkdir -p runtime/{logs,events,queue/failed,pids,metrics}
+mkdir -p runtime/{logs,events,pids,metrics}
 
-echo "👑 Klyn AI OS v18 Supreme"
-echo "========================="
+echo "👑 Klyn AI OS v23 – Enterprise Final"
+echo "===================================="
 
-# API Server
-node "$PROJECT_ROOT/api/server.js" > "$PROJECT_ROOT/runtime/logs/api.log" 2>&1 &
-echo "✅ API server (PID $!)"
+# Core API (must start first)
+node api/server.js > runtime/logs/api.log 2>&1 &
+echo "✅ API Server (PID $!)"
+sleep 1
 
-# Metrics Endpoint
-node "$PROJECT_ROOT/api/metrics.js" > "$PROJECT_ROOT/runtime/logs/metrics.log" 2>&1 &
+# Metrics
+node api/metrics.js > runtime/logs/metrics.log 2>&1 &
 echo "✅ Metrics (PID $!)"
 
-# Keep‑alive daemon
-nohup bash -c '
-while true; do
-    if ! pgrep -f "node api/server.js" >/dev/null; then
-        echo "[$(date)] API died, restarting..."
-        node '"$PROJECT_ROOT"'/api/server.js >> '"$PROJECT_ROOT"'/runtime/logs/api.log 2>&1 &
-    fi
-    sleep 5
-done
-' > "$PROJECT_ROOT/runtime/logs/keepalive.log" 2>&1 &
-echo "✅ Keep‑alive started"
-
-# Auto‑scaler
-nohup bash "$PROJECT_ROOT/kernel/src/services/autoscaler.sh" > "$PROJECT_ROOT/runtime/logs/autoscaler.log" 2>&1 &
-echo "✅ Auto‑scaler started"
-
-# Enterprise Admin Dashboard
-mkdir -p "$PROJECT_ROOT/runtime/logs"
-nohup node "$PROJECT_ROOT/apps/web/admin.js" > "$PROJECT_ROOT/runtime/logs/admin.log" 2>&1 &
+# Admin Dashboard
+node apps/web/admin.js > runtime/logs/admin.log 2>&1 &
 echo "✅ Admin Dashboard (port 5000)"
-# Global API Gateway (port 8000)
-nohup node api/gateway.js > runtime/logs/gateway.log 2>&1 &
-echo "✅ Global API Gateway (port 8000)"
 
-# Web Code Editor (port 8081)
-nohup node dashboard/web_editor.js > runtime/logs/web_editor.log 2>&1 &
-echo "✅ Web Code Editor (port 8081)"
+# Web Editor
+node dashboard/web_editor.js > runtime/logs/web_editor.log 2>&1 &
+echo "✅ Web Editor (port 8081)"
 
-# Autonomous Self‑Improvement Scheduler (runs every 6 hours)
-nohup bash "$PROJECT_ROOT/kernel/src/services/improvement_scheduler.sh" > "$PROJECT_ROOT/runtime/logs/autonomous_improver.log" 2>&1 &
-echo "✅ Autonomous Self‑Improvement (every 6h)"
+# Gateway
+node api/gateway.js > runtime/logs/gateway.log 2>&1 &
+echo "✅ Gateway (port 8000)"
+
+# Collaboration Server
+node services/collaboration/server.js > runtime/logs/collaboration.log 2>&1 &
+echo "✅ Collaboration (port 9000)"
+
+# System Monitor
+bash agents/src/sys_monitor.sh > runtime/logs/sys_monitor.log 2>&1 &
+echo "✅ System Monitor"
+
+# Crash Recovery Daemon
+bash kernel/src/services/crash_recovery.sh > runtime/logs/crash_recovery.log 2>&1 &
+echo "✅ Crash Recovery (auto‑restarts dead services)"
+
+# Plugin auto‑install
+bash plugins/auto_install.sh &
+echo "✅ Plugins loaded"
+
+# Autonomous Improvement Scheduler (every 6 hours)
+nohup bash -c 'while true; do bash agents/src/autonomous_improver.sh; sleep 21600; done' > runtime/logs/autonomous_improver.log 2>&1 &
+echo "✅ Autonomous Improvement (every 6h)"
+
+# Backup rotation (daily)
+nohup bash -c 'while true; do bash scripts/backup_rotate.sh; sleep 86400; done' > runtime/logs/backup.log 2>&1 &
+echo "✅ Daily Backup Rotation"
+
+# Status page
+node apps/web/status.js > runtime/logs/status_page.log 2>&1 &
+echo "✅ System Status Page (port 5050)"
 
 echo ""
-echo "🔐 API secured with JWT (admin / klyn)"
-echo "📊 Metrics on http://localhost:9090/metrics"
-echo "🏛️ Admin Dashboard on http://localhost:5000"
-echo "🧩 Use './bin/klyn' for the menu"
-echo "💯 Klyn AI OS v18 Supreme – 10/10, self‑evolving, undisputed"
+echo "🔐 API: http://localhost:3000/status"
+echo "🏛️ Admin: http://localhost:5000"
+echo "🌐 Web IDE: http://localhost:8081"
+echo "📊 Status: http://localhost:5050"
+echo "🧩 CLI: ./bin/supashell"
+echo "💯 Klyn AI OS v23 – Enterprise, 10/10, sovereign and self‑maintaining"
