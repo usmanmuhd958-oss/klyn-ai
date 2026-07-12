@@ -29,6 +29,9 @@ echo "✅ Gateway (port 8000)"
 # Collaboration Server
 node services/collaboration/server.js > runtime/logs/collaboration.log 2>&1 &
 echo "✅ Collaboration (port 9000)"
+# Yjs Collaborative Editing Server (port 1234)
+nohup node services/collaboration/yjs_server.js > runtime/logs/yjs_collab.log 2>&1 &
+echo "✅ Yjs Collab Server (port 1234)"
 
 # System Monitor
 bash agents/src/sys_monitor.sh > runtime/logs/sys_monitor.log 2>&1 &
