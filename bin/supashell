@@ -57,6 +57,7 @@ check_models() {
 while true; do
     read -r -p "supashell> " cmd args
     case "$cmd" in
+        autopilot) bash agents/src/autonomous_orchestrator.sh & ;;
         bestmodel) node kernel/src/services/agent_memory.js best ;;
         recall) node kernel/src/services/agent_memory.js recall "$args" ;;
         remember) shift; node kernel/src/services/agent_memory.js learn "$@" ;;
