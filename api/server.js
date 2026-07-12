@@ -1,100 +1,261 @@
 const http = require('http');
 const url = require('url');
+const crypto = require('crypto');
+
 let jwt;
-try { jwt = require('jsonwebtoken'); } catch(e) {}
-const SECRET = process.env.JWT_SECRET || '***REMOVED***';
+try { jwt = require('jsonwebtoken'); } catch (e) {
+  console.error('❌ jsonwebtoken not installed. Run: npm install jsonwebtoken');
+  process.exit(1);
+}
+
+const rbac = require('../kernel/src/auth/rbac.js');
+const audit = require('../kernel/src/services/audit_logger.js');
+const agentExecutor = require('../kernel/src/execution/agent_executor.js');
+
+// Fail-fast on missing secrets
+const JWT_SECRET = process.env.JWT_SECRET;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+
+if (!JWT_SECRET || !ADMIN_PASSWORD) {
+  console.error('❌ FATAL: JWT_SECRET or ADMIN_PASSWORD not set');
+  process.exit(1);
+}
+
 const PORT = process.env.PORT || 3000;
 
-// Load RBAC and Audit (optional – graceful fallback if not present)
-let rbac, audit;
-try { rbac = require('../kernel/src/auth/rbac.js'); rbac.initRBAC(); } catch(e) {}
-try { audit = require('../kernel/src/services/audit_logger.js'); } catch(e) {}
+// Request logging middleware
+function logRequest(req, action, user = 'anonymous', details = {}) {
+  audit.logEvent(action, user, {
+    method: req.method,
+    path: req.url,
+    ...details
+  }).catch(err => console.error('[Audit] Log error:', err));
+}
 
 function authenticate(req) {
-  const auth = req.headers.authorization;
-  if (!auth) return false;
+  const auth = req.headers.authorization || '';
   const token = auth.split(' ')[1];
-  try { return jwt.verify(token, SECRET); } catch(e) { return false; }
+  if (!token) return null;
+  
+  try {
+    return jwt.verify(token, JWT_SECRET);
+  } catch (err) {
+    return null;
+  }
 }
 
 const server = http.createServer((req, res) => {
   const parsed = url.parse(req.url, true);
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
 
-  // Health endpoint (no auth)
+  // Health check (no auth required)
   if (parsed.pathname === '/status' && req.method === 'GET') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'healthy' }));
+    res.writeHead(200);
+    res.end(JSON.stringify({ status: 'healthy', timestamp: new Date().toISOString() }));
     return;
   }
 
-  // Login endpoint (no auth)
+  // Login endpoint
   if (parsed.pathname === '/auth/login' && req.method === 'POST') {
     let body = '';
-    req.on('data', chunk => body += chunk);
+    req.on('data', chunk => {
+      if (body.length > 10 * 1024) return; // Prevent large payloads
+      body += chunk;
+    });
     req.on('end', () => {
-      const { username, password } = JSON.parse(body || '{}');
-      if (username === 'admin' && password === (process.env.ADMIN_PASSWORD || 'klyn')) {
-        const token = jwt.sign({ username }, SECRET, { expiresIn: '24h' });
-        if (audit) audit.logEvent('login', username, { success: true });
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ token }));
-      } else {
-        if (audit) audit.logEvent('login', username || 'unknown', { success: false });
-        res.writeHead(403);
-        res.end('Forbidden');
+      try {
+        const { username, password } = JSON.parse(body || '{}');
+        
+        // Constant-time comparison to prevent timing attacks
+        const pwMatch = crypto.timingSafeEqual(
+          Buffer.from(password || ''),
+          Buffer.from(ADMIN_PASSWORD)
+        );
+        const userMatch = username === 'admin';
+
+        if (userMatch && pwMatch) {
+          const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: '24h' });
+          logRequest(req, 'auth:login_success', username);
+          res.writeHead(200);
+          res.end(JSON.stringify({ token }));
+        } else {
+          logRequest(req, 'auth:login_failure', username || 'unknown');
+          res.writeHead(403);
+          res.end(JSON.stringify({ error: 'Invalid credentials' }));
+        }
+      } catch (err) {
+        console.error('[API] Login parse error:', err);
+        res.writeHead(400);
+        res.end(JSON.stringify({ error: 'Invalid request' }));
       }
     });
     return;
   }
 
-  // Agent run (auth + RBAC required)
+  // Secure agent execution endpoint
   if (parsed.pathname === '/agent/run' && req.method === 'POST') {
     const user = authenticate(req);
     if (!user) {
       res.writeHead(401);
-      res.end('Unauthorized');
+      res.end(JSON.stringify({ error: 'Unauthorized' }));
       return;
     }
-    if (rbac && !rbac.hasPermission(user.username, 'agent:run')) {
-      if (audit) audit.logEvent('agent:run', user.username, { denied: true });
-      res.writeHead(403);
-      res.end('Forbidden – insufficient permissions');
-      return;
-    }
-    let body = '';
-    req.on('data', chunk => body += chunk);
-    req.on('end', () => {
-      const { agent, task } = JSON.parse(body || '{}');
-      const { exec } = require('child_process');
-      exec(`bash agents/src/${agent}.sh "${task}"`, (err, stdout) => {
-        if (audit) audit.logEvent('agent:run', user.username, { agent, task, success: !err });
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ result: stdout }));
+
+    // Check RBAC permission
+    rbac.hasPermission(user.username, 'agent:run').then(granted => {
+      if (!granted) {
+        logRequest(req, 'agent:run_denied', user.username, { reason: 'no_permission' });
+        res.writeHead(403);
+        res.end(JSON.stringify({ error: 'Forbidden – insufficient permissions' }));
+        return;
+      }
+
+      let body = '';
+      req.on('data', chunk => {
+        if (body.length > 50 * 1024) return; // Prevent large payloads
+        body += chunk;
       });
+
+      req.on('end', async () => {
+        try {
+          const { agent, task } = JSON.parse(body || '{}');
+          
+          if (!agent || typeof agent !== 'string') {
+            throw new Error('Invalid agent parameter');
+          }
+          if (!task || typeof task !== 'string') {
+            throw new Error('Invalid task parameter');
+          }
+
+          // Execute with secure spawn
+          const result = await agentExecutor.executeAgent(agent, task, 30000);
+          
+          logRequest(req, 'agent:run_executed', user.username, {
+            agent,
+            success: result.success,
+            duration: result.duration,
+            error: result.error
+          });
+
+          res.writeHead(result.success ? 200 : 500);
+          res.end(JSON.stringify(result));
+        } catch (err) {
+          console.error('[API] /agent/run error:', err);
+          logRequest(req, 'agent:run_error', user.username, { error: err.message });
+          res.writeHead(400);
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+    }).catch(err => {
+      console.error('[API] RBAC check error:', err);
+      res.writeHead(500);
+      res.end(JSON.stringify({ error: 'Internal server error' }));
     });
     return;
   }
 
-  // Admin endpoint (auth + admin role required)
+  // Admin: add user
   if (parsed.pathname === '/admin/users' && req.method === 'POST') {
     const user = authenticate(req);
-    if (!user) { res.writeHead(401); res.end('Unauthorized'); return; }
-    if (rbac && !rbac.hasPermission(user.username, 'admin:users')) {
-      res.writeHead(403); res.end('Forbidden'); return;
+    if (!user) {
+      res.writeHead(401);
+      res.end(JSON.stringify({ error: 'Unauthorized' }));
+      return;
     }
-    let body = '';
-    req.on('data', chunk => body += chunk);
-    req.on('end', () => {
-      const { username, role } = JSON.parse(body || '{}');
-      if (rbac) rbac.addUser(username, role);
-      if (audit) audit.logEvent('admin:add_user', user.username, { newUser: username, role });
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true }));
+
+    rbac.hasPermission(user.username, 'admin:users').then(granted => {
+      if (!granted) {
+        logRequest(req, 'admin:add_user_denied', user.username);
+        res.writeHead(403);
+        res.end(JSON.stringify({ error: 'Forbidden' }));
+        return;
+      }
+
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', async () => {
+        try {
+          const { username, role } = JSON.parse(body || '{}');
+          if (!username || !role) throw new Error('Missing username or role');
+          
+          await rbac.addUser(username, role);
+          logRequest(req, 'admin:add_user_success', user.username, { newUser: username, role });
+          res.writeHead(200);
+          res.end(JSON.stringify({ success: true }));
+        } catch (err) {
+          console.error('[API] admin:add_user error:', err);
+          res.writeHead(400);
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+    }).catch(err => {
+      console.error('[API] RBAC check error:', err);
+      res.writeHead(500);
+      res.end(JSON.stringify({ error: 'Internal server error' }));
+    });
+    return;
+  }
+
+  // Audit verification endpoint
+  if (parsed.pathname === '/audit/verify' && req.method === 'GET') {
+    const user = authenticate(req);
+    if (!user) {
+      res.writeHead(401);
+      res.end(JSON.stringify({ error: 'Unauthorized' }));
+      return;
+    }
+
+    audit.verifyChain().then(valid => {
+      res.writeHead(200);
+      res.end(JSON.stringify({ valid }));
+    }).catch(err => {
+      console.error('[API] audit:verify error:', err);
+      res.writeHead(500);
+      res.end(JSON.stringify({ error: 'Internal error' }));
+    });
+    return;
+  }
+
+  // Get recent audit events
+  if (parsed.pathname === '/audit/recent' && req.method === 'GET') {
+    const user = authenticate(req);
+    if (!user) {
+      res.writeHead(401);
+      res.end(JSON.stringify({ error: 'Unauthorized' }));
+      return;
+    }
+
+    audit.getRecentEvents(50).then(events => {
+      res.writeHead(200);
+      res.end(JSON.stringify(events));
+    }).catch(err => {
+      console.error('[API] audit:recent error:', err);
+      res.writeHead(500);
+      res.end(JSON.stringify({ error: 'Internal error' }));
     });
     return;
   }
 
   res.writeHead(404);
-  res.end('Not found');
+  res.end(JSON.stringify({ error: 'Not found' }));
 });
-server.listen(PORT, () => console.log(`API secured with RBAC on port ${PORT}`));
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, closing server...');
+  server.close(() => process.exit(0));
+});
+
+rbac.initRBAC()
+  .then(() => audit.initAudit())
+  .then(() => {
+    server.listen(PORT, () => {
+      console.log(`✅ Secure API listening on port ${PORT}`);
+      console.log(`🔒 RBAC enabled | Audit logging active | Agent executor hardened`);
+    });
+  })
+  .catch(err => {
+    console.error('❌ Startup failed:', err);
+    process.exit(1);
+  });
