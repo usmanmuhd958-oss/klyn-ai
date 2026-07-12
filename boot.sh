@@ -56,6 +56,13 @@ echo "✅ System Status Page (port 5050)"
 # Performance Analytics (port 6060)
 nohup node apps/web/analytics.js > runtime/logs/analytics.log 2>&1 &
 echo "✅ Performance Analytics (port 6060)"
+# Team Server (port 7000)
+nohup node apps/web/team_server.js > runtime/logs/team_server.log 2>&1 &
+echo "✅ Team Server (port 7000)"
+
+# Public Status Page (port 7070)
+nohup node apps/web/public_status.js > runtime/logs/public_status.log 2>&1 &
+echo "✅ Public Status Page (port 7070)"
 
 echo ""
 echo "🔐 API: http://localhost:3000/status"
