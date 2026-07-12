@@ -57,6 +57,9 @@ check_models() {
 while true; do
     read -r -p "supashell> " cmd args
     case "$cmd" in
+        bestmodel) node kernel/src/services/agent_memory.js best ;;
+        recall) node kernel/src/services/agent_memory.js recall "$args" ;;
+        remember) shift; node kernel/src/services/agent_memory.js learn "$@" ;;
         start) bash boot.sh ;;
         status) node scripts/health_check.js ;;
         services) for svc in api metrics admin web_editor gateway collaboration; do pgrep -f "node.*${svc}" >/dev/null && echo "$svc: RUNNING" || echo "$svc: DEAD"; done ;;
@@ -74,3 +77,24 @@ while true; do
         *) echo "Unknown command: $cmd. Type 'help' for available commands." ;;
     esac
 done
+
+# Model switcher
+model() {
+    case "$1" in
+        use) 
+            export KLYN_MODEL="$2"
+            echo "Model set to: $KLYN_MODEL"
+            ;;
+        list)
+            echo "Available models:"
+            echo "  local     (DeepSeek‑Coder‑6.7B, offline)"
+            echo "  openai    (GPT‑5.5 Pro)"
+            echo "  anthropic (Opus 4.8)"
+            echo "  gemini    (Gemini 3.5 Pro)"
+            echo "  deepseek  (DeepSeek R1)"
+            ;;
+        *) 
+            echo "Usage: model use <name> | model list"
+            ;;
+    esac
+}

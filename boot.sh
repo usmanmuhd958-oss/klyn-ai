@@ -53,6 +53,9 @@ echo "✅ Daily Backup Rotation"
 # Status page
 node apps/web/status.js > runtime/logs/status_page.log 2>&1 &
 echo "✅ System Status Page (port 5050)"
+# Performance Analytics (port 6060)
+nohup node apps/web/analytics.js > runtime/logs/analytics.log 2>&1 &
+echo "✅ Performance Analytics (port 6060)"
 
 echo ""
 echo "🔐 API: http://localhost:3000/status"
