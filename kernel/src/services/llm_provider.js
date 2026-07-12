@@ -1,58 +1,33 @@
-const fs = require('fs');
+const { spawn } = require('child_process');
 const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '..', '..', 'config', 'ai_keys.env') });
+const fs = require('fs');
 
-const providers = {
-  openai: {
-    keyEnv: 'OPENAI_API_KEY',
-    endpoint: 'https://api.openai.com/v1/chat/completions',
-    model: 'gpt-4o',
-    buildBody: (prompt) => ({ model: 'gpt-4o', messages: [{ role: 'user', content: prompt }] }),
-    parseResponse: (data) => data.choices[0].message.content
-  },
-  anthropic: {
-    keyEnv: 'ANTHROPIC_API_KEY',
-    endpoint: 'https://api.anthropic.com/v1/messages',
-    model: 'claude-opus-4-20240229',
-    buildBody: (prompt) => ({ model: 'claude-opus-4-20240229', max_tokens: 1024, messages: [{ role: 'user', content: prompt }] }),
-    parseResponse: (data) => data.content[0].text
-  },
-  gemini: {
-    keyEnv: 'GEMINI_API_KEY',
-    endpoint: null,
-    model: 'gemini-2.5-pro',
-    buildUrl: (prompt) => `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${process.env.GEMINI_API_KEY}`,
-    parseResponse: (data) => data.candidates[0].content.parts[0].text
-  },
-  deepseek: {
-    keyEnv: 'DEEPSEEK_API_KEY',
-    endpoint: 'https://api.deepseek.com/v1/chat/completions',
-    model: 'deepseek-r1',
-    buildBody: (prompt) => ({ model: 'deepseek-r1', messages: [{ role: 'user', content: prompt }] }),
-    parseResponse: (data) => data.choices[0].message.content
-  }
+const MODELS = {
+  openai:   { env: 'OPENAI_API_KEY',    name: 'gpt-5.5-pro',          endpoint: 'https://api.openai.com/v1/chat/completions',      authHeader: (k) => `Bearer ${k}` },
+  anthropic:{ env: 'ANTHROPIC_API_KEY',  name: 'claude-opus-4-8-20260201', endpoint: 'https://api.anthropic.com/v1/messages',      authHeader: (k) => `x-api-key: ${k}` },
+  gemini:   { env: 'GEMINI_API_KEY',     name: 'gemini-3.5-pro',      endpoint: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-pro:generateContent' },
+  deepseek: { env: 'DEEPSEEK_API_KEY',   name: 'deepseek-r1',         endpoint: 'https://api.deepseek.com/v1/chat/completions',   authHeader: (k) => `Bearer ${k}` }
 };
 
-async function callProvider(name, prompt) {
-  const p = providers[name];
-  if (!p) throw new Error(`Unknown provider: ${name}`);
-  if (!process.env[p.keyEnv]) throw new Error(`${p.keyEnv} not set`);
-
-  if (p.endpoint) {
-    const res = await fetch(p.endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env[p.keyEnv]}`
-      },
-      body: JSON.stringify(p.buildBody(prompt))
+function loadKeys() {
+  const envFile = path.join(__dirname, '..', '..', 'config', 'ai_keys.env');
+  if (fs.existsSync(envFile)) {
+    const lines = fs.readFileSync(envFile, 'utf8').split('\n');
+    lines.forEach(line => {
+      const [key, ...rest] = line.split('=');
+      if (key && rest.length) process.env[key.trim()] = rest.join('=').trim();
     });
-    const data = await res.json();
-    if (data.error) throw new Error(data.error.message);
-    return p.parseResponse(data);
-  } else {
-    // Gemini uses different API
-    const url = p.buildUrl(prompt);
+  }
+}
+
+async function callProvider(provider, prompt) {
+  const model = MODELS[provider];
+  if (!model) throw new Error(`Unknown provider: ${provider}`);
+  const apiKey = process.env[model.env];
+  if (!apiKey) throw new Error(`${model.env} not set`);
+
+  if (provider === 'gemini') {
+    const url = `${model.endpoint}?key=${apiKey}`;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -60,29 +35,45 @@ async function callProvider(name, prompt) {
     });
     const data = await res.json();
     if (data.error) throw new Error(data.error.message);
-    return p.parseResponse(data);
+    return data.candidates[0].content.parts[0].text;
   }
+
+  const body = provider === 'anthropic'
+    ? JSON.stringify({ model: model.name, max_tokens: 1024, messages: [{ role: 'user', content: prompt }] })
+    : JSON.stringify({ model: model.name, messages: [{ role: 'user', content: prompt }] });
+
+  const res = await fetch(model.endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': model.authHeader(apiKey)
+    },
+    body
+  });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message);
+  return provider === 'anthropic' ? data.content[0].text : data.choices[0].message.content;
 }
 
 async function bestEffortCall(prompt, preferredProvider) {
-  const order = preferredProvider ? [preferredProvider, ...Object.keys(providers).filter(p => p !== preferredProvider)] : Object.keys(providers);
-  for (const name of order) {
+  loadKeys();
+  const order = preferredProvider ? [preferredProvider, ...Object.keys(MODELS).filter(p => p !== preferredProvider)] : Object.keys(MODELS);
+  for (const provider of order) {
     try {
-      return await callProvider(name, prompt);
-    } catch (e) {
-      console.error(`[${name}] failed: ${e.message}`);
+      return await callProvider(provider, prompt);
+    } catch(e) {
+      console.error(`[${provider}] ${e.message}`);
     }
   }
-  throw new Error('All AI providers failed');
+  throw new Error('All providers failed');
 }
 
+// CLI test: node llm_provider.js "Your prompt" [provider]
 if (require.main === module) {
-  const agent = process.argv[2];
-  const task = process.argv.slice(3).join(' ');
-  const prompt = `You are the ${agent} agent in Klyn AI OS. Task: ${task}. Provide a complete solution.`;
-  bestEffortCall(prompt)
-    .then(r => { console.log(r); process.exit(0); })
-    .catch(e => { console.error(e.message); process.exit(1); });
+  const task = process.argv.slice(2).join(' ');
+  const preferred = process.argv[2] && Object.keys(MODELS).includes(process.argv[2]) ? process.argv[2] : null;
+  bestEffortCall(task, preferred)
+    .then(console.log)
+    .catch(console.error);
 }
-
-module.exports = { bestEffortCall };
+module.exports = { bestEffortCall, MODELS };
