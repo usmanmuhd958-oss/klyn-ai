@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "description": "Enterprise-grade AI development platform with self-healing capabilities",
   "main": "kernel/orchestrator.js",
-  "engines": { "node": ">=14.0.0" },
+  "engines": {
+    "node": ">=14.0.0"
+  },
   "scripts": {
     "start": "node --expose-gc index.js",
     "dev": "LOG_LEVEL=DEBUG node --expose-gc index.js",
@@ -13,10 +15,22 @@
     "deploy": "bash tools/deploy_enterprise_core.sh",
     "dry-run": "bash tools/autonomous_dry_run.sh"
   },
-  "keywords": ["ai", "agents", "orchestration", "self-healing", "enterprise", "termux", "android"],
+  "keywords": [
+    "ai",
+    "agents",
+    "orchestration",
+    "self-healing",
+    "enterprise",
+    "termux",
+    "android"
+  ],
   "author": "KLYN AI Team",
   "license": "MIT",
-  "dependencies": {},
-  "devDependencies": {},
-  "repository": { "type": "git", "url": "https://github.com/klyn-ai/klyn-os.git" }
+  "dependencies": {
+    "jsonwebtoken": "^9.0.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/klyn-ai/klyn-os.git"
+  }
 }
