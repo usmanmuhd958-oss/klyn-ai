@@ -9,7 +9,7 @@ jobs:
         with:
           node-version: '22'
       - run: npm install
-      - name: Start API and verify health
+      - name: Start API and Run Health Check
         env:
           JWT_SECRET: ***REMOVED***
           ADMIN_PASSWORD: klyn
