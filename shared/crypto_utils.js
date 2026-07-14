@@ -1,131 +1,131 @@
-/**
- * KLYN AI OS — Cryptographic Utilities
- * Provides HMAC-SHA256 token generation and constant-time verification.
- * Used by both the Kernel and all Agent processes.
- */
+'use strict';
 
-"use strict";
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
-const crypto = require("crypto");
-
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-const ALGORITHM      = "sha256";
-const TOKEN_ENCODING = "hex";
-const TOKEN_TTL_MS   = 30_000; // 30 seconds — tokens are short-lived by design
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-/**
- * Derives a deterministic HMAC signature over a payload using the master secret.
- *
- * @param {string} payload   - Canonical string to sign (agentId + ":" + issuedAt)
- * @param {string} secret    - Master secret (never transmitted; only the token leaves this fn)
- * @returns {string}         - Hex-encoded HMAC digest
- */
-function deriveHMAC(payload, secret) {
-  if (typeof payload !== "string" || typeof secret !== "string") {
-    throw new TypeError("[crypto_utils] deriveHMAC: payload and secret must be strings");
-  }
-
-  return crypto
-    .createHmac(ALGORITHM, secret)
-    .update(payload)
-    .digest(TOKEN_ENCODING);
-}
-
-/**
- * Issues a time-bound token for a given agent.
- *
- * Token format (base64url-encoded JSON envelope):
- *   { agentId, issuedAt, signature }
- *
- * @param {string} agentId  - Unique agent identifier
- * @param {string} secret   - Master secret from environment
- * @returns {string}        - Opaque base64url token string
- */
-function issueToken(agentId, secret) {
-  if (!agentId || typeof agentId !== "string") {
-    throw new TypeError("[crypto_utils] issueToken: agentId must be a non-empty string");
-  }
-
-  const issuedAt = Date.now();
-  const payload  = `${agentId}:${issuedAt}`;
-  const signature = deriveHMAC(payload, secret);
-
-  const envelope = { agentId, issuedAt, signature };
-  return Buffer.from(JSON.stringify(envelope)).toString("base64url");
-}
-
-/**
- * Verifies a token. Returns a result object — never throws on invalid tokens
- * so callers can handle gracefully without try/catch clutter.
- *
- * @param {string} rawToken  - The opaque token string received from an agent
- * @param {string} agentId   - Expected agentId (must match token's embedded agentId)
- * @param {string} secret    - Master secret for HMAC recomputation
- * @returns {{ valid: boolean, reason?: string, agentId?: string }}
- */
-function verifyToken(rawToken, agentId, secret) {
-  // ── 1. Decode ──────────────────────────────────────────────────────────────
-  let envelope;
-  try {
-    const json = Buffer.from(rawToken, "base64url").toString("utf8");
-    envelope   = JSON.parse(json);
-  } catch {
-    return { valid: false, reason: "TOKEN_MALFORMED" };
-  }
-
-  // ── 2. Shape check ─────────────────────────────────────────────────────────
-  const { agentId: tokenAgentId, issuedAt, signature } = envelope;
-
-  if (
-    typeof tokenAgentId !== "string" ||
-    typeof issuedAt     !== "number" ||
-    typeof signature    !== "string"
-  ) {
-    return { valid: false, reason: "TOKEN_SCHEMA_INVALID" };
-  }
-
-  // ── 3. Agent identity check ────────────────────────────────────────────────
-  if (tokenAgentId !== agentId) {
-    return { valid: false, reason: "TOKEN_AGENT_MISMATCH" };
-  }
-
-  // ── 4. TTL check (before crypto — fail fast, no timing oracle) ─────────────
-  const age = Date.now() - issuedAt;
-  if (age < 0 || age > TOKEN_TTL_MS) {
-    return { valid: false, reason: "TOKEN_EXPIRED", age };
-  }
-
-  // ── 5. Constant-time HMAC comparison (prevents timing attacks) ────────────
-  const expectedPayload   = `${tokenAgentId}:${issuedAt}`;
-  const expectedSignature = deriveHMAC(expectedPayload, secret);
-
-  let signaturesMatch = false;
-  try {
-    // Both buffers must be same length for timingSafeEqual
-    const receivedBuf = Buffer.from(signature,         TOKEN_ENCODING);
-    const expectedBuf = Buffer.from(expectedSignature, TOKEN_ENCODING);
-
-    if (receivedBuf.length === expectedBuf.length) {
-      signaturesMatch = crypto.timingSafeEqual(receivedBuf, expectedBuf);
-    }
-  } catch {
-    return { valid: false, reason: "TOKEN_CRYPTO_ERROR" };
-  }
-
-  if (!signaturesMatch) {
-    return { valid: false, reason: "TOKEN_SIGNATURE_INVALID" };
-  }
-
-  return { valid: true, agentId: tokenAgentId };
-}
-
-// ─── Exports ──────────────────────────────────────────────────────────────────
-
-module.exports = {
-  issueToken,
-  verifyToken,
-  TOKEN_TTL_MS,
+const CRYPTO_CONFIG = {
+  ALGORITHM: 'aes-256-gcm',
+  KEY_LENGTH: 32,
+  IV_LENGTH: 16,
+  AUTH_TAG_LENGTH: 16,
+  SALT_LENGTH: 64,
+  ITERATIONS: 100000,
+  DIGEST: 'sha256',
+  SIGNATURE_ALGORITHM: 'sha256'
 };
+
+class KeyManager {
+  constructor(keystorePath = null) {
+    this.keystorePath = keystorePath || path.join(process.cwd(), '.klyn', 'keystore');
+    this.masterKey = null;
+    this.agentKeys = new Map();
+    this._ensureKeystore();
+  }
+  _ensureKeystore() {
+    try {
+      const dir = path.dirname(this.keystorePath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    } catch (error) { throw new Error(`Failed to create keystore: ${error.message}`); }
+  }
+  async initializeMasterKey() {
+    try {
+      if (fs.existsSync(this.keystorePath)) {
+        const data = fs.readFileSync(this.keystorePath, 'utf8');
+        const parsed = JSON.parse(data);
+        this.masterKey = Buffer.from(parsed.masterKey, 'hex');
+        if (parsed.agentKeys) {
+          Object.entries(parsed.agentKeys).forEach(([agentId, key]) => { this.agentKeys.set(agentId, Buffer.from(key, 'hex')); });
+        }
+      } else {
+        this.masterKey = crypto.randomBytes(CRYPTO_CONFIG.KEY_LENGTH);
+        await this._saveKeystore();
+      }
+      return true;
+    } catch (error) { throw new Error(`Master key initialization failed: ${error.message}`); }
+  }
+  generateAgentKey(agentId) {
+    if (this.agentKeys.has(agentId)) return this.agentKeys.get(agentId);
+    const agentKey = crypto.pbkdf2Sync(this.masterKey, agentId, CRYPTO_CONFIG.ITERATIONS, CRYPTO_CONFIG.KEY_LENGTH, CRYPTO_CONFIG.DIGEST);
+    this.agentKeys.set(agentId, agentKey);
+    this._saveKeystore();
+    return agentKey;
+  }
+  getAgentKey(agentId) { return this.agentKeys.has(agentId) ? this.agentKeys.get(agentId) : this.generateAgentKey(agentId); }
+  async _saveKeystore() {
+    try {
+      const data = { masterKey: this.masterKey.toString('hex'), agentKeys: Object.fromEntries(Array.from(this.agentKeys.entries()).map(([k, v]) => [k, v.toString('hex')])), created: Date.now() };
+      fs.writeFileSync(this.keystorePath, JSON.stringify(data, null, 2), { mode: 0o600 });
+    } catch (error) { throw new Error(`Failed to save keystore: ${error.message}`); }
+  }
+  async rotateMasterKey() {
+    const oldKey = this.masterKey;
+    this.masterKey = crypto.randomBytes(CRYPTO_CONFIG.KEY_LENGTH);
+    const agentIds = Array.from(this.agentKeys.keys());
+    this.agentKeys.clear();
+    agentIds.forEach(id => this.generateAgentKey(id));
+    await this._saveKeystore();
+    return true;
+  }
+}
+
+class CryptoService {
+  constructor(keyManager) { this.keyManager = keyManager; }
+  signMessage(message, agentId) {
+    try {
+      const key = this.keyManager.getAgentKey(agentId);
+      const hmac = crypto.createHmac(CRYPTO_CONFIG.SIGNATURE_ALGORITHM, key);
+      const messageData = typeof message === 'string' ? message : JSON.stringify(message);
+      hmac.update(messageData);
+      return hmac.digest('hex');
+    } catch (error) { throw new Error(`Message signing failed: ${error.message}`); }
+  }
+  verifySignature(message, signature, agentId) {
+    try {
+      const expectedSignature = this.signMessage(message, agentId);
+      return crypto.timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(expectedSignature, 'hex'));
+    } catch (error) { return false; }
+  }
+  encrypt(data, agentId) {
+    try {
+      const key = this.keyManager.getAgentKey(agentId);
+      const iv = crypto.randomBytes(CRYPTO_CONFIG.IV_LENGTH);
+      const cipher = crypto.createCipheriv(CRYPTO_CONFIG.ALGORITHM, key, iv);
+      const dataString = typeof data === 'string' ? data : JSON.stringify(data);
+      let encrypted = cipher.update(dataString, 'utf8', 'hex');
+      encrypted += cipher.final('hex');
+      const authTag = cipher.getAuthTag();
+      return { encrypted, iv: iv.toString('hex'), authTag: authTag.toString('hex') };
+    } catch (error) { throw new Error(`Encryption failed: ${error.message}`); }
+  }
+  decrypt(encryptedData, agentId) {
+    try {
+      const key = this.keyManager.getAgentKey(agentId);
+      const iv = Buffer.from(encryptedData.iv, 'hex');
+      const authTag = Buffer.from(encryptedData.authTag, 'hex');
+      const decipher = crypto.createDecipheriv(CRYPTO_CONFIG.ALGORITHM, key, iv);
+      decipher.setAuthTag(authTag);
+      let decrypted = decipher.update(encryptedData.encrypted, 'hex', 'utf8');
+      decrypted += decipher.final('utf8');
+      try { return JSON.parse(decrypted); } catch { return decrypted; }
+    } catch (error) { throw new Error(`Decryption failed: ${error.message}`); }
+  }
+  generateToken(length = 32) { return crypto.randomBytes(length).toString('hex'); }
+  hash(data, salt = null) {
+    const actualSalt = salt || crypto.randomBytes(CRYPTO_CONFIG.SALT_LENGTH);
+    const hash = crypto.pbkdf2Sync(data, actualSalt, CRYPTO_CONFIG.ITERATIONS, CRYPTO_CONFIG.KEY_LENGTH, CRYPTO_CONFIG.DIGEST);
+    return { hash: hash.toString('hex'), salt: actualSalt.toString('hex') };
+  }
+  verifyHash(data, hashedData, salt) {
+    const result = this.hash(data, Buffer.from(salt, 'hex'));
+    return crypto.timingSafeEqual(Buffer.from(result.hash, 'hex'), Buffer.from(hashedData, 'hex'));
+  }
+}
+
+async function initializeCrypto(keystorePath = null) {
+  const keyManager = new KeyManager(keystorePath);
+  await keyManager.initializeMasterKey();
+  return new CryptoService(keyManager);
+}
+
+module.exports = { CryptoService, KeyManager, initializeCrypto, CRYPTO_CONFIG };
