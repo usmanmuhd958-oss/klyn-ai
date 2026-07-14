@@ -7,6 +7,18 @@ echo "===================================="
 
 # Core API (must start first)
 node api/server.js > runtime/logs/api.log 2>&1 &
+
+# Self-Evolution Engine
+nohup node kernel/src/execution/evolution_engine.js > runtime/logs/evolution.log 2>&1 &
+echo "✅ Evolution Engine"
+
+# Cognitive Router
+nohup node kernel/src/routing/cognitive_router.js > runtime/logs/cognitive_router.log 2>&1 &
+echo "✅ Cognitive Router"
+
+# LLM Monitor
+nohup node kernel/src/services/llama_monitor.js > runtime/logs/llama_monitor.log 2>&1 &
+echo "✅ LLM Monitor"
 # Self‑Evolution Engine
 node kernel/src/execution/evolution_launcher.js > runtime/logs/evolution_engine.log 2>&1 &
 echo "✅ Evolution Engine"
