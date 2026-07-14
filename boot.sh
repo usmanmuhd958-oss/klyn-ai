@@ -6,6 +6,8 @@ echo "👑 Klyn AI OS v23 – Enterprise Final"
 echo "===================================="
 
 # Core API (must start first)
+export JWT_SECRET="***REMOVED***"
+export ADMIN_PASSWORD="klyn"
 node api/server.js > runtime/logs/api.log 2>&1 &
 
 # Self-Evolution Engine
