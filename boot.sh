@@ -7,6 +7,17 @@ echo "===================================="
 
 # Core API (must start first)
 node api/server.js > runtime/logs/api.log 2>&1 &
+# Self‑Evolution Engine
+node kernel/src/execution/evolution_launcher.js > runtime/logs/evolution_engine.log 2>&1 &
+echo "✅ Evolution Engine"
+
+# Cognitive Router
+node kernel/src/routing/cognitive_launcher.js > runtime/logs/cognitive_router.log 2>&1 &
+echo "✅ Cognitive Router"
+
+# LLM Monitor (hybrid)
+node kernel/src/services/llama_launcher.js > runtime/logs/llama_monitor.log 2>&1 &
+echo "✅ Hybrid LLM Monitor"
 echo "✅ API Server (PID $!)"
 sleep 1
 
