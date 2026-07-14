@@ -1,4 +1,3 @@
-  (paste FILE 2 content)
 /**
  * =============================================================================
  * KLYN AI OS — Evolution Engine API (Agent Interface)

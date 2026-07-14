@@ -1,138 +1,434 @@
-const { spawn } = require('child_process');
+/**
+ * =============================================================================
+ * KLYN AI OS — Agent Executor
+ * File: kernel/src/execution/agent_executor.js
+ * Version: 1.0.0
+ * =============================================================================
+ *
+ * PURPOSE:
+ *   Manages agent process lifecycle from the kernel's perspective. This is
+ *   the bridge between the Bash orchestrator (agents/src/orchestrator.sh)
+ *   and the Node.js kernel orchestrator (kernel/orchestrator.js).
+ *
+ * RESPONSIBILITIES:
+ *   - Monitor agent processes spawned by Bash orchestrator
+ *   - Provide capability query interface for dynamic routing
+ *   - Detect and report agent health status
+ *   - Interface with hot-swap manager for code updates
+ *   - Maintain agent registry with metadata
+ *
+ * =============================================================================
+ */
+
+'use strict';
+
+const fs   = require('fs');
 const path = require('path');
-const fs = require('fs');
-const fsPromises = fs.promises;
+const { exec } = require('child_process');
+const { promisify } = require('util');
 
-const AGENTS_DIR = path.join(__dirname, '..', '..', 'agents', 'src');
+const execAsync = promisify(exec);
 
-// Whitelist of allowed agents (resolved absolute paths)
-let agentWhitelist = new Set();
+const { createLogger, generateCorrelationId } = require('../observability/logger');
+const { getManifest } = require('../observability/health_manifest');
+const { getEventBus, LIFECYCLE_EVENT } = require('../lifecycle/lifecycle_event_bus');
 
-async function buildWhitelist() {
-  try {
-    if (!fs.existsSync(AGENTS_DIR)) {
-      console.warn('[AgentExecutor] agents/src/ does not exist');
-      return;
+const log      = createLogger('AgentExecutor');
+const manifest = getManifest();
+const bus      = getEventBus();
+
+// =============================================================================
+// SECTION 1: CONFIGURATION
+// =============================================================================
+
+const EXECUTOR_CONFIG = Object.freeze({
+  /** Path to runtime directory */
+  RUNTIME_DIR: '/data/data/com.termux/files/home/klyn-ai-os/.runtime',
+
+  /** Path to Bash orchestrator PID directory */
+  PID_DIR: '/data/data/com.termux/files/home/klyn-ai-os/.runtime/pids',
+
+  /** Path to agent heartbeat files */
+  HEARTBEAT_DIR: '/data/data/com.termux/files/home/klyn-ai-os/.runtime/heartbeats',
+
+  /** Heartbeat staleness threshold (ms) */
+  HEARTBEAT_STALE_MS: 60_000,
+
+  /** Health check interval (ms) */
+  HEALTH_CHECK_INTERVAL_MS: 30_000,
+
+  /** Core agent names managed by Bash orchestrator */
+  BASH_AGENTS: ['coder', 'planner', 'researcher', 'reviewer'],
+});
+
+// =============================================================================
+// SECTION 2: AGENT METADATA REGISTRY
+// =============================================================================
+
+/**
+ * Static registry of agent capabilities and metadata.
+ * This is the source of truth for the Cognitive Router's capability matching.
+ */
+const AGENT_METADATA = Object.freeze({
+  coder: {
+    capabilities: [
+      'code_generation',
+      'refactoring',
+      'debugging',
+      'optimization',
+      'self_mutation',
+    ],
+    language:     'bash',
+    resourceTier: 'medium',
+    description:  'Autonomous code generation and refactoring agent',
+  },
+  planner: {
+    capabilities: [
+      'task_decomposition',
+      'scheduling',
+      'coordination',
+      'cognitive_routing',
+      'priority_management',
+    ],
+    language:     'bash',
+    resourceTier: 'low',
+    description:  'Task planning and cognitive routing coordinator',
+  },
+  researcher: {
+    capabilities: [
+      'web_search',
+      'documentation',
+      'learning',
+      'api_discovery',
+      'context_gathering',
+    ],
+    language:     'bash',
+    resourceTier: 'medium',
+    description:  'Research and knowledge acquisition agent',
+  },
+  reviewer: {
+    capabilities: [
+      'code_review',
+      'test_generation',
+      'quality_assurance',
+      'security_audit',
+      'performance_analysis',
+    ],
+    language:     'bash',
+    resourceTier: 'low',
+    description:  'Code review and quality assurance agent',
+  },
+  bug_hunter: {
+    capabilities: [
+      'static_analysis',
+      'vulnerability_scan',
+      'code_review',
+      'security_audit',
+    ],
+    language:     'javascript',
+    resourceTier: 'medium',
+    description:  'Static analysis and vulnerability detection agent (Node.js)',
+  },
+});
+
+// =============================================================================
+// SECTION 3: AGENT EXECUTOR CLASS
+// =============================================================================
+
+class AgentExecutor {
+
+  constructor() {
+    /**
+     * Live agent status cache. Key = agentId.
+     * @type {Map<string, AgentStatus>}
+     */
+    this._agentStatus = new Map();
+
+    /**
+     * Last health check timestamp per agent.
+     * @type {Map<string, number>}
+     */
+    this._lastHealthCheck = new Map();
+
+    manifest.register('AgentExecutor', {
+      critical: false,
+      metadata: { version: '1.0.0' },
+    });
+
+    this._ensureDirectories();
+    this._startHealthMonitor();
+
+    log.info('Agent Executor initialized.', {
+      bashAgents:  EXECUTOR_CONFIG.BASH_AGENTS,
+      totalAgents: Object.keys(AGENT_METADATA).length,
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // PUBLIC API
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Returns the current status of a specific agent.
+   *
+   * @param {string} agentId
+   * @returns {{ alive: boolean, pid: number|null, heartbeat: number|null, healthy: boolean }}
+   */
+  getAgentStatus(agentId) {
+    const cached = this._agentStatus.get(agentId);
+    if (cached) {
+      return { ...cached };
     }
-    const files = await fsPromises.readdir(AGENTS_DIR);
-    for (const file of files) {
-      if (file.endsWith('.sh')) {
-        const abs = path.resolve(path.join(AGENTS_DIR, file));
-        agentWhitelist.add(abs);
+
+    // Not cached - perform live check
+    const status = this._checkAgentStatus(agentId);
+    this._agentStatus.set(agentId, status);
+    return { ...status };
+  }
+
+  /**
+   * Returns the capabilities of a specific agent.
+   *
+   * @param {string} agentId
+   * @returns {string[]}
+   */
+  getAgentCapabilities(agentId) {
+    const metadata = AGENT_METADATA[agentId];
+    return metadata ? [...metadata.capabilities] : [];
+  }
+
+  /**
+   * Returns metadata for all registered agents.
+   *
+   * @returns {object}
+   */
+  getAllAgentMetadata() {
+    return { ...AGENT_METADATA };
+  }
+
+  /**
+   * Queries which agents have a specific capability.
+   *
+   * @param {string} capability
+   * @returns {string[]}  Array of agent IDs
+   */
+  queryAgentsByCapability(capability) {
+    const matches = [];
+    for (const [agentId, metadata] of Object.entries(AGENT_METADATA)) {
+      if (metadata.capabilities.includes(capability)) {
+        matches.push(agentId);
       }
     }
-    console.log(`[AgentExecutor] Whitelist loaded: ${agentWhitelist.size} agents`);
-  } catch (err) {
-    console.error('[AgentExecutor] Whitelist build error:', err);
+    return matches;
   }
-}
 
-function validateAgentName(agentName) {
-  // Strict: alphanumeric, dash, underscore only
-  if (!/^[a-zA-Z0-9_-]+$/.test(agentName)) {
-    throw new Error(`Invalid agent name: ${agentName}`);
+  /**
+   * Returns a health summary of all agents.
+   *
+   * @returns {object}  { agentId → { alive, healthy, pid, lastHeartbeat } }
+   */
+  getHealthSummary() {
+    const summary = {};
+    for (const agentId of Object.keys(AGENT_METADATA)) {
+      summary[agentId] = this.getAgentStatus(agentId);
+    }
+    return summary;
   }
-  const resolved = path.resolve(path.join(AGENTS_DIR, agentName + '.sh'));
-  
-  // Prevent directory traversal
-  if (!resolved.startsWith(AGENTS_DIR)) {
-    throw new Error(`Agent path escape detected: ${agentName}`);
-  }
-  
-  if (!agentWhitelist.has(resolved)) {
-    throw new Error(`Agent not whitelisted: ${agentName}`);
-  }
-  
-  return resolved;
-}
 
-function validateTask(task) {
-  // Truncate and ban shell metacharacters
-  const sanitized = String(task).slice(0, 1000);
-  if (/[`$(){}[];|&<>]/.test(sanitized)) {
-    throw new Error('Task contains forbidden shell metacharacters');
-  }
-  return sanitized;
-}
+  /**
+   * Triggers a manual health check for a specific agent.
+   *
+   * @param {string} agentId
+   * @returns {Promise<boolean>}  True if healthy
+   */
+  async checkHealth(agentId) {
+    const status = this._checkAgentStatus(agentId);
+    this._agentStatus.set(agentId, status);
+    this._lastHealthCheck.set(agentId, Date.now());
 
-function getMemoryUsage() {
-  try {
-    const mem = process.memoryUsage();
-    return {
-      heapUsed: Math.round(mem.heapUsed / 1024 / 1024),
-      heapTotal: Math.round(mem.heapTotal / 1024 / 1024),
-      rss: Math.round(mem.rss / 1024 / 1024),
-      external: Math.round(mem.external / 1024 / 1024)
-    };
-  } catch (err) {
-    return { error: err.message };
-  }
-}
-
-async function executeAgent(agentName, task, timeout = 30000) {
-  try {
-    // Validation phase
-    const agentPath = validateAgentName(agentName);
-    const cleanTask = validateTask(task);
-    
-    // Log execution (for audit)
-    const startMem = getMemoryUsage();
-    const startTime = Date.now();
-
-    return new Promise((resolve, reject) => {
-      let stdout = '';
-      let stderr = '';
-
-      // Spawn with NO shell, pass task as argument array
-      const proc = spawn('bash', [agentPath, cleanTask], {
-        shell: false,
-        timeout,
-        maxBuffer: 10 * 1024 * 1024,  // 10MB
-        stdio: ['ignore', 'pipe', 'pipe']
-      });
-
-      proc.stdout.on('data', (chunk) => { stdout += chunk; });
-      proc.stderr.on('data', (chunk) => { stderr += chunk; });
-
-      proc.on('close', (code) => {
-        const endTime = Date.now();
-        const endMem = getMemoryUsage();
-        resolve({
-          success: code === 0,
-          stdout: stdout.slice(0, 100 * 1024),  // Truncate output
-          stderr: stderr.slice(0, 50 * 1024),
-          exitCode: code,
-          duration: endTime - startTime,
-          memoryDelta: {
-            heapUsed: endMem.heapUsed - startMem.heapUsed,
-            rss: endMem.rss - startMem.rss
-          }
-        });
-      });
-
-      proc.on('error', (err) => {
-        reject(new Error(`Spawn failed: ${err.message}`));
-      });
-
-      // Timeout fallback
-      setTimeout(() => {
-        if (proc.exitCode === null) {
-          proc.kill('SIGTERM');
-          reject(new Error(`Agent execution timeout (${timeout}ms)`));
-        }
-      }, timeout + 1000);
+    manifest.updateMetrics('AgentExecutor', {
+      [`${agentId}_healthy`]: status.healthy,
+      [`${agentId}_pid`]:     status.pid,
     });
-  } catch (err) {
-    return {
-      success: false,
-      error: err.message,
-      stdout: '',
-      stderr: ''
+
+    return status.healthy;
+  }
+
+  /**
+   * Requests a graceful restart of a Bash agent via the orchestrator.
+   *
+   * @param {string} agentId
+   * @param {string} [reason]
+   * @returns {Promise<void>}
+   */
+  async requestRestart(agentId, reason = 'manual restart') {
+    if (!EXECUTOR_CONFIG.BASH_AGENTS.includes(agentId)) {
+      throw new Error(`Cannot restart: ${agentId} is not a Bash agent.`);
+    }
+
+    log.info('Requesting agent restart via orchestrator.', {
+      agentId,
+      reason,
+    });
+
+    // Write restart signal file (Bash orchestrator monitors this)
+    const signalFile = path.join(
+      EXECUTOR_CONFIG.RUNTIME_DIR,
+      `restart-${agentId}.signal`
+    );
+    fs.writeFileSync(signalFile, JSON.stringify({
+      agentId,
+      reason,
+      requestedAt: Date.now(),
+    }));
+
+    bus.emit('agent:restart_requested', { agentId, reason }, generateCorrelationId());
+
+    log.info('Restart signal written.', { agentId, signalFile });
+  }
+
+  // ---------------------------------------------------------------------------
+  // PRIVATE — STATUS CHECKING
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Performs a live status check for an agent.
+   *
+   * @param {string} agentId
+   * @returns {{ alive: boolean, pid: number|null, heartbeat: number|null, healthy: boolean }}
+   */
+  _checkAgentStatus(agentId) {
+    const status = {
+      alive:     false,
+      pid:       null,
+      heartbeat: null,
+      healthy:   false,
     };
+
+    // Check 1: Read PID file
+    const pidFile = path.join(EXECUTOR_CONFIG.PID_DIR, `${agentId}.pid`);
+    if (fs.existsSync(pidFile)) {
+      try {
+        const pidStr = fs.readFileSync(pidFile, 'utf8').trim();
+        const pid    = parseInt(pidStr, 10);
+
+        if (!isNaN(pid)) {
+          status.pid = pid;
+
+          // Check if process is alive
+          try {
+            process.kill(pid, 0);  // Signal 0 = existence check
+            status.alive = true;
+          } catch (_) {
+            status.alive = false;
+          }
+        }
+      } catch (err) {
+        log.warn('Failed to read PID file.', { agentId, reason: err.message });
+      }
+    }
+
+    // Check 2: Read heartbeat file
+    const heartbeatFile = path.join(EXECUTOR_CONFIG.HEARTBEAT_DIR, `${agentId}.heartbeat`);
+    if (fs.existsSync(heartbeatFile)) {
+      try {
+        const timestampStr = fs.readFileSync(heartbeatFile, 'utf8').trim();
+        const timestamp    = parseInt(timestampStr, 10);
+
+        if (!isNaN(timestamp)) {
+          status.heartbeat = timestamp;
+
+          // Check if heartbeat is fresh
+          const age = Date.now() - (timestamp * 1000);  // Convert to ms
+          if (age < EXECUTOR_CONFIG.HEARTBEAT_STALE_MS) {
+            status.healthy = true;
+          }
+        }
+      } catch (err) {
+        log.warn('Failed to read heartbeat file.', { agentId, reason: err.message });
+      }
+    }
+
+    return status;
+  }
+
+  // ---------------------------------------------------------------------------
+  // PRIVATE — HEALTH MONITORING
+  // ---------------------------------------------------------------------------
+
+  _startHealthMonitor() {
+    setInterval(() => {
+      this._performHealthChecks();
+    }, EXECUTOR_CONFIG.HEALTH_CHECK_INTERVAL_MS).unref();
+
+    // Immediate first check
+    setImmediate(() => this._performHealthChecks());
+  }
+
+  async _performHealthChecks() {
+    for (const agentId of Object.keys(AGENT_METADATA)) {
+      const status = this._checkAgentStatus(agentId);
+      this._agentStatus.set(agentId, status);
+
+      // Emit events for status changes
+      const wasHealthy = this._lastHealthCheck.get(`${agentId}_healthy`);
+      if (wasHealthy !== status.healthy) {
+        if (status.healthy) {
+          bus.emit('agent:recovered', { agentId }, generateCorrelationId());
+          log.info('Agent recovered.', { agentId });
+        } else {
+          bus.emit('agent:degraded', { agentId }, generateCorrelationId());
+          log.warn('Agent degraded.', { agentId });
+        }
+      }
+
+      this._lastHealthCheck.set(`${agentId}_healthy`, status.healthy);
+    }
+
+    // Update manifest
+    const healthySummary = [...this._agentStatus.entries()]
+      .map(([id, s]) => `${id}:${s.healthy ? 'OK' : 'FAIL'}`)
+      .join(', ');
+
+    manifest.updateMetrics('AgentExecutor', {
+      lastHealthCheck: Date.now(),
+      healthSummary:   healthySummary,
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // PRIVATE — UTILITIES
+  // ---------------------------------------------------------------------------
+
+  _ensureDirectories() {
+    for (const dir of [
+      EXECUTOR_CONFIG.RUNTIME_DIR,
+      EXECUTOR_CONFIG.PID_DIR,
+      EXECUTOR_CONFIG.HEARTBEAT_DIR,
+    ]) {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+    }
   }
 }
 
-// Initialize on module load
-buildWhitelist().catch(err => console.error('[AgentExecutor] Init error:', err));
+// =============================================================================
+// SECTION 4: SINGLETON EXPORT
+// =============================================================================
 
-module.exports = { executeAgent, getMemoryUsage };
+let _executorInstance = null;
+
+function getAgentExecutor() {
+  if (!_executorInstance) {
+    _executorInstance = new AgentExecutor();
+  }
+  return _executorInstance;
+}
+
+module.exports = Object.freeze({
+  getAgentExecutor,
+  AgentExecutor,
+  AGENT_METADATA,
+  EXECUTOR_CONFIG,
+});
