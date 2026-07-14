@@ -63,46 +63,46 @@ cat > /tmp/klyn_dryrun_hotfix.patch << 'PATCHEOF'
 --- a/tools/autonomous_dry_run.sh
 +++ b/tools/autonomous_dry_run.sh
 @@ -1 +1 @@
--const { getCognitiveRouter } = require('../kernel/src/routing/cognitive_router');
+-const { getCognitiveRouter } = require(process.env.KLYN_ROOT + '/kernel/src/routing/cognitive_router');
 +const { getCognitiveRouter } = require(process.env.KLYN_ROOT + '/kernel/src/routing/cognitive_router');
 @@ -1 +1 @@
--const { createLogger } = require('../kernel/src/observability/logger');
+-const { createLogger } = require(process.env.KLYN_ROOT + '/kernel/src/observability/logger');
 +const { createLogger } = require(process.env.KLYN_ROOT + '/kernel/src/observability/logger');
 @@ -1 +1 @@
--const { getEnhancedLLMMonitor, LLMRequest } = require('../kernel/src/services/llama_monitor');
+-const { getEnhancedLLMMonitor, LLMRequest } = require(process.env.KLYN_ROOT + '/kernel/src/services/llama_monitor');
 +const { getEnhancedLLMMonitor, LLMRequest } = require(process.env.KLYN_ROOT + '/kernel/src/services/llama_monitor');
 @@ -1 +1 @@
--const { getEvolutionEngine } = require('../kernel/src/execution/evolution_engine');
+-const { getEvolutionEngine } = require(process.env.KLYN_ROOT + '/kernel/src/execution/evolution_engine');
 +const { getEvolutionEngine } = require(process.env.KLYN_ROOT + '/kernel/src/execution/evolution_engine');
 @@ -1 +1 @@
--const { vault, TOKEN_SCOPE } = require('../kernel/token-vault');
+-const { vault, TOKEN_SCOPE } = require(process.env.KLYN_ROOT + '/kernel/token-vault');
 +const { vault, TOKEN_SCOPE } = require(process.env.KLYN_ROOT + '/kernel/token-vault');
 @@ -1 +1 @@
--const { getManifest } = require('../kernel/src/observability/health_manifest');
+-const { getManifest } = require(process.env.KLYN_ROOT + '/kernel/src/observability/health_manifest');
 +const { getManifest } = require(process.env.KLYN_ROOT + '/kernel/src/observability/health_manifest');
 PATCHEOF
 
 # Apply path fixes using sed (more reliable than patch on Termux)
-sed -i "s|require('../kernel/src/routing/cognitive_router')|require(process.env.KLYN_ROOT + '/kernel/src/routing/cognitive_router')|g" "$SCRIPT_PATH"
-sed -i "s|require('../kernel/src/observability/logger')|require(process.env.KLYN_ROOT + '/kernel/src/observability/logger')|g" "$SCRIPT_PATH"
-sed -i "s|require('../kernel/src/services/llama_monitor')|require(process.env.KLYN_ROOT + '/kernel/src/services/llama_monitor')|g" "$SCRIPT_PATH"
-sed -i "s|require('../kernel/src/execution/evolution_engine')|require(process.env.KLYN_ROOT + '/kernel/src/execution/evolution_engine')|g" "$SCRIPT_PATH"
-sed -i "s|require('../kernel/token-vault')|require(process.env.KLYN_ROOT + '/kernel/token-vault')|g" "$SCRIPT_PATH"
-sed -i "s|require('../kernel/src/observability/health_manifest')|require(process.env.KLYN_ROOT + '/kernel/src/observability/health_manifest')|g" "$SCRIPT_PATH"
+sed -i "s|require(process.env.KLYN_ROOT + '/kernel/src/routing/cognitive_router')|require(process.env.KLYN_ROOT + '/kernel/src/routing/cognitive_router')|g" "$SCRIPT_PATH"
+sed -i "s|require(process.env.KLYN_ROOT + '/kernel/src/observability/logger')|require(process.env.KLYN_ROOT + '/kernel/src/observability/logger')|g" "$SCRIPT_PATH"
+sed -i "s|require(process.env.KLYN_ROOT + '/kernel/src/services/llama_monitor')|require(process.env.KLYN_ROOT + '/kernel/src/services/llama_monitor')|g" "$SCRIPT_PATH"
+sed -i "s|require(process.env.KLYN_ROOT + '/kernel/src/execution/evolution_engine')|require(process.env.KLYN_ROOT + '/kernel/src/execution/evolution_engine')|g" "$SCRIPT_PATH"
+sed -i "s|require(process.env.KLYN_ROOT + '/kernel/token-vault')|require(process.env.KLYN_ROOT + '/kernel/token-vault')|g" "$SCRIPT_PATH"
+sed -i "s|require(process.env.KLYN_ROOT + '/kernel/src/observability/health_manifest')|require(process.env.KLYN_ROOT + '/kernel/src/observability/health_manifest')|g" "$SCRIPT_PATH"
 
 log_info "Applying hotfix #3: Adding KLYN_ROOT to test script environments..."
 
 # Fix the test script execution calls to pass KLYN_ROOT
-sed -i 's|timeout "$TASK_TIMEOUT" node "$test_script"|KLYN_ROOT="$KLYN_ROOT" timeout "$TASK_TIMEOUT" node "$test_script"|g' "$SCRIPT_PATH"
-sed -i 's|timeout 90 node "$test_script"|KLYN_ROOT="$KLYN_ROOT" timeout 90 node "$test_script"|g' "$SCRIPT_PATH"
-sed -i 's|timeout "$MUTATION_TIMEOUT" node "$test_script"|KLYN_ROOT="$KLYN_ROOT" timeout "$MUTATION_TIMEOUT" node "$test_script"|g' "$SCRIPT_PATH"
-sed -i 's|timeout 60 node "$rollback_script"|KLYN_ROOT="$KLYN_ROOT" timeout 60 node "$rollback_script"|g' "$SCRIPT_PATH"
-sed -i 's|timeout "$HEALTH_CHECK_TIMEOUT" node "$health_script"|KLYN_ROOT="$KLYN_ROOT" timeout "$HEALTH_CHECK_TIMEOUT" node "$health_script"|g' "$SCRIPT_PATH"
+sed -i 's|KLYN_ROOT="$KLYN_ROOT" KLYN_ROOT="$KLYN_ROOT" KLYN_ROOT="$KLYN_ROOT" timeout "$TASK_TIMEOUT" node "$test_script"|KLYN_ROOT="$KLYN_ROOT" KLYN_ROOT="$KLYN_ROOT" KLYN_ROOT="$KLYN_ROOT" KLYN_ROOT="$KLYN_ROOT" timeout "$TASK_TIMEOUT" node "$test_script"|g' "$SCRIPT_PATH"
+sed -i 's|KLYN_ROOT="$KLYN_ROOT" KLYN_ROOT="$KLYN_ROOT" timeout 90 node "$test_script"|KLYN_ROOT="$KLYN_ROOT" KLYN_ROOT="$KLYN_ROOT" KLYN_ROOT="$KLYN_ROOT" timeout 90 node "$test_script"|g' "$SCRIPT_PATH"
+sed -i 's|KLYN_ROOT="$KLYN_ROOT" KLYN_ROOT="$KLYN_ROOT" MUTATION_TARGET_FILE="$MUTATION_TARGET_FILE" timeout "$MUTATION_TIMEOUT" node "$test_script"|KLYN_ROOT="$KLYN_ROOT" KLYN_ROOT="$KLYN_ROOT" KLYN_ROOT="$KLYN_ROOT" MUTATION_TARGET_FILE="$MUTATION_TARGET_FILE" timeout "$MUTATION_TIMEOUT" node "$test_script"|g' "$SCRIPT_PATH"
+sed -i 's|KLYN_ROOT="$KLYN_ROOT" KLYN_ROOT="$KLYN_ROOT" timeout 60 node "$rollback_script"|KLYN_ROOT="$KLYN_ROOT" KLYN_ROOT="$KLYN_ROOT" KLYN_ROOT="$KLYN_ROOT" timeout 60 node "$rollback_script"|g' "$SCRIPT_PATH"
+sed -i 's|KLYN_ROOT="$KLYN_ROOT" KLYN_ROOT="$KLYN_ROOT" KLYN_ROOT="$KLYN_ROOT" timeout "$HEALTH_CHECK_TIMEOUT" node "$health_script"|KLYN_ROOT="$KLYN_ROOT" KLYN_ROOT="$KLYN_ROOT" KLYN_ROOT="$KLYN_ROOT" KLYN_ROOT="$KLYN_ROOT" timeout "$HEALTH_CHECK_TIMEOUT" node "$health_script"|g' "$SCRIPT_PATH"
 
 log_info "Applying hotfix #4: Ensuring MUTATION_TARGET_FILE is not re-exported..."
 
 # Remove any 'export' keywords that might cause readonly conflicts
-sed -i 's/export MUTATION_TARGET_FILE=/MUTATION_TARGET_FILE=/g' "$SCRIPT_PATH"
+sed -i 's/MUTATION_TARGET_FILE=/MUTATION_TARGET_FILE=/g' "$SCRIPT_PATH"
 
 # -----------------------------------------------------------------------------
 # Verification
