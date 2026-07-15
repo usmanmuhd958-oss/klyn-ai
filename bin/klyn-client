@@ -1,34 +1,55 @@
 #!/usr/bin/env bash
-ROOT="$HOME/klyn-ai-os"
+set -euo pipefail
+
+ROOT="${KLYN_ROOT:-$HOME/klyn-ai-os}"
+CLIENTS_FILE="$ROOT/runtime/clients.json"
 ACTION="${1:-list}"
 CLIENT_ID="${2:-}"
 PLAN="${3:-pro}"
 EXPIRES="${4:-2027-01-01T00:00:00Z}"
 MODELS="${5:-local}"
 
+if ! command -v jq &>/dev/null; then
+    echo "jq is required. Install it with: pkg install jq"
+    exit 1
+fi
+
+mkdir -p "$(dirname "$CLIENTS_FILE")"
+
 case "$ACTION" in
   add)
-    node -e "
-      const { upsertClient } = require('$ROOT/kernel/src/services/subscription_manager');
-      upsertClient('$CLIENT_ID', '$PLAN', '$EXPIRES', '$MODELS'.split(','));
-      console.log('Client $CLIENT_ID added/updated.');
-    "
+    tmpfile="${CLIENTS_FILE}.tmp.$$"
+    if [ -f "$CLIENTS_FILE" ]; then
+        jq --arg id "$CLIENT_ID" --arg plan "$PLAN" --arg expires "$EXPIRES" --arg models "$MODELS" \
+           '.[$id] = { plan: $plan, expiresAt: $expires, allowed_models: ($models | split(",")) }' \
+           "$CLIENTS_FILE" > "$tmpfile"
+    else
+        jq -n --arg id "$CLIENT_ID" --arg plan "$PLAN" --arg expires "$EXPIRES" --arg models "$MODELS" \
+           '{($id): { plan: $plan, expiresAt: $expires, allowed_models: ($models | split(",")) }}' \
+           > "$tmpfile"
+    fi
+    mv "$tmpfile" "$CLIENTS_FILE"
+    echo "Client $CLIENT_ID added/updated."
     ;;
   rm)
-    node -e "
-      const { removeClient } = require('$ROOT/kernel/src/services/subscription_manager');
-      removeClient('$CLIENT_ID');
-      console.log('Client $CLIENT_ID removed.');
-    "
+    if [ -f "$CLIENTS_FILE" ]; then
+        tmpfile="${CLIENTS_FILE}.tmp.$$"
+        jq "del(.[\"$CLIENT_ID\"])" "$CLIENTS_FILE" > "$tmpfile"
+        mv "$tmpfile" "$CLIENTS_FILE"
+        echo "Client $CLIENT_ID removed."
+    else
+        echo "No clients file found."
+    fi
     ;;
   list)
-    node -e "
-      const fs = require('fs');
-      const data = fs.readFileSync('$ROOT/runtime/clients.json','utf8');
-      console.log(JSON.stringify(JSON.parse(data), null, 2));
-    "
+    if [ -f "$CLIENTS_FILE" ]; then
+        jq '.' "$CLIENTS_FILE"
+    else
+        echo "{}"
+    fi
     ;;
   *)
     echo "Usage: klyn-client {add|rm|list} [id] [plan] [expires] [models]"
+    exit 1
     ;;
 esac
