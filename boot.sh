@@ -77,6 +77,8 @@ echo "✅ Autonomous Improvement (every 6h)"
 # Backup rotation (daily)
 nohup bash -c 'while true; do bash scripts/backup_rotate.sh; sleep 86400; done' > runtime/logs/backup.log 2>&1 &
 echo "✅ Daily Backup Rotation"
+nohup bash -c 'while true; do bash tools/github_workflow_cleaner.sh; sleep 3600; done' > runtime/logs/ci_cleaner.log 2>&1 &
+echo "✅ CI Cleaner (every hour)"
 
 # Status page
 node apps/web/status.js > runtime/logs/status_page.log 2>&1 &
