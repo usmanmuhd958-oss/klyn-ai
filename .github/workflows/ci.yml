@@ -1,41 +1,27 @@
 name: Klyn OS CI
 on: [push, pull_request]
-
 jobs:
   health:
     runs-on: ubuntu-latest
     steps:
-      # Shallow clone – ignore large binary files, speed up checkout
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-
-      # Use the same Node version as your Termux environment
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
-
       - run: npm install
-
-      # Start API server with stubbed secrets (exactly like the stabilizer)
       - name: Start API and wait for readiness
         env:
           JWT_SECRET: klyn-royal-secret
           ADMIN_PASSWORD: klyn
         run: |
           node api/server.js &
-          echo "Waiting for API to become ready..."
           for i in $(seq 1 15); do
             sleep 2
-            if curl -s http://localhost:3000/status | grep -q healthy; then
-              echo "API is ready."
-              break
-            fi
-            echo "Attempt $i/15..."
+            if curl -s http://localhost:3000/status | grep -q healthy; then break; fi
           done
-
-      # Run the exact same stabilizer that works locally
-      - name: Run stabilizer (health check)
+      - name: Run stabilizer
         env:
           JWT_SECRET: klyn-royal-secret
           ADMIN_PASSWORD: klyn
