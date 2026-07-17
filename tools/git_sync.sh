@@ -27,58 +27,75 @@ fi
 # ---------------------------------------------------------------------------
 # 2. Determine current branch and commit message
 # ---------------------------------------------------------------------------
+cd "$HOME/klyn-ai-os"
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 COMMIT_MSG="${1:-chore: automated synchronization}"
-if [ -z "$COMMIT_MSG" ]; then
-    COMMIT_MSG="chore: automated synchronization"
-fi
 
 # ---------------------------------------------------------------------------
 # 3. Stage all changes and commit
 # ---------------------------------------------------------------------------
-cd "$HOME/klyn-ai-os"
-
-log_info "Staging all changes..."
+log_info "Staging all changes…"
 git add .
-if git commit -m "$COMMIT_MSG" --allow-empty; then
+if git commit -m "$COMMIT_MSG" --allow-empty 2>/dev/null; then
     log_ok "Commit created: $COMMIT_MSG"
 else
     log_warn "Nothing to commit (working tree clean)."
 fi
 
 # ---------------------------------------------------------------------------
-# 4. Push to GitHub (origin) using token in URL, without modifying stored remote
+# 4. Store clean (tokenless) remote URLs for later restoration
 # ---------------------------------------------------------------------------
-if [ -n "$GH_TOKEN" ]; then
-    log_info "${ICON_SYNC} Pushing to GitHub (origin) on branch $BRANCH..."
-    # Use -c to inject the token only for this push operation (no permanent change)
-    if git -c "remote.origin.url=https://${GH_TOKEN}@github.com/usmanmuhd958-oss/klyn-ai.git" push origin "$BRANCH" 2>&1; then
+CLEAN_GH_URL="https://github.com/usmanmuhd958-oss/klyn-ai.git"
+CLEAN_GL_URL="https://gitlab.com/usmanmuhd958-oss/klyn-ai.git"
+
+ORIGINAL_ORIGIN_URL=""
+ORIGINAL_GITLAB_URL=""
+
+if git remote get-url origin &>/dev/null; then
+    ORIGINAL_ORIGIN_URL=$(git remote get-url origin)
+fi
+if git remote get-url gitlab &>/dev/null; then
+    ORIGINAL_GITLAB_URL=$(git remote get-url gitlab)
+fi
+
+# ---------------------------------------------------------------------------
+# 5. Cleanup trap – restore tokenless URLs when the script exits
+# ---------------------------------------------------------------------------
+cleanup_remotes() {
+    if [ -n "$ORIGINAL_ORIGIN_URL" ]; then
+        git remote set-url origin "$ORIGINAL_ORIGIN_URL" 2>/dev/null || true
+    fi
+    if [ -n "$ORIGINAL_GITLAB_URL" ]; then
+        git remote set-url gitlab "$ORIGINAL_GITLAB_URL" 2>/dev/null || true
+    fi
+}
+trap cleanup_remotes EXIT
+
+# ---------------------------------------------------------------------------
+# 6. Temporarily set authenticated URLs and push
+# ---------------------------------------------------------------------------
+
+# -- GitHub (origin) --
+if [ -n "$GH_TOKEN" ] && git remote get-url origin &>/dev/null; then
+    log_info "${ICON_SYNC} Pushing to GitHub (origin) on branch $BRANCH…"
+    git remote set-url origin "https://${GH_TOKEN}@github.com/usmanmuhd958-oss/klyn-ai.git"
+    if git push origin "$BRANCH" 2>&1; then
         log_ok "GitHub push successful."
     else
         log_err "GitHub push failed. Check your token and network."
     fi
-else
-    log_warn "GH_PERSONAL_TOKEN not set – skipping GitHub push."
 fi
 
-# ---------------------------------------------------------------------------
-# 5. Push to GitLab (gitlab) using token in URL
-# ---------------------------------------------------------------------------
-if [ -n "$GL_TOKEN" ]; then
-    # Only push if the gitlab remote exists
-    if git remote | grep -qx 'gitlab'; then
-        log_info "${ICON_SYNC} Pushing to GitLab (gitlab) on branch $BRANCH..."
-        if git -c "remote.gitlab.url=https://oauth2:${GL_TOKEN}@gitlab.com/usmanmuhd958-oss/klyn-ai.git" push gitlab "$BRANCH" 2>&1; then
-            log_ok "GitLab push successful."
-        else
-            log_err "GitLab push failed. Check your token and network."
-        fi
+# -- GitLab (gitlab) --
+if [ -n "$GL_TOKEN" ] && git remote get-url gitlab &>/dev/null; then
+    log_info "${ICON_SYNC} Pushing to GitLab (gitlab) on branch $BRANCH…"
+    git remote set-url gitlab "https://oauth2:${GL_TOKEN}@gitlab.com/usmanmuhd958-oss/klyn-ai.git"
+    if git push gitlab "$BRANCH" 2>&1; then
+        log_ok "GitLab push successful."
     else
-        log_warn "No 'gitlab' remote configured. Skipping GitLab push."
+        log_err "GitLab push failed. Check your token and network."
     fi
-else
-    log_warn "GITLAB_ACCESS_TOKEN not set – skipping GitLab push."
 fi
 
 echo ""
-echo -e "${C_GREEN}${ICON_ROCKET} Git sync completed.${C_RESET}"
+echo -e "${C_GREEN}${ICON_ROCKET} Git sync completed. Remotes restored to clean state.${C_RESET}"

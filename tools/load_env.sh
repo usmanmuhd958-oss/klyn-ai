@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# KLYN AI OS – Session Environment Loader (SAFE FOR SOURCING)
+# =============================================================================
+# KLYN AI OS – Session Environment Loader (Safe for Sourcing)
 # Usage: source tools/load_env.sh
-# This file intentionally does NOT use 'set -e' to avoid killing the parent shell.
+# =============================================================================
+# Intentionally NO "set -e" here – sourcing with -e would kill the parent shell.
 
 ENV_FILE="$HOME/klyn-ai-os/.env"
 
@@ -11,7 +13,7 @@ if [ ! -f "$ENV_FILE" ]; then
     return 1
 fi
 
-# Temporarily enable automatic export of all variables
+# Temporarily auto-export everything, then restore normal behaviour
 set -a
 source "$ENV_FILE"
 set +a
