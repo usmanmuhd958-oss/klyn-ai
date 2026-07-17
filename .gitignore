@@ -11,3 +11,4 @@ llama.cpp/
 runtime/
 .env.template
 create_remaining_sonnet_files.sh
+.env
