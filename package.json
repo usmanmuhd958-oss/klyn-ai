@@ -1,15 +1,22 @@
 {
-  "name": "klyn-ai-os",
-  "version": "2.0.0-KLYN",
+  "name": "klyn-ai-os-brain",
+  "version": "1.0.0",
   "type": "module",
-  "description": "Self-Healing AI OS. 1000 years ahead of Cursor",
-  "main": "0.kernel/kernel.js",
-  "scripts": { "start": "bash boot.sh" },
+  "description": "KLYN AI OS - Layer 1: Multi-Model Cognitive Router",
+  "main": "1.brain/index.ts",
+  "scripts": {
+    "dev": "tsx example.ts",
+    "start": "node --loader tsx example.ts",
+    "type-check": "tsc --noEmit"
+  },
   "dependencies": {
-    "@google/genai": "^2.12.0",
-    "express": "^5.2.1",
-    "helmet": "^8.3.0",
-    "pino": "^10.3.1",
-    "yjs": "^13.6.31"
+    "@anthropic-ai/sdk": "^0.20.0",
+    "@google/generative-ai": "^0.2.0",
+    "openai": "^4.28.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
   }
 }
