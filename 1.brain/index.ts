@@ -1,38 +1,38 @@
-/**
- * KLYN AI OS - Brain Layer (Layer 1)
- * Main Export Module
- */
+import { validateConfig, getConfig } from './config.js';
+import { CognitiveRouter } from './cognitive_router.js';
+import { LLMGateway } from './llm_gateway.js';
+import { CostOptimizer } from './cost_optimizer.js';
+import { GraphMemory } from './graph_memory.js';
 
-export { LLMGateway } from './llm_gateway.ts';
-export { CognitiveRouter } from './cognitive_router.ts';
-export { CostOptimizer } from './cost_optimizer.ts';
+export * from './types.js';
+export * from './config.js';
+export * from './cognitive_router.js';
+export * from './llm_gateway.js';
+export * from './cost_optimizer.js';
+export * from './graph_memory.js';
 
-export type {
-  ModelProvider,
-  ModelName,
-  TaskType,
-  LLMRequest,
-  LLMResponse,
-  StreamChunk,
-  Tool,
-  ToolCall,
-  CostMetrics,
-  ModelCapability,
-  ProviderError,
-} from './types.ts';
-
-export { MODEL_REGISTRY, validateConfig } from './config.ts';
-
-// Convenience export for quick initialization
 export function createBrain() {
   const { valid, errors } = validateConfig();
-  
   if (!valid) {
-    console.error('❌ Brain initialization failed:');
-    errors.forEach(err => console.error(`  - ${err}`));
-    throw new Error('Missing required API keys');
+    console.warn('⚠️ Brain Config Warnings:', errors);
   }
+  const config = getConfig();
+  const gateway = new LLMGateway();
+  const optimizer = new CostOptimizer();
+  const router = new CognitiveRouter(gateway, optimizer);
+  const memory = new GraphMemory();
 
-  console.log('🧠 KLYN AI OS Brain Layer initialized');
-  return new CognitiveRouter();
+  return {
+    router,
+    gateway,
+    optimizer,
+    memory,
+    config,
+    getGateway: () => gateway,
+    getOptimizer: () => optimizer,
+    route: (task: any) => router.route(task),
+    routeTask: (task: any) => router.routeTask(task),
+    execute: (provider: string, task: any) => router.execute(provider, task)
+  };
 }
+

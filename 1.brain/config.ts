@@ -1,98 +1,82 @@
-/**
- * KLYN AI OS - Brain Configuration
- * Model Registry & Provider Settings
- */
+export interface BrainConfig {
+  anthropicApiKey?: string;
+  openaiApiKey?: string;
+  deepseekApiKey?: string;
+  googleApiKey?: string;
+  deepseekBaseUrl?: string;
+  openaiOrgId?: string;
+}
 
-import type { ModelCapability, ProviderConfig, RetryConfig } from './types.ts';
-
-export const MODEL_REGISTRY: Record<string, ModelCapability> = {
-  'claude-fable-5': {
-    provider: 'anthropic',
-    modelName: 'claude-fable-5',
-    apiModelId: 'claude-fable-5-20260315',
-    strengths: ['agentic_coding', 'refactoring', 'self_healing', 'general'],
-    contextWindow: 400_000,
-    costPerMToken: 15.00,      // $15 per 1M input tokens
-    costPerMTokenOutput: 75.00, // $75 per 1M output tokens
-    requestsPerMinute: 4_000,
-    supportsStreaming: true,
-    supportsFunctionCalling: true,
-    supportsVision: true,
-  },
-  'gpt-5.6-sol': {
-    provider: 'openai',
-    modelName: 'gpt-5.6-sol',
-    apiModelId: 'gpt-5.6-sol-20260220',
-    strengths: ['architecture', 'code_inspection', 'general'],
-    contextWindow: 256_000,
-    costPerMToken: 12.00,
-    costPerMTokenOutput: 48.00,
-    requestsPerMinute: 10_000,
-    supportsStreaming: true,
-    supportsFunctionCalling: true,
-    supportsVision: true,
-  },
-  'deepseek-v4-pro': {
-    provider: 'deepseek',
-    modelName: 'deepseek-v4-pro',
-    apiModelId: 'deepseek-chat-v4-pro',
-    strengths: ['test_generation', 'log_analysis', 'code_inspection', 'general'],
-    contextWindow: 128_000,
-    costPerMToken: 0.14,       // Ultra cost-optimized
-    costPerMTokenOutput: 0.28,
-    requestsPerMinute: 2_000,
-    supportsStreaming: true,
-    supportsFunctionCalling: true,
-    supportsVision: false,
-  },
-  'gemini-3.5-pro': {
-    provider: 'google',
-    modelName: 'gemini-3.5-pro',
-    apiModelId: 'gemini-3.5-pro-latest',
-    strengths: ['dependency_mapping', 'architecture'],
-    contextWindow: 2_000_000,  // 2M context window
-    costPerMToken: 1.25,
-    costPerMTokenOutput: 5.00,
-    requestsPerMinute: 1_500,
-    supportsStreaming: true,
-    supportsFunctionCalling: true,
-    supportsVision: true,
-  },
-};
+export interface RetryConfig {
+  maxRetries: number;
+  initialDelayMs: number;
+  backoffFactor: number;
+}
 
 export const DEFAULT_RETRY_CONFIG: RetryConfig = {
   maxRetries: 3,
   initialDelayMs: 1000,
-  maxDelayMs: 32000,
-  backoffMultiplier: 2,
+  backoffFactor: 2,
 };
 
-export const DEFAULT_TIMEOUT_MS = 120_000; // 2 minutes
+export const MODEL_REGISTRY: Record<string, any> = {
+  anthropic: {
+    default: 'claude-fable-5',
+    model: 'claude-fable-5',
+    inputCostPer1k: 0.003,
+    outputCostPer1k: 0.015,
+  },
+  openai: {
+    default: 'gpt-5.6-sol',
+    model: 'gpt-5.6-sol',
+    inputCostPer1k: 0.0025,
+    outputCostPer1k: 0.01,
+  },
+  deepseek: {
+    default: 'deepseek-v4-pro',
+    model: 'deepseek-v4-pro',
+    inputCostPer1k: 0.000145,
+    outputCostPer1k: 0.00348,
+  },
+  google: {
+    default: 'gemini-3.5-pro',
+    model: 'gemini-3.5-pro',
+    inputCostPer1k: 0.00125,
+    outputCostPer1k: 0.005,
+  },
+  'claude-fable-5': { provider: 'anthropic', inputCostPer1k: 0.003, outputCostPer1k: 0.015 },
+  'gpt-5.6-sol': { provider: 'openai', inputCostPer1k: 0.0025, outputCostPer1k: 0.01 },
+  'deepseek-v4-pro': { provider: 'deepseek', inputCostPer1k: 0.000145, outputCostPer1k: 0.00348 },
+  'gemini-3.5-pro': { provider: 'google', inputCostPer1k: 0.00125, outputCostPer1k: 0.005 },
+};
 
-export function getProviderConfig(provider: string): ProviderConfig {
-  const envPrefix = provider.toUpperCase();
-  
+export function getConfig(): BrainConfig {
   return {
-    apiKey: process.env[`${envPrefix}_API_KEY`] || '',
-    baseUrl: process.env[`${envPrefix}_BASE_URL`],
-    organization: process.env[`${envPrefix}_ORG_ID`],
-    timeout: DEFAULT_TIMEOUT_MS,
-    maxRetries: DEFAULT_RETRY_CONFIG.maxRetries,
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+    openaiApiKey: process.env.OPENAI_API_KEY,
+    deepseekApiKey: process.env.DEEPSEEK_API_KEY,
+    googleApiKey: process.env.GOOGLE_API_KEY,
+    deepseekBaseUrl: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1',
+    openaiOrgId: process.env.OPENAI_ORG_ID,
   };
+}
+
+export function getProviderConfig(providerName: string): any {
+  return MODEL_REGISTRY[providerName] || null;
 }
 
 export function validateConfig(): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
-  
-  for (const model of Object.values(MODEL_REGISTRY)) {
-    const config = getProviderConfig(model.provider);
-    if (!config.apiKey) {
-      errors.push(`Missing API key for ${model.provider}: ${model.provider.toUpperCase()}_API_KEY`);
-    }
+  const config = getConfig();
+  const hasAnyKey = Boolean(
+    config.anthropicApiKey || config.openaiApiKey || config.deepseekApiKey || config.googleApiKey
+  );
+  if (!hasAnyKey) {
+    errors.push('No API keys configured in .env');
   }
-  
   return {
     valid: errors.length === 0,
     errors,
   };
 }
+
