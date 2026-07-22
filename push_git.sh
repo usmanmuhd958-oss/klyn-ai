@@ -38,31 +38,54 @@ fi
 log_info "Cleaning temporary build and swap files..."
 find . -type f \( -name "*.save" -o -name "*.backup-*" -o -name "*.orig" -o -name "*.log" \) -delete 2>/dev/null || true
 
-# 4. Check Git Status
-if [ -z "$(git status --porcelain)" ]; then
-  log_warn "Working directory clean. Nothing to commit or push."
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+
+# 4. Check status (Uncommitted changes vs. Unpushed commits)
+HAS_CHANGES=false
+if [ -n "$(git status --porcelain)" ]; then
+  HAS_CHANGES=true
+fi
+
+HAS_UNPUSHED=false
+UNPUSHED_COUNT=0
+
+if git rev-parse --verify "origin/${CURRENT_BRANCH}" >/dev/null 2>&1; then
+  UNPUSHED_COUNT=$(git log "origin/${CURRENT_BRANCH}..HEAD" --oneline 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$UNPUSHED_COUNT" -gt 0 ]; then
+    HAS_UNPUSHED=true
+  fi
+else
+  # Remote branch doesn't exist yet on origin
+  HAS_UNPUSHED=true
+  UNPUSHED_COUNT=$(git rev-list --count HEAD 2>/dev/null || echo "1")
+fi
+
+if [ "$HAS_CHANGES" = false ] && [ "$HAS_UNPUSHED" = false ]; then
+  log_warn "Working directory clean and no unpushed commits. Everything is up to date!"
   exit 0
 fi
 
-# 5. Stage Changes
-log_info "Staging changed files..."
-git add .
+# 5. Commit Phase (Only if there are uncommitted changes)
+if [ "$HAS_CHANGES" = true ]; then
+  log_info "Staging changed files..."
+  git add .
 
-# 6. Commit Message Handling
-DEFAULT_MSG="feat(core): update KLYN AI OS architecture & components"
-if [ -n "$1" ]; then
-  COMMIT_MSG="$1"
+  DEFAULT_MSG="feat(core): update KLYN AI OS architecture & components"
+  if [ -n "$1" ]; then
+    COMMIT_MSG="$1"
+  else
+    echo -e "\n${YELLOW}Enter Commit Message (or press ENTER for default):${NC}"
+    read -r INPUT_MSG
+    COMMIT_MSG="${INPUT_MSG:-$DEFAULT_MSG}"
+  fi
+
+  log_info "Creating git commit..."
+  git commit -m "$COMMIT_MSG"
 else
-  echo -e "\n${YELLOW}Enter Commit Message (or press ENTER for default):${NC}"
-  read -r INPUT_MSG
-  COMMIT_MSG="${INPUT_MSG:-$DEFAULT_MSG}"
+  log_info "Working directory clean, but found ${UNPUSHED_COUNT} unpushed commit(s). Skipping commit phase..."
 fi
 
-log_info "Creating git commit..."
-git commit -m "$COMMIT_MSG"
-
-# 7. Check Remote URL
-CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+# 6. Check Remote URL
 HAS_REMOTE=$(git remote 2>/dev/null || true)
 
 if [ -z "$HAS_REMOTE" ]; then
@@ -77,7 +100,7 @@ if [ -z "$HAS_REMOTE" ]; then
   fi
 fi
 
-# 8. Push Code to Remote
+# 7. Push Code to Remote
 log_info "Pushing code to remote branch [${CURRENT_BRANCH}]..."
 if git push -u origin "$CURRENT_BRANCH"; then
   echo -e "\n${PURPLE}====================================================${NC}"
