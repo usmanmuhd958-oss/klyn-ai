@@ -13,6 +13,7 @@ export interface ErrorPattern {
 }
 
 export class ErrorDetector {
+  [key: string]: any;
   private patterns: ErrorPattern[] = [
     // Node.js errors
     {

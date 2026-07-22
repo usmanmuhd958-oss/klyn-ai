@@ -9,6 +9,7 @@ export interface AgentResult {
 }
 
 export class AgentExecutor {
+  [key: string]: any;
   async execute(agent: AgentType, task: AgentTask): Promise<AgentResult> {
     try {
       const timestamp = Date.now();

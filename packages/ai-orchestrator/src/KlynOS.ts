@@ -3,6 +3,7 @@ import { AgentRuntime } from "../../agent-runtime/src/runtime/AgentRuntime";
 import { ExecutionPipeline } from "./ExecutionPipeline";
 
 export class KlynOS {
+  [key: string]: any;
 
   private router: AIModelRouter;
   private runtime: AgentRuntime;

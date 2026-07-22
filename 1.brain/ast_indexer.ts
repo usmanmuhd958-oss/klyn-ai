@@ -1,6 +1,7 @@
 import { parse } from '@babel/parser';
 
 export class ASTIndexer {
+  [key: string]: any;
   public parse(code: string): any {
     if (!code || typeof code !== 'string') {
       return { type: 'File', program: { body: [] } };

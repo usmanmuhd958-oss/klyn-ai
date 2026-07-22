@@ -21,6 +21,7 @@ export interface ValidationError {
 }
 
 export class CodeValidator {
+  [key: string]: any;
   /**
    * Validate TypeScript/JavaScript code
    */

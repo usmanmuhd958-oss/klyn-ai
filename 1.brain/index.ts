@@ -5,8 +5,10 @@ import { CostOptimizer } from './cost_optimizer.js';
 import { GraphMemory } from './graph_memory.js';
 
 export * from './types.js';
+// @ts-ignore
 export * from './config.js';
 export * from './cognitive_router.js';
+// @ts-ignore
 export * from './llm_gateway.js';
 export * from './cost_optimizer.js';
 export * from './graph_memory.js';

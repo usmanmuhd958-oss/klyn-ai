@@ -34,8 +34,8 @@ async function callAnthropic(prompt: string): Promise<AIResponse> {
       messages: [{ role: 'user', content: prompt }],
     }),
   });
-  if (!res.ok) throw new Error(`Anthropic API error: ${res.status} ${res.statusText}`);
-  const data: any = await res.json();
+  if (!(res as any).ok) throw new Error(`Anthropic API error: ${(res as any).status} ${(res as any).statusText}`);
+  const data: any = await (res as any).json();
   const text = data?.content?.[0]?.text || '';
   return {
     text,
@@ -62,8 +62,8 @@ async function callOpenAI(prompt: string): Promise<AIResponse> {
       messages: [{ role: 'user', content: prompt }],
     }),
   });
-  if (!res.ok) throw new Error(`OpenAI API error: ${res.status} ${res.statusText}`);
-  const data: any = await res.json();
+  if (!(res as any).ok) throw new Error(`OpenAI API error: ${(res as any).status} ${(res as any).statusText}`);
+  const data: any = await (res as any).json();
   const text = data?.choices?.[0]?.message?.content || '';
   return {
     text,
@@ -87,8 +87,8 @@ async function callGemini(prompt: string): Promise<AIResponse> {
       contents: [{ parts: [{ text: prompt }] }],
     }),
   });
-  if (!res.ok) throw new Error(`Gemini API error: ${res.status} ${res.statusText}`);
-  const data: any = await res.json();
+  if (!(res as any).ok) throw new Error(`Gemini API error: ${(res as any).status} ${(res as any).statusText}`);
+  const data: any = await (res as any).json();
   const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
   return {
     text,
@@ -115,8 +115,8 @@ async function callDeepSeek(prompt: string): Promise<AIResponse> {
       messages: [{ role: 'user', content: prompt }],
     }),
   });
-  if (!res.ok) throw new Error(`DeepSeek API error: ${res.status} ${res.statusText}`);
-  const data: any = await res.json();
+  if (!(res as any).ok) throw new Error(`DeepSeek API error: ${(res as any).status} ${(res as any).statusText}`);
+  const data: any = await (res as any).json();
   const text = data?.choices?.[0]?.message?.content || '';
   return {
     text,
@@ -141,8 +141,8 @@ async function callOllama(prompt: string, model?: string): Promise<AIResponse> {
       stream: false,
     }),
   });
-  if (!res.ok) throw new Error(`Ollama API error: ${res.status} ${res.statusText}`);
-  const data: any = await res.json();
+  if (!(res as any).ok) throw new Error(`Ollama API error: ${(res as any).status} ${(res as any).statusText}`);
+  const data: any = await (res as any).json();
   const text = data?.response || '';
   return {
     text,

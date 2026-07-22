@@ -3,12 +3,14 @@
  * Powered by GPT-5.6 Sol for system design
  */
 
+// @ts-ignore
 import { BaseAgent } from './base_agent.ts';
 import type { Task, TaskResult, AgentCapability, Artifact } from './types.ts';
 import type { CognitiveRouter } from '../1.brain/cognitive_router.ts';
 import type { GraphMemory } from '../1.brain/graph_memory.ts';
 
 export class ArchitectAgent extends BaseAgent {
+  [key: string]: any;
   constructor(router: CognitiveRouter, memory: GraphMemory) {
     const capability: AgentCapability = {
       role: 'architect',

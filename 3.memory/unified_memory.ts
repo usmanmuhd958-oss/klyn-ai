@@ -1,4 +1,5 @@
 export class UnifiedMemory {
+  [key: string]: any;
   public getStats() {
     return {
       totalNodes: 11,

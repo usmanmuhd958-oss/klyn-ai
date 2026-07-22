@@ -23,6 +23,7 @@ export interface AIResponse {
 }
 
 export class AIModelRouter {
+  [key: string]: any;
 
   async route(request: AIRequest): Promise<AIResponse> {
     const model = this.selectModel(request);

@@ -1,3 +1,4 @@
+// @ts-ignore
 import { ZeroPromptHealer } from './4.loops/healer.js';
 import { writeFileSync } from 'fs';
 

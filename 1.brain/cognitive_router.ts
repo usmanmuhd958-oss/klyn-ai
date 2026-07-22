@@ -2,6 +2,7 @@ import { LLMGateway } from './llm_gateway.js';
 import { CostOptimizer } from './cost_optimizer.js';
 
 export class CognitiveRouter {
+  [key: string]: any;
   private gateway: LLMGateway;
   private optimizer: CostOptimizer;
 

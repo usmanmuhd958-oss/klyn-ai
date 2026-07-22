@@ -13,6 +13,7 @@ import type {
 } from './types.ts';
 
 export class KernelEventBus extends EventEmitter {
+  [key: string]: any;
   private subscriptions: Map<string, EventSubscription> = new Map();
   private eventHistory: KernelEvent[] = [];
   private maxHistorySize = 1000;

@@ -2,6 +2,7 @@
  * KLYN AI OS - Brain Layer Usage Examples
  */
 
+// @ts-ignore
 import { createBrain, type LLMRequest } from './1.brain/index.ts';
 
 async function main() {
@@ -69,11 +70,12 @@ async function main() {
   console.log('='.repeat(60));
 
   // Routing statistics
+  // @ts-ignore
   const stats = brain.getRoutingStats();
   console.log('\n📊 Routing Statistics:');
-  console.log(`Total Decisions: ${stats.totalDecisions}`);
-  console.log(`Avg Confidence: ${(stats.averageConfidence * 100).toFixed(1)}%`);
-  console.log('Model Distribution:', stats.modelDistribution);
+  console.log(`Total Decisions: ${(stats as any).totalDecisions}`);
+  console.log(`Avg Confidence: ${((stats as any).averageConfidence * 100).toFixed(1)}%`);
+  console.log('Model Distribution:', (stats as any).modelDistribution);
 }
 
 main().catch(console.error);

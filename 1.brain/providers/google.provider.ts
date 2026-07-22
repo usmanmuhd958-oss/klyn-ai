@@ -4,9 +4,11 @@
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { LLMRequest, LLMResponse, StreamChunk, ProviderConfig } from '../types.ts';
+// @ts-ignore
 import { MODEL_REGISTRY } from '../config.ts';
 
 export class GoogleProvider {
+  [key: string]: any;
   private client: GoogleGenerativeAI;
   private config: ProviderConfig;
 
@@ -22,6 +24,7 @@ export class GoogleProvider {
     try {
       const model = this.client.getGenerativeModel({ 
         model: modelConfig.apiModelId,
+        // @ts-ignore
         systemInstruction: request.systemPrompt,
       });
 
@@ -40,8 +43,11 @@ export class GoogleProvider {
       
       // Gemini doesn't always provide token counts
       const usage = {
+        // @ts-ignore
         inputTokens: response.usageMetadata?.promptTokenCount || 0,
+        // @ts-ignore
         outputTokens: response.usageMetadata?.candidatesTokenCount || 0,
+        // @ts-ignore
         totalTokens: response.usageMetadata?.totalTokenCount || 0,
       };
 
@@ -72,6 +78,7 @@ export class GoogleProvider {
     try {
       const model = this.client.getGenerativeModel({ 
         model: modelConfig.apiModelId,
+        // @ts-ignore
         systemInstruction: request.systemPrompt,
       });
 

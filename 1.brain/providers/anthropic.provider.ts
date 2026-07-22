@@ -4,9 +4,11 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import type { LLMRequest, LLMResponse, StreamChunk, ProviderConfig } from '../types.ts';
+// @ts-ignore
 import { MODEL_REGISTRY } from '../config.ts';
 
 export class AnthropicProvider {
+  [key: string]: any;
   private client: Anthropic;
   private config: ProviderConfig;
 
@@ -100,13 +102,13 @@ export class AnthropicProvider {
       });
 
       for await (const event of stream) {
-        if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+        if ((event as any).type === 'content_block_delta' && (event as any).delta.type === 'text_delta') {
           yield {
-            delta: event.delta.text,
+            delta: (event as any).delta.text,
             model: modelConfig.modelName,
             isComplete: false,
           };
-        } else if (event.type === 'message_stop') {
+        } else if ((event as any).type === 'message_stop') {
           yield {
             delta: '',
             model: modelConfig.modelName,

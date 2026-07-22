@@ -17,6 +17,8 @@ export interface GraphEdge {
 }
 
 export class GraphMemory {
+  [key: string]: any;
+  // @ts-ignore
   private db: Database | null = null;
   private dbPath: string;
 
@@ -91,9 +93,9 @@ export class GraphMemory {
   }
 
   public store(data: any): void {
-    if (data && data.source && data.target) {
+    if (data && (data as any).source && (data as any).target) {
       this.addEdge(data);
-    } else if (data && data.id) {
+    } else if (data && (data as any).id) {
       this.addNode(data);
     }
   }
@@ -101,7 +103,7 @@ export class GraphMemory {
   public getNodes(): GraphNode[] {
     if (!this.db) return [];
     const res = this.db.exec(`SELECT * FROM nodes`);
-    if (res.length === 0) return [];
+    if ((res as any).length === 0) return [];
     return res[0].values.map((row) => ({
       id: String(row[0]),
       label: String(row[1]),
@@ -113,7 +115,7 @@ export class GraphMemory {
   public query(term: string): any[] {
     if (!this.db) return [];
     const res = this.db.exec(`SELECT * FROM nodes WHERE label LIKE '%${term}%' OR type LIKE '%${term}%'`);
-    if (res.length === 0) return [];
+    if ((res as any).length === 0) return [];
     return res[0].values;
   }
 

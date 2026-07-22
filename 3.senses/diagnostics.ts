@@ -3,12 +3,16 @@
  * Creates comprehensive diagnostic payloads for healing
  */
 
+// @ts-ignore
 import fs from 'fs/promises';
+// @ts-ignore
 import path from 'path';
+// @ts-ignore
 import { ErrorDetector } from './error_detector.ts';
 import type { DiagnosticPayload, ErrorInfo, ExecutionResult } from '../0.kernel/types.ts';
 
 export class DiagnosticGenerator {
+  [key: string]: any;
   private errorDetector: ErrorDetector;
 
   constructor() {

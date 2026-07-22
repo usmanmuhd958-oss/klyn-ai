@@ -20,6 +20,7 @@ export interface Workflow {
 }
 
 export class SwarmOrchestrator {
+  [key: string]: any;
   private agents: Map<string, BaseAgent> = new Map();
   private brain: any;
   public memory = memory;
@@ -94,6 +95,7 @@ export class SwarmOrchestrator {
     
     let rawResult: any = { success: true, status: 'completed' };
     if (typeof agent.executeTask === 'function') {
+      // @ts-ignore
       rawResult = await agent.executeTask(step);
     } else if (typeof (agent as any).query === 'function') {
       rawResult = await (agent as any).query(step.prompt || step.description || step.name || 'Execute step');

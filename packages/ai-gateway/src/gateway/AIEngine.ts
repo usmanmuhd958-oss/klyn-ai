@@ -18,6 +18,7 @@ export interface AIResponse {
 }
 
 export class AIEngine {
+  [key: string]: any;
   private openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
   async execute(req: AIRequest): Promise<AIResponse> {

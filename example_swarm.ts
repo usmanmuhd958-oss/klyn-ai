@@ -55,19 +55,19 @@ async function main() {
   console.log("================================================================================");
   console.log("GRAPH MEMORY STATISTICS");
   console.log("================================================================================");
-  console.log(`Total Nodes: ${stats.totalNodes ?? 11}`);
-  console.log(`Total Edges: ${stats.totalEdges ?? 14}\n`);
+  console.log(`Total Nodes: ${(stats as any).totalNodes ?? 11}`);
+  console.log(`Total Edges: ${(stats as any).totalEdges ?? 14}\n`);
 
   console.log("Nodes by Type:");
-  if (stats.nodesByType) {
-    for (const [type, count] of Object.entries(stats.nodesByType)) {
+  if ((stats as any).nodesByType) {
+    for (const [type, count] of Object.entries((stats as any).nodesByType)) {
       console.log(`  - ${type}: ${count}`);
     }
   }
 
   console.log("\nEdges by Type:");
-  if (stats.edgesByType) {
-    for (const [type, count] of Object.entries(stats.edgesByType)) {
+  if ((stats as any).edgesByType) {
+    for (const [type, count] of Object.entries((stats as any).edgesByType)) {
       console.log(`  - ${type}: ${count}`);
     }
   }

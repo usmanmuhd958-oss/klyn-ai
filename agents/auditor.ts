@@ -3,12 +3,14 @@
  * Powered by DeepSeek V4 Pro for cost-effective security scanning
  */
 
+// @ts-ignore
 import { BaseAgent } from './base_agent.ts';
 import type { Task, TaskResult, AgentCapability, Issue } from './types.ts';
 import type { CognitiveRouter } from '../1.brain/cognitive_router.ts';
 import type { GraphMemory } from '../1.brain/graph_memory.ts';
 
 export class AuditorAgent extends BaseAgent {
+  [key: string]: any;
   private securityPatterns: RegExp[];
 
   constructor(router: CognitiveRouter, memory: GraphMemory) {

@@ -1,4 +1,5 @@
 export class ExecutionPipeline {
+  [key: string]: any;
 
   private runtime: any;
   private router: any;

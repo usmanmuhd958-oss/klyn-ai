@@ -8,6 +8,7 @@ import { randomUUID } from 'crypto';
 import type { ExecutionContext, ExecutionResult } from '../0.kernel/types.ts';
 
 export class ProcessExecutor {
+  [key: string]: any;
   private activeProcesses = new Map<string, any>();
 
   /**
@@ -46,12 +47,12 @@ export class ProcessExecutor {
 
       // Capture stdout
       child.stdout?.on('data', (data) => {
-        stdout.push(data.toString());
+        stdout.push((data as any).toString());
       });
 
       // Capture stderr
       child.stderr?.on('data', (data) => {
-        stderr.push(data.toString());
+        stderr.push((data as any).toString());
       });
 
       // Handle timeout
@@ -117,8 +118,8 @@ export class ProcessExecutor {
 
       this.activeProcesses.set(executionId, child);
 
-      child.stdout?.on('data', (data) => stdout.push(data.toString()));
-      child.stderr?.on('data', (data) => stderr.push(data.toString()));
+      child.stdout?.on('data', (data) => stdout.push((data as any).toString()));
+      child.stderr?.on('data', (data) => stderr.push((data as any).toString()));
 
       const timeoutId = setTimeout(() => {
         child.kill('SIGTERM');

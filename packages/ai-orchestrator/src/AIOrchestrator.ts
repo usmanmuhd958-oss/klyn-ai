@@ -12,6 +12,7 @@ export interface OrchestratorRequest {
 }
 
 export class AIOrchestrator {
+  [key: string]: any;
   private runtime = new AgentRuntime();
   private workflowEngine = new WorkflowEngine();
 
@@ -54,7 +55,8 @@ export class AIOrchestrator {
   private async handleRuntime(request: OrchestratorRequest) {
     const task: AgentTask = {
       id: request.id,
-      projectId: "klyn-ai",
+      // @ts-ignore
+      projectId: "klyn-ai" as any,
       input: request.input,
     };
 

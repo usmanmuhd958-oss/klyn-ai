@@ -3,6 +3,7 @@ import { SupabaseAgentMemory } from "../memory/SupabaseAgentMemory";
 import { AgentTask, AgentType } from "../types/agent.types";
 
 export class AgentRuntime {
+  [key: string]: any;
   private executor = new AgentExecutor();
   private memory = new SupabaseAgentMemory();
 

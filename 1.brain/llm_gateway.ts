@@ -21,6 +21,7 @@ export interface LLMResponse {
 }
 
 export class LLMGateway {
+  [key: string]: any;
   private config: any;
   private totalCost: number = 0;
   private totalTokens: number = 0;

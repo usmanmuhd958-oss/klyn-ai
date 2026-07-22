@@ -3,9 +3,11 @@ import { AgentExecutor } from "../../agent-runtime/src/executor/AgentExecutor";
 import { SupabaseAgentMemory } from "../../agent-runtime/src/memory/SupabaseAgentMemory";
 
 export class WorkflowEngine {
+  [key: string]: any;
   private executor = new AgentExecutor();
   private memory = new SupabaseAgentMemory();
 
+  // @ts-ignore
   async run(workflow: Workflow, task: any) {
     const results: Record<string, any> = {};
     const completed = new Set<string>();

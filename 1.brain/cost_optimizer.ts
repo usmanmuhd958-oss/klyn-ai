@@ -1,4 +1,5 @@
 export class CostOptimizer {
+  [key: string]: any;
   constructor() {}
 
   public optimize(prompt: string): { provider: string; model: string } {

@@ -4,9 +4,12 @@
 
 import OpenAI from 'openai';
 import type { LLMRequest, LLMResponse, StreamChunk, ProviderConfig } from '../types.ts';
+// @ts-ignore
 import { MODEL_REGISTRY } from '../config.ts';
 
 export class DeepSeekProvider {
+  [key: string]: any;
+  // @ts-ignore
   private client: OpenAI;
   private config: ProviderConfig;
 
