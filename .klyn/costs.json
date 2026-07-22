@@ -1,0 +1,107 @@
+[
+  {
+    "model": "deepseek-v4",
+    "timestamp": 1784739109104,
+    "tokensUsed": 0,
+    "cost": 0,
+    "success": false
+  },
+  {
+    "model": "deepseek-v4",
+    "timestamp": 1784739111809,
+    "tokensUsed": 0,
+    "cost": 0,
+    "success": false
+  },
+  {
+    "model": "deepseek-v4",
+    "timestamp": 1784739115604,
+    "tokensUsed": 0,
+    "cost": 0,
+    "success": false
+  },
+  {
+    "model": "deepseek-v4",
+    "timestamp": 1784739270353,
+    "tokensUsed": 0,
+    "cost": 0,
+    "success": false
+  },
+  {
+    "model": "deepseek-v4",
+    "timestamp": 1784739273446,
+    "tokensUsed": 0,
+    "cost": 0,
+    "success": false
+  },
+  {
+    "model": "deepseek-v4",
+    "timestamp": 1784739277373,
+    "tokensUsed": 0,
+    "cost": 0,
+    "success": false
+  },
+  {
+    "model": "deepseek-v4",
+    "timestamp": 1784739381442,
+    "tokensUsed": 0,
+    "cost": 0,
+    "success": false
+  },
+  {
+    "model": "deepseek-v4",
+    "timestamp": 1784739383933,
+    "tokensUsed": 0,
+    "cost": 0,
+    "success": false
+  },
+  {
+    "model": "deepseek-v4",
+    "timestamp": 1784739387765,
+    "tokensUsed": 0,
+    "cost": 0,
+    "success": false
+  },
+  {
+    "model": "deepseek-v4",
+    "timestamp": 1784739958532,
+    "tokensUsed": 0,
+    "cost": 0,
+    "success": false
+  },
+  {
+    "model": "deepseek-v4",
+    "timestamp": 1784739961318,
+    "tokensUsed": 0,
+    "cost": 0,
+    "success": false
+  },
+  {
+    "model": "deepseek-v4",
+    "timestamp": 1784739964952,
+    "tokensUsed": 0,
+    "cost": 0,
+    "success": false
+  },
+  {
+    "model": "deepseek-v4",
+    "timestamp": 1784740057258,
+    "tokensUsed": 0,
+    "cost": 0,
+    "success": false
+  },
+  {
+    "model": "deepseek-v4",
+    "timestamp": 1784740059795,
+    "tokensUsed": 0,
+    "cost": 0,
+    "success": false
+  },
+  {
+    "model": "deepseek-v4",
+    "timestamp": 1784740063337,
+    "tokensUsed": 0,
+    "cost": 0,
+    "success": false
+  }
+]
