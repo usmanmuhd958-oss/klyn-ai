@@ -1,0 +1,261 @@
+import { createHash } from 'crypto';
+
+interface DAGNode {
+  hash: string;
+  type: 'leaf' | 'branch';
+  path?: string;
+  content?: string;
+  left?: DAGNode;
+  right?: DAGNode;
+}
+
+interface MerkleProof {
+  path: string;
+  leafHash: string;
+  siblings: Array<{ hash: string; direction: 'left' | 'right' }>;
+  rootHash: string;
+}
+
+interface StateDiffResult {
+  added: string[];
+  modified: Array<{ path: string; oldHash: string; newHash: string }>;
+  deleted: string[];
+  unchanged: string[];
+}
+
+interface MerkleTreeOptions {
+  sortPaths?: boolean;
+  hashAlgorithm?: 'sha256';
+}
+
+class MerkleDAGEngine {
+  private readonly options: Required<MerkleTreeOptions>;
+
+  constructor(options: MerkleTreeOptions = {}) {
+    this.options = {
+      sortPaths: options.sortPaths ?? true,
+      hashAlgorithm: options.hashAlgorithm ?? 'sha256',
+    };
+  }
+
+  private hash(data: string): string {
+    return createHash(this.options.hashAlgorithm).update(data).digest('hex');
+  }
+
+  private createLeafNode(path: string, content: string): DAGNode {
+    const hash = this.hash(`${path}:${content}`);
+    return { hash, type: 'leaf', path, content };
+  }
+
+  private createBranchNode(left: DAGNode, right?: DAGNode): DAGNode {
+    if (!right) {
+      return left;
+    }
+    const hash = this.hash(`${left.hash}${right.hash}`);
+    return { hash, type: 'branch', left, right };
+  }
+
+  buildTreeFromMap(fileMap: Map<string, string>): DAGNode {
+    if (fileMap.size === 0) {
+      throw new Error('Cannot build tree from empty map');
+    }
+
+    const entries = Array.from(fileMap.entries());
+    if (this.options.sortPaths) {
+      entries.sort((a, b) => a[0].localeCompare(b[0]));
+    }
+
+    const leaves: DAGNode[] = entries.map(([path, content]) =>
+      this.createLeafNode(path, content)
+    );
+
+    return this.buildTreeFromLeaves(leaves);
+  }
+
+  private buildTreeFromLeaves(leaves: DAGNode[]): DAGNode {
+    if (leaves.length === 0) {
+      throw new Error('Cannot build tree from empty leaves');
+    }
+
+    if (leaves.length === 1) {
+      return leaves[0];
+    }
+
+    const nextLevel: DAGNode[] = [];
+    for (let i = 0; i < leaves.length; i += 2) {
+      const left = leaves[i];
+      const right = leaves[i + 1];
+      nextLevel.push(this.createBranchNode(left, right));
+    }
+
+    return this.buildTreeFromLeaves(nextLevel);
+  }
+
+  updateLeaf(root: DAGNode, filePath: string, newContent: string): DAGNode {
+    const fileMap = this.extractFileMap(root);
+    fileMap.set(filePath, newContent);
+    return this.buildTreeFromMap(fileMap);
+  }
+
+  private extractFileMap(node: DAGNode): Map<string, string> {
+    const map = new Map<string, string>();
+    this.traverseLeaves(node, (leaf) => {
+      if (leaf.path && leaf.content !== undefined) {
+        map.set(leaf.path, leaf.content);
+      }
+    });
+    return map;
+  }
+
+  private traverseLeaves(node: DAGNode, callback: (leaf: DAGNode) => void): void {
+    if (node.type === 'leaf') {
+      callback(node);
+    } else {
+      if (node.left) {
+        this.traverseLeaves(node.left, callback);
+      }
+      if (node.right) {
+        this.traverseLeaves(node.right, callback);
+      }
+    }
+  }
+
+  computeDiff(oldRoot: DAGNode | null, newRoot: DAGNode): StateDiffResult {
+    const oldMap = oldRoot ? this.extractFileMap(oldRoot) : new Map<string, string>();
+    const newMap = this.extractFileMap(newRoot);
+
+    const added: string[] = [];
+    const modified: Array<{ path: string; oldHash: string; newHash: string }> = [];
+    const deleted: string[] = [];
+    const unchanged: string[] = [];
+
+    for (const [path, newContent] of newMap.entries()) {
+      if (!oldMap.has(path)) {
+        added.push(path);
+      } else {
+        const oldContent = oldMap.get(path)!;
+        const oldHash = this.hash(`${path}:${oldContent}`);
+        const newHash = this.hash(`${path}:${newContent}`);
+        if (oldHash !== newHash) {
+          modified.push({ path, oldHash, newHash });
+        } else {
+          unchanged.push(path);
+        }
+      }
+    }
+
+    for (const path of oldMap.keys()) {
+      if (!newMap.has(path)) {
+        deleted.push(path);
+      }
+    }
+
+    return { added, modified, deleted, unchanged };
+  }
+
+  generateProof(root: DAGNode, filePath: string): MerkleProof {
+    const siblings: Array<{ hash: string; direction: 'left' | 'right' }> = [];
+    const leafNode = this.findLeafAndBuildProof(root, filePath, siblings);
+
+    if (!leafNode) {
+      throw new Error(`File path not found: ${filePath}`);
+    }
+
+    return {
+      path: filePath,
+      leafHash: leafNode.hash,
+      siblings,
+      rootHash: root.hash,
+    };
+  }
+
+  private findLeafAndBuildProof(
+    node: DAGNode,
+    targetPath: string,
+    siblings: Array<{ hash: string; direction: 'left' | 'right' }>
+  ): DAGNode | null {
+    if (node.type === 'leaf') {
+      return node.path === targetPath ? node : null;
+    }
+
+    if (node.left) {
+      const found = this.findLeafAndBuildProof(node.left, targetPath, siblings);
+      if (found) {
+        if (node.right) {
+          siblings.unshift({ hash: node.right.hash, direction: 'right' });
+        }
+        return found;
+      }
+    }
+
+    if (node.right) {
+      const found = this.findLeafAndBuildProof(node.right, targetPath, siblings);
+      if (found) {
+        if (node.left) {
+          siblings.unshift({ hash: node.left.hash, direction: 'left' });
+        }
+        return found;
+      }
+    }
+
+    return null;
+  }
+
+  verifyProof(proof: MerkleProof): boolean {
+    let currentHash = proof.leafHash;
+
+    for (const sibling of proof.siblings) {
+      if (sibling.direction === 'left') {
+        currentHash = this.hash(`${sibling.hash}${currentHash}`);
+      } else {
+        currentHash = this.hash(`${currentHash}${sibling.hash}`);
+      }
+    }
+
+    return currentHash === proof.rootHash;
+  }
+
+  deserializeNode(data: any): DAGNode {
+    if (!data || typeof data !== 'object') {
+      throw new Error('Invalid node data');
+    }
+
+    if (!data.hash || typeof data.hash !== 'string') {
+      throw new Error('Invalid or missing hash');
+    }
+
+    if (!data.type || (data.type !== 'leaf' && data.type !== 'branch')) {
+      throw new Error('Invalid or missing node type');
+    }
+
+    if (data.type === 'leaf') {
+      if (typeof data.path !== 'string' || typeof data.content !== 'string') {
+        throw new Error('Invalid leaf node: missing path or content');
+      }
+      return {
+        hash: data.hash,
+        type: 'leaf',
+        path: data.path,
+        content: data.content,
+      };
+    }
+
+    const node: DAGNode = {
+      hash: data.hash,
+      type: 'branch',
+    };
+
+    if (data.left) {
+      node.left = this.deserializeNode(data.left);
+    }
+
+    if (data.right) {
+      node.right = this.deserializeNode(data.right);
+    }
+
+    return node;
+  }
+}
+
+export type { DAGNode, MerkleProof, StateDiffResult, MerkleTreeOptions };
+export { MerkleDAGEngine };

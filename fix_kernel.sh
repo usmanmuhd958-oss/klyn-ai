@@ -1,3 +1,19 @@
+#!/usr/bin/env bash
+
+# =================================================================
+#  KLYN AI OS - Kernel Hotfix & Synchronizer Script
+# =================================================================
+
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+echo -e "${BLUE}[INFO] Patching kernel/src/orchestrator/swarm_benchmark.ts for UI compatibility...${NC}"
+
+mkdir -p kernel/src/orchestrator
+
+cat << 'TS_EOF' > kernel/src/orchestrator/swarm_benchmark.ts
 import { EventEmitter } from 'events';
 import { performance } from 'perf_hooks';
 
@@ -7,7 +23,6 @@ export interface PerformanceMetric {
   timestamp: number;
   agentId?: string;
   unit?: string;
-  category?: string;
 }
 
 export interface AgentExecutionBenchmark {
@@ -16,8 +31,6 @@ export interface AgentExecutionBenchmark {
   tokensProcessed: number;
   memoryDeltaMB: number;
   timestamp: number;
-  success?: boolean;
-  tokensPerSecond?: number;
 }
 
 export interface ContextExtractionBenchmark {
@@ -25,29 +38,18 @@ export interface ContextExtractionBenchmark {
   durationMs: number;
   fileCount: number;
   timestamp: number;
-  symbolsExtracted?: number;
-  totalTimeMs?: number;
-  cacheHit?: boolean;
 }
 
 export interface ThroughputMetrics {
   tokensPerSec: number;
-  tokensPerSecond: number;
-  tasksPerSecond: number;
-  filesPerSecond: number;
-  avgTaskLatencyMs: number;
-  p95TaskLatencyMs: number;
-  p99TaskLatencyMs: number;
   totalTokens: number;
   durationSec: number;
 }
 
 export interface MemorySnapshot {
   heapUsed: number;
-  heapUsedMB: number;
   heapTotal: number;
   rss: number;
-  rssMB: number;
   timestamp: number;
 }
 
@@ -55,9 +57,6 @@ export interface CacheMetrics {
   hits: number;
   misses: number;
   ratio: number;
-  totalRequests?: number;
-  hitRate?: number;
-  cacheName?: string;
 }
 
 export interface MetricSnapshot {
@@ -65,9 +64,7 @@ export interface MetricSnapshot {
   agentId: string;
   timestamp: number;
   executionTimeMs: number;
-  durationMs: number;
   memoryDeltaMB: number;
-  heapUsedMB: number;
   tokensProcessed: number;
   tokensPerSec: number;
   isCacheHit: boolean;
@@ -98,7 +95,7 @@ export class SwarmBenchmark extends EventEmitter {
     this.maxBufferCapacity = maxBufferCapacity;
   }
 
-  public startSession(sessionId: string, agentId = 'system-agent'): string {
+  public startSession(sessionId: string, agentId: string): void {
     const session: BenchmarkSession = {
       sessionId,
       agentId,
@@ -106,7 +103,6 @@ export class SwarmBenchmark extends EventEmitter {
       startMemory: process.memoryUsage().heapUsed,
     };
     this.activeSessions.set(sessionId, session);
-    return sessionId;
   }
 
   public endSession(
@@ -115,44 +111,39 @@ export class SwarmBenchmark extends EventEmitter {
     isCacheHit = false
   ): MetricSnapshot {
     const session = this.activeSessions.get(sessionId);
-    const agentId = session ? session.agentId : 'system-agent';
-    const startTime = session ? session.startTime : performance.now();
-    const startMemory = session ? session.startMemory : process.memoryUsage().heapUsed;
+    if (!session) {
+      throw new Error(`Benchmark session not found: ${sessionId}`);
+    }
 
     const endTime = performance.now();
     const endMemory = process.memoryUsage().heapUsed;
 
-    const executionTimeMs = Number((endTime - startTime).toFixed(2));
-    const memoryDeltaBytes = endMemory - startMemory;
+    const executionTimeMs = Number((endTime - session.startTime).toFixed(2));
+    const memoryDeltaBytes = endMemory - session.startMemory;
     const memoryDeltaMB = Number((memoryDeltaBytes / (1024 * 1024)).toFixed(4));
-    const heapUsedMB = Number((endMemory / (1024 * 1024)).toFixed(2));
     const durationSeconds = executionTimeMs / 1000;
     const tokensPerSec = durationSeconds > 0 ? Number((tokensProcessed / durationSeconds).toFixed(2)) : 0;
 
     const snapshot: MetricSnapshot = {
       sessionId,
-      agentId,
+      agentId: session.agentId,
       timestamp: Date.now(),
       executionTimeMs,
-      durationMs: executionTimeMs,
       memoryDeltaMB,
-      heapUsedMB,
       tokensProcessed,
       tokensPerSec,
       isCacheHit,
     };
 
     this.recordSnapshot(snapshot);
-    if (session) this.activeSessions.delete(sessionId);
+    this.activeSessions.delete(sessionId);
 
     const agentEvent: AgentExecutionBenchmark = {
-      agentId,
+      agentId: session.agentId,
       executionTimeMs,
       tokensProcessed,
       memoryDeltaMB,
       timestamp: Date.now(),
-      success: true,
-      tokensPerSecond: tokensPerSec,
     };
     this.emit('benchmark:agent-execution', agentEvent);
 
@@ -174,16 +165,9 @@ export class SwarmBenchmark extends EventEmitter {
     const totalDurationMs = this.snapshots.reduce((acc, s) => acc + s.executionTimeMs, 0);
     const durationSec = totalDurationMs / 1000;
     const tokensPerSec = durationSec > 0 ? Number((totalTokens / durationSec).toFixed(2)) : 0;
-    const percentiles = this.getPercentiles();
 
     return {
       tokensPerSec,
-      tokensPerSecond: tokensPerSec,
-      tasksPerSecond: durationSec > 0 ? Number((this.snapshots.length / durationSec).toFixed(2)) : 0,
-      filesPerSecond: durationSec > 0 ? Number((this.snapshots.length / durationSec).toFixed(2)) : 0,
-      avgTaskLatencyMs: this.snapshots.length > 0 ? Number((totalDurationMs / this.snapshots.length).toFixed(2)) : 0,
-      p95TaskLatencyMs: percentiles.p95,
-      p99TaskLatencyMs: percentiles.p99,
       totalTokens,
       durationSec: Number(durationSec.toFixed(2)),
     };
@@ -191,15 +175,10 @@ export class SwarmBenchmark extends EventEmitter {
 
   public getCurrentMemoryUsage(): MemorySnapshot {
     const mem = process.memoryUsage();
-    const heapUsedMB = Number((mem.heapUsed / (1024 * 1024)).toFixed(2));
-    const rssMB = Number((mem.rss / (1024 * 1024)).toFixed(2));
-
     return {
-      heapUsed: heapUsedMB,
-      heapUsedMB,
+      heapUsed: Number((mem.heapUsed / (1024 * 1024)).toFixed(2)),
       heapTotal: Number((mem.heapTotal / (1024 * 1024)).toFixed(2)),
-      rss: rssMB,
-      rssMB,
+      rss: Number((mem.rss / (1024 * 1024)).toFixed(2)),
       timestamp: Date.now(),
     };
   }
@@ -217,14 +196,10 @@ export class SwarmBenchmark extends EventEmitter {
     if (category && this.cacheStats.has(category)) {
       const stat = this.cacheStats.get(category)!;
       const total = stat.hits + stat.misses;
-      const ratio = total > 0 ? Number(((stat.hits / total) * 100).toFixed(2)) : 0;
       return {
         hits: stat.hits,
         misses: stat.misses,
-        ratio,
-        totalRequests: total,
-        hitRate: ratio,
-        cacheName: category,
+        ratio: total > 0 ? Number(((stat.hits / total) * 100).toFixed(2)) : 0,
       };
     }
 
@@ -235,15 +210,10 @@ export class SwarmBenchmark extends EventEmitter {
       totalMisses += stat.misses;
     }
     const total = totalHits + totalMisses;
-    const ratio = total > 0 ? Number(((totalHits / total) * 100).toFixed(2)) : 0;
-
     return {
       hits: totalHits,
       misses: totalMisses,
-      ratio,
-      totalRequests: total,
-      hitRate: ratio,
-      cacheName: category || 'global',
+      ratio: total > 0 ? Number(((totalHits / total) * 100).toFixed(2)) : 0,
     };
   }
 
@@ -283,14 +253,6 @@ export class SwarmBenchmark extends EventEmitter {
 
     const hits = filtered.filter((s) => s.isCacheHit).length;
     return Number(((hits / filtered.length) * 100).toFixed(2));
-  }
-
-  public getSnapshot(): object {
-    return this.exportJSON();
-  }
-
-  public printReport(): void {
-    console.log(this.getAggregatedReport());
   }
 
   public getAggregatedReport(): string {
@@ -343,3 +305,9 @@ export class SwarmBenchmark extends EventEmitter {
     };
   }
 }
+TS_EOF
+
+echo -e "${GREEN}[✔] swarm_benchmark.ts successfully updated!${NC}"
+echo -e "${BLUE}[INFO] Running TypeScript Type-Check...${NC}"
+
+npx tsc --noEmit

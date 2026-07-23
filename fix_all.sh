@@ -1,3 +1,18 @@
+#!/usr/bin/env bash
+
+# =================================================================
+#  KLYN AI OS - Master Kernel Types Synchronizer
+# =================================================================
+
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+echo -e "${BLUE}[INFO] Synchronizing Kernel Interfaces across Orchestrator modules...${NC}"
+
+# 1. Update swarm_benchmark.ts with all required UI & Bridge types
+cat << 'TS_EOF' > kernel/src/orchestrator/swarm_benchmark.ts
 import { EventEmitter } from 'events';
 import { performance } from 'perf_hooks';
 
@@ -343,3 +358,112 @@ export class SwarmBenchmark extends EventEmitter {
     };
   }
 }
+TS_EOF
+
+# 2. Update dag_swarm_bridge.ts to use SwarmBenchmark methods correctly
+cat << 'TS_EOF' > kernel/src/orchestrator/dag_swarm_bridge.ts
+import { DAGNode, StateDiffResult, MerkleDAGEngine } from '../dag/merkle_engine';
+import { SwarmBenchmark, MetricSnapshot } from './swarm_benchmark';
+
+export interface AgentContextPayload {
+  agentId: string;
+  diffSummary: StateDiffResult;
+  tokenUsageEstimate: number;
+  payloadContext: string[];
+  timestamp: number;
+  processingTimeMs?: number;
+  memorySnapshotMB?: number;
+}
+
+export interface ProcessedContext {
+  prunedFiles: string[];
+  totalTokens: number;
+  withinBudget: boolean;
+}
+
+export class DAGSwarmBridge {
+  private dagEngine: MerkleDAGEngine;
+  private benchmark?: SwarmBenchmark;
+
+  constructor(dagEngine: MerkleDAGEngine, benchmark?: SwarmBenchmark) {
+    this.dagEngine = dagEngine;
+    this.benchmark = benchmark;
+  }
+
+  public async dispatchStateChange(
+    oldRoot: DAGNode | null,
+    newRoot: DAGNode,
+    agentId: string
+  ): Promise<AgentContextPayload> {
+    const sessionId = `dispatch-${Date.now()}`;
+    if (this.benchmark) {
+      this.benchmark.startSession(sessionId, agentId);
+    }
+
+    const diff = this.dagEngine.computeDiff(oldRoot, newRoot);
+    const contextFiles = [...diff.modified, ...diff.added];
+    const estimatedTokens = contextFiles.reduce((acc, file) => acc + file.length * 4, 0);
+
+    let metric: MetricSnapshot | undefined;
+    if (this.benchmark) {
+      metric = this.benchmark.endSession(sessionId, estimatedTokens, false);
+    }
+
+    return {
+      agentId,
+      diffSummary: diff,
+      tokenUsageEstimate: estimatedTokens,
+      payloadContext: contextFiles,
+      timestamp: Date.now(),
+      processingTimeMs: metric ? metric.durationMs : 0,
+      memorySnapshotMB: metric ? metric.heapUsedMB : 0,
+    };
+  }
+
+  public pruneContextByBudget(diff: StateDiffResult, maxTokens: number): ProcessedContext {
+    const sessionId = `prune-${Date.now()}`;
+    if (this.benchmark) {
+      this.benchmark.startSession(sessionId, 'bridge-pruner');
+    }
+
+    const allFiles = [...diff.modified, ...diff.added];
+    const prunedFiles: string[] = [];
+    let currentTokens = 0;
+
+    for (const file of allFiles) {
+      const fileTokenCost = Math.ceil(file.length * 1.5);
+      if (currentTokens + fileTokenCost <= maxTokens) {
+        prunedFiles.push(file);
+        currentTokens += fileTokenCost;
+      } else {
+        break;
+      }
+    }
+
+    if (this.benchmark) {
+      this.benchmark.endSession(sessionId, currentTokens, false);
+    }
+
+    return {
+      prunedFiles,
+      totalTokens: currentTokens,
+      withinBudget: currentTokens <= maxTokens,
+    };
+  }
+
+  public getSnapshot(): object {
+    return this.benchmark ? this.benchmark.getSnapshot() : {};
+  }
+
+  public printReport(): void {
+    if (this.benchmark) {
+      this.benchmark.printReport();
+    }
+  }
+}
+TS_EOF
+
+echo -e "${GREEN}[✔] Swarm Benchmark & DAG Bridge successfully refactored!${NC}"
+echo -e "${BLUE}[INFO] Executing TypeScript Verification (npx tsc --noEmit)...${NC}"
+
+npx tsc --noEmit
