@@ -1,6 +1,6 @@
 // example/usage.ts
 
-import KlynCodebaseEngine from './kernel/src/indexer';
+import KlynCodebaseEngine from '../kernel/src/indexer';
 
 async function main() {
   console.log('🚀 Initializing KLYN Codebase Engine...\n');
