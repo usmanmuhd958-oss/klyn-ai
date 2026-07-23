@@ -2,7 +2,7 @@
 
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
-import { Logger } from '../logger';
+import { Logger as SystemLogger } from '../logger';
 
 /**
  * Swarm Mesh Orchestration Engine

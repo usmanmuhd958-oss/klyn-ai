@@ -1,4 +1,4 @@
-import process from 'node:process';
+import * as process from 'node:process';
 
 const C = {
   reset: '\x1b[0m',
