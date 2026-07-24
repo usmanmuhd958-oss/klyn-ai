@@ -1,397 +1,674 @@
 // kernel/src/ast/dependency_graph.ts
+import type { DAGNode } from '../pipeline/repo_ingest.js';
+import { join, dirname, resolve, extname, sep } from 'node:path';
 
-import { dirname, join, resolve } from 'node:path';
-
-/**
- * Represents a parsed file node with dependency metadata
- */
-interface DependencyNode {
-  path: string;
-  imports: Set<string>;
-  exports: Set<string>;
-  symbols: Set<string>;
-  content: string;
+export interface SymbolImport {
+  symbol: string;
+  alias?: string;
+  source: string;
+  line: number;
+  isDefault: boolean;
+  isNamespace: boolean;
+  isDynamic: boolean;
 }
 
-/**
- * High-performance AST Dependency Graph for TypeScript/JavaScript
- * Uses regex-based tokenization for ultra-lightweight parsing
- */
+export interface SymbolExport {
+  symbol: string;
+  line: number;
+  isDefault: boolean;
+  reExportFrom?: string;
+}
+
+export interface FileNode {
+  path: string;
+  hash: string;
+  language: string;
+  imports: SymbolImport[];
+  exports: SymbolExport[];
+  directDependencies: Set<string>;
+  directDependents: Set<string>;
+  symbolMap: Map<string, string[]>;
+}
+
+export interface CircularChain {
+  files: string[];
+  symbols: string[];
+}
+
 export class ASTDependencyGraph {
-  private readonly nodes: Map<string, DependencyNode>;
-  private readonly dependencyEdges: Map<string, Set<string>>;
-  private readonly reverseDependencyEdges: Map<string, Set<string>>;
-  private readonly maxDepth: number = 1000;
+  private nodes: Map<string, FileNode> = new Map();
+  private pathResolver: PathResolver = new PathResolver();
+  private rootPath: string = '';
 
-  constructor() {
-    this.nodes = new Map();
-    this.dependencyEdges = new Map();
-    this.reverseDependencyEdges = new Map();
-  }
-
-  /**
-   * Adds a file to the dependency graph with full AST analysis
-   */
-  public addFile(path: string, content: string): void {
-    const normalizedPath = this.normalizePath(path);
-
-    const node: DependencyNode = {
-      path: normalizedPath,
-      imports: new Set(),
-      exports: new Set(),
-      symbols: new Set(),
-      content
-    };
-
-    this.parseImports(content, node);
-    this.parseExports(content, node);
-    this.parseSymbols(content, node);
-
-    this.nodes.set(normalizedPath, node);
-
-    if (!this.dependencyEdges.has(normalizedPath)) {
-      this.dependencyEdges.set(normalizedPath, new Set());
+  async buildFromDAG(dagRoot: DAGNode): Promise<void> {
+    this.nodes.clear();
+    this.rootPath = dagRoot.path;
+    
+    const fileNodes: Array<{ path: string; content: string; language: string; hash: string }> = [];
+    
+    this.collectFiles(dagRoot, fileNodes);
+    
+    for (const { path, content, language, hash } of fileNodes) {
+      const imports = this.parseImports(content, language);
+      const exports = this.parseExports(content, language);
+      
+      const node: FileNode = {
+        path,
+        hash,
+        language,
+        imports,
+        exports,
+        directDependencies: new Set(),
+        directDependents: new Set(),
+        symbolMap: new Map(),
+      };
+      
+      this.nodes.set(path, node);
     }
-
-    for (const importPath of node.imports) {
-      const resolvedImport = this.resolveImportPath(normalizedPath, importPath);
-      this.dependencyEdges.get(normalizedPath)!.add(resolvedImport);
-
-      if (!this.reverseDependencyEdges.has(resolvedImport)) {
-        this.reverseDependencyEdges.set(resolvedImport, new Set());
-      }
-      this.reverseDependencyEdges.get(resolvedImport)!.add(normalizedPath);
-    }
+    
+    this.resolveAllDependencies();
+    this.buildSymbolMaps();
   }
 
-  /**
-   * Gets all direct dependencies of a file
-   */
-  public getDependencies(path: string): string[] {
-    const normalizedPath = this.normalizePath(path);
-    const deps = this.dependencyEdges.get(normalizedPath);
-    return deps ? Array.from(deps) : [];
+  getDirectDependencies(filePath: string): string[] {
+    const node = this.nodes.get(filePath);
+    if (!node) return [];
+    return Array.from(node.directDependencies);
   }
 
-  /**
-   * Gets all files that depend on this file (reverse lookup)
-   */
-  public getDependents(path: string): string[] {
-    const normalizedPath = this.normalizePath(path);
-    const dependents = this.reverseDependencyEdges.get(normalizedPath);
-    return dependents ? Array.from(dependents) : [];
-  }
-
-  /**
-   * Computes topological ordering starting from entry point
-   * @throws {Error} if circular dependency detected
-   */
-  public getTopologicalOrder(entryPath: string): string[] {
-    const normalizedEntry = this.normalizePath(entryPath);
+  getAffectedFilesOnMutation(filePath: string): string[] {
+    const affected = new Set<string>();
     const visited = new Set<string>();
-    const result: string[] = [];
-    const visiting = new Set<string>();
-
-    const visit = (path: string, depth: number): void => {
-      if (depth > this.maxDepth) {
-        throw new Error(`Maximum dependency depth ${this.maxDepth} exceeded at ${path}`);
+    
+    const traverse = (path: string) => {
+      if (visited.has(path)) return;
+      visited.add(path);
+      
+      const node = this.nodes.get(path);
+      if (!node) return;
+      
+      for (const dependent of node.directDependents) {
+        affected.add(dependent);
+        traverse(dependent);
       }
+    };
+    
+    traverse(filePath);
+    
+    return Array.from(affected).sort();
+  }
 
-      if (visited.has(path)) {
-        return;
+  findCircularImports(): string[][] {
+    const cycles: string[][] = [];
+    const visited = new Set<string>();
+    const recursionStack = new Set<string>();
+    const currentPath: string[] = [];
+    
+    const dfs = (filePath: string): boolean => {
+      if (recursionStack.has(filePath)) {
+        const cycleStart = currentPath.indexOf(filePath);
+        if (cycleStart !== -1) {
+          cycles.push([...currentPath.slice(cycleStart), filePath]);
+        }
+        return true;
       }
-
-      if (visiting.has(path)) {
-        throw new Error(`Circular dependency detected: ${path} is part of a cycle`);
-      }
-
-      visiting.add(path);
-
-      const dependencies = this.dependencyEdges.get(path);
-      if (dependencies) {
-        for (const dep of dependencies) {
-          visit(dep, depth + 1);
+      
+      if (visited.has(filePath)) return false;
+      
+      visited.add(filePath);
+      recursionStack.add(filePath);
+      currentPath.push(filePath);
+      
+      const node = this.nodes.get(filePath);
+      if (node) {
+        for (const dep of node.directDependencies) {
+          dfs(dep);
         }
       }
+      
+      currentPath.pop();
+      recursionStack.delete(filePath);
+      
+      return false;
+    };
+    
+    for (const filePath of this.nodes.keys()) {
+      if (!visited.has(filePath)) {
+        dfs(filePath);
+      }
+    }
+    
+    return this.deduplicateCycles(cycles);
+  }
 
-      visiting.delete(path);
+  getAllDependencies(filePath: string, maxDepth: number = Infinity): Set<string> {
+    const dependencies = new Set<string>();
+    const visited = new Set<string>();
+    
+    const traverse = (path: string, depth: number) => {
+      if (depth > maxDepth || visited.has(path)) return;
+      visited.add(path);
+      
+      const node = this.nodes.get(path);
+      if (!node) return;
+      
+      for (const dep of node.directDependencies) {
+        dependencies.add(dep);
+        traverse(dep, depth + 1);
+      }
+    };
+    
+    traverse(filePath, 0);
+    return dependencies;
+  }
+
+  getAllDependents(filePath: string, maxDepth: number = Infinity): Set<string> {
+    const dependents = new Set<string>();
+    const visited = new Set<string>();
+    
+    const traverse = (path: string, depth: number) => {
+      if (depth > maxDepth || visited.has(path)) return;
+      visited.add(path);
+      
+      const node = this.nodes.get(path);
+      if (!node) return;
+      
+      for (const dependent of node.directDependents) {
+        dependents.add(dependent);
+        traverse(dependent, depth + 1);
+      }
+    };
+    
+    traverse(filePath, 0);
+    return dependents;
+  }
+
+  getSymbolProviders(symbol: string): string[] {
+    const providers: string[] = [];
+    
+    for (const [path, node] of this.nodes.entries()) {
+      const hasExport = node.exports.some(exp => 
+        exp.symbol === symbol || exp.symbol === 'default'
+      );
+      
+      if (hasExport) {
+        providers.push(path);
+      }
+    }
+    
+    return providers;
+  }
+
+  getSymbolConsumers(filePath: string, symbol: string): string[] {
+    const consumers: string[] = [];
+    
+    for (const [path, node] of this.nodes.entries()) {
+      for (const imp of node.imports) {
+        const resolvedSource = this.pathResolver.resolve(imp.source, dirname(path), this.getAllPaths());
+        
+        if (resolvedSource === filePath) {
+          if (imp.symbol === symbol || imp.isNamespace || imp.isDefault) {
+            consumers.push(path);
+            break;
+          }
+        }
+      }
+    }
+    
+    return consumers;
+  }
+
+  getFileNode(filePath: string): FileNode | undefined {
+    return this.nodes.get(filePath);
+  }
+
+  topologicalSort(): string[] {
+    const result: string[] = [];
+    const visited = new Set<string>();
+    const temp = new Set<string>();
+    
+    const visit = (path: string): boolean => {
+      if (temp.has(path)) return false;
+      if (visited.has(path)) return true;
+      
+      temp.add(path);
+      
+      const node = this.nodes.get(path);
+      if (node) {
+        for (const dep of node.directDependencies) {
+          if (!visit(dep)) return false;
+        }
+      }
+      
+      temp.delete(path);
       visited.add(path);
       result.push(path);
+      
+      return true;
     };
-
-    visit(normalizedEntry, 0);
-    return result;
-  }
-
-  /**
-   * Extracts import statements using high-speed regex tokenization
-   */
-  private parseImports(content: string, node: DependencyNode): void {
-    const cleanedContent = this.removeCommentsAndStrings(content);
-
-    // ES6 static imports: import ... from 'path'
-    const importRegex = /import\s+(?:(?:[\w*\s{},]*)\s+from\s+)?['"]([^'"]+)['"]/g;
-    let match: RegExpExecArray | null;
     
-    while ((match = importRegex.exec(cleanedContent)) !== null) {
-      if (match[1]) {
-        node.imports.add(match[1]);
+    for (const path of this.nodes.keys()) {
+      if (!visited.has(path)) {
+        if (!visit(path)) {
+          return [];
+        }
       }
     }
-
-    // Dynamic imports: import('path')
-    const dynamicImportRegex = /import\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
-    while ((match = dynamicImportRegex.exec(cleanedContent)) !== null) {
-      if (match[1]) {
-        node.imports.add(match[1]);
-      }
-    }
-
-    // CommonJS require: require('path')
-    const requireRegex = /require\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
-    while ((match = requireRegex.exec(cleanedContent)) !== null) {
-      if (match[1]) {
-        node.imports.add(match[1]);
-      }
-    }
-
-    // Re-exports: export ... from 'path'
-    const exportFromRegex = /export\s+(?:[\w*\s{},]*)\s+from\s+['"]([^'"]+)['"]/g;
-    while ((match = exportFromRegex.exec(cleanedContent)) !== null) {
-      if (match[1]) {
-        node.imports.add(match[1]);
-      }
-    }
-  }
-
-  /**
-   * Extracts export declarations
-   */
-  private parseExports(content: string, node: DependencyNode): void {
-    const cleanedContent = this.removeCommentsAndStrings(content);
-
-    // Named exports: export const/let/var/function/class/interface/type/enum name
-    const namedExportRegex = /export\s+(?:const|let|var|function|class|interface|type|enum)\s+(\w+)/g;
-    let match: RegExpExecArray | null;
-    
-    while ((match = namedExportRegex.exec(cleanedContent)) !== null) {
-      if (match[1]) {
-        node.exports.add(match[1]);
-      }
-    }
-
-    // Export blocks: export { name1, name2 as alias }
-    const exportBlockRegex = /export\s*\{([^}]+)\}/g;
-    while ((match = exportBlockRegex.exec(cleanedContent)) !== null) {
-      if (match[1]) {
-        const exports = match[1]
-          .split(',')
-          .map(e => e.trim().split(/\s+as\s+/)[0].trim())
-          .filter(e => e.length > 0);
-        exports.forEach(e => node.exports.add(e));
-      }
-    }
-
-    // Default export
-    if (/export\s+default\s+/.test(cleanedContent)) {
-      node.exports.add('default');
-    }
-
-    // Export all: export *
-    if (/export\s+\*/.test(cleanedContent)) {
-      node.exports.add('*');
-    }
-  }
-
-  /**
-   * Extracts symbols (functions, classes, types, interfaces)
-   */
-  private parseSymbols(content: string, node: DependencyNode): void {
-    const cleanedContent = this.removeCommentsAndStrings(content);
-
-    // Function declarations and arrow functions
-    const functionRegex = /(?:function|const|let|var)\s+(\w+)\s*(?:=\s*(?:async\s*)?\(|=\s*async\s+\(|:\s*\(|\()/g;
-    let match: RegExpExecArray | null;
-    
-    while ((match = functionRegex.exec(cleanedContent)) !== null) {
-      if (match[1] && match[1] !== 'function') {
-        node.symbols.add(match[1]);
-      }
-    }
-
-    // Class declarations
-    const classRegex = /class\s+(\w+)/g;
-    while ((match = classRegex.exec(cleanedContent)) !== null) {
-      if (match[1]) {
-        node.symbols.add(match[1]);
-      }
-    }
-
-    // Interface/Type/Enum declarations
-    const typeRegex = /(?:interface|type|enum)\s+(\w+)/g;
-    while ((match = typeRegex.exec(cleanedContent)) !== null) {
-      if (match[1]) {
-        node.symbols.add(match[1]);
-      }
-    }
-  }
-
-  /**
-   * Removes comments and string literals to prevent false positives
-   */
-  private removeCommentsAndStrings(content: string): string {
-    let result = content;
-    
-    // Remove multi-line comments
-    result = result.replace(/\/\*[\s\S]*?\*\//g, ' ');
-    
-    // Remove single-line comments
-    result = result.replace(/\/\/.*/g, ' ');
-    
-    // Remove template literals (preserving structure)
-    result = result.replace(/`(?:[^`\\]|\\.)*`/g, '""');
-    
-    // Remove string literals
-    result = result.replace(/'(?:[^'\\]|\\.)*'/g, '""');
-    result = result.replace(/"(?:[^"\\]|\\.)*"/g, '""');
     
     return result;
   }
 
-  /**
-   * Normalizes file paths for cross-platform compatibility
-   */
-  private normalizePath(path: string): string {
-    return path.replace(/\\/g, '/').replace(/\/+/g, '/');
+  getStats() {
+    let totalImports = 0;
+    let totalExports = 0;
+    let filesWithCircular = 0;
+    
+    const circular = new Set(this.findCircularImports().flat());
+    
+    for (const node of this.nodes.values()) {
+      totalImports += node.imports.length;
+      totalExports += node.exports.length;
+      if (circular.has(node.path)) filesWithCircular++;
+    }
+    
+    return {
+      totalFiles: this.nodes.size,
+      totalImports,
+      totalExports,
+      avgImportsPerFile: totalImports / this.nodes.size,
+      avgExportsPerFile: totalExports / this.nodes.size,
+      filesWithCircularDeps: filesWithCircular,
+    };
   }
 
-  /**
-   * Resolves import path relative to importing file
-   */
-  private resolveImportPath(fromPath: string, importPath: string): string {
-    // Skip node_modules and built-in modules
+  private collectFiles(
+    node: DAGNode,
+    result: Array<{ path: string; content: string; language: string; hash: string }>
+  ): void {
+    if (node.type === 'file' && node.content && node.language) {
+      const content = Buffer.from(node.content).toString('utf-8');
+      result.push({
+        path: node.path,
+        content,
+        language: node.language,
+        hash: node.hash,
+      });
+    }
+    
+    for (const child of node.children) {
+      this.collectFiles(child, result);
+    }
+  }
+
+  private parseImports(content: string, language: string): SymbolImport[] {
+    switch (language) {
+      case 'typescript':
+      case 'javascript':
+        return this.parseJSImports(content);
+      case 'json':
+        return [];
+      default:
+        return [];
+    }
+  }
+
+  private parseExports(content: string, language: string): SymbolExport[] {
+    switch (language) {
+      case 'typescript':
+      case 'javascript':
+        return this.parseJSExports(content);
+      case 'json':
+        return [{ symbol: 'default', line: 0, isDefault: true }];
+      default:
+        return [];
+    }
+  }
+
+  private parseJSImports(content: string): SymbolImport[] {
+    const imports: SymbolImport[] = [];
+    const lines = content.split('\n');
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const lineNum = i + 1;
+      
+      let match = /import\s+(\w+)\s+from\s+['"]([^'"]+)['"]/g.exec(line);
+      if (match) {
+        imports.push({
+          symbol: match[1],
+          source: match[2],
+          line: lineNum,
+          isDefault: true,
+          isNamespace: false,
+          isDynamic: false,
+        });
+      }
+      
+      match = /import\s+\*\s+as\s+(\w+)\s+from\s+['"]([^'"]+)['"]/g.exec(line);
+      if (match) {
+        imports.push({
+          symbol: match[1],
+          source: match[2],
+          line: lineNum,
+          isDefault: false,
+          isNamespace: true,
+          isDynamic: false,
+        });
+      }
+      
+      const namedImportRegex = /import\s+\{([^}]+)\}\s+from\s+['"]([^'"]+)['"]/g;
+      match = namedImportRegex.exec(line);
+      if (match) {
+        const source = match[2];
+        const symbols = match[1].split(',').map(s => s.trim());
+        
+        for (const symbolStr of symbols) {
+          const parts = symbolStr.split(/\s+as\s+/);
+          const symbol = parts[0].trim();
+          const alias = parts[1]?.trim();
+          
+          imports.push({
+            symbol,
+            alias,
+            source,
+            line: lineNum,
+            isDefault: false,
+            isNamespace: false,
+            isDynamic: false,
+          });
+        }
+      }
+      
+      const requireRegex = /(?:const|let|var)\s+(?:\{([^}]+)\}|(\w+))\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+      match = requireRegex.exec(line);
+      if (match) {
+        const source = match[3];
+        
+        if (match[1]) {
+          const symbols = match[1].split(',').map(s => s.trim());
+          for (const symbolStr of symbols) {
+            const parts = symbolStr.split(':');
+            const symbol = parts[0].trim();
+            
+            imports.push({
+              symbol,
+              source,
+              line: lineNum,
+              isDefault: false,
+              isNamespace: false,
+              isDynamic: false,
+            });
+          }
+        } else if (match[2]) {
+          imports.push({
+            symbol: match[2],
+            source,
+            line: lineNum,
+            isDefault: true,
+            isNamespace: false,
+            isDynamic: false,
+          });
+        }
+      }
+      
+      const dynamicImportRegex = /import\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+      match = dynamicImportRegex.exec(line);
+      if (match) {
+        imports.push({
+          symbol: '*',
+          source: match[1],
+          line: lineNum,
+          isDefault: false,
+          isNamespace: true,
+          isDynamic: true,
+        });
+      }
+      
+      const reExportRegex = /export\s+\{([^}]+)\}\s+from\s+['"]([^'"]+)['"]/g;
+      match = reExportRegex.exec(line);
+      if (match) {
+        const source = match[2];
+        const symbols = match[1].split(',').map(s => s.trim());
+        
+        for (const symbolStr of symbols) {
+          const parts = symbolStr.split(/\s+as\s+/);
+          const symbol = parts[0].trim();
+          
+          imports.push({
+            symbol,
+            source,
+            line: lineNum,
+            isDefault: false,
+            isNamespace: false,
+            isDynamic: false,
+          });
+        }
+      }
+      
+      match = /export\s+\*\s+from\s+['"]([^'"]+)['"]/g.exec(line);
+      if (match) {
+        imports.push({
+          symbol: '*',
+          source: match[1],
+          line: lineNum,
+          isDefault: false,
+          isNamespace: true,
+          isDynamic: false,
+        });
+      }
+    }
+    
+    return imports;
+  }
+
+  private parseJSExports(content: string): SymbolExport[] {
+    const exports: SymbolExport[] = [];
+    const lines = content.split('\n');
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const lineNum = i + 1;
+      
+      const namedExportRegex = /export\s+(?:const|let|var|function|class|interface|type|enum)\s+(\w+)/g;
+      let match: RegExpExecArray | null;
+      
+      while ((match = namedExportRegex.exec(line)) !== null) {
+        exports.push({
+          symbol: match[1],
+          line: lineNum,
+          isDefault: false,
+        });
+      }
+      
+      const defaultExportRegex = /export\s+default\s+(?:(?:function|class)\s+)?(\w+)?/g;
+      match = defaultExportRegex.exec(line);
+      if (match) {
+        exports.push({
+          symbol: match[1] || 'default',
+          line: lineNum,
+          isDefault: true,
+        });
+      }
+      
+      const exportListRegex = /export\s+\{([^}]+)\}(?:\s+from\s+['"]([^'"]+)['"])?/g;
+      match = exportListRegex.exec(line);
+      if (match) {
+        const symbols = match[1].split(',').map(s => s.trim());
+        const reExportFrom = match[2];
+        
+        for (const symbolStr of symbols) {
+          const parts = symbolStr.split(/\s+as\s+/);
+          const symbol = parts.length > 1 ? parts[1].trim() : parts[0].trim();
+          
+          exports.push({
+            symbol,
+            line: lineNum,
+            isDefault: symbol === 'default',
+            reExportFrom,
+          });
+        }
+      }
+      
+      const moduleExportsRegex = /module\.exports\s*=\s*(\w+)/g;
+      match = moduleExportsRegex.exec(line);
+      if (match) {
+        exports.push({
+          symbol: match[1],
+          line: lineNum,
+          isDefault: true,
+        });
+      }
+      
+      const moduleExportsObjRegex = /module\.exports\.(\w+)/g;
+      while ((match = moduleExportsObjRegex.exec(line)) !== null) {
+        exports.push({
+          symbol: match[1],
+          line: lineNum,
+          isDefault: false,
+        });
+      }
+      
+      const exportsObjRegex = /exports\.(\w+)/g;
+      while ((match = exportsObjRegex.exec(line)) !== null) {
+        exports.push({
+          symbol: match[1],
+          line: lineNum,
+          isDefault: false,
+        });
+      }
+    }
+    
+    return exports;
+  }
+
+  private resolveAllDependencies(): void {
+    const allPaths = this.getAllPaths();
+    
+    for (const [filePath, node] of this.nodes.entries()) {
+      const fileDir = dirname(filePath);
+      
+      for (const imp of node.imports) {
+        const resolvedPath = this.pathResolver.resolve(imp.source, fileDir, allPaths);
+        
+        if (resolvedPath && this.nodes.has(resolvedPath)) {
+          node.directDependencies.add(resolvedPath);
+          
+          const depNode = this.nodes.get(resolvedPath)!;
+          depNode.directDependents.add(filePath);
+        }
+      }
+    }
+  }
+
+  private buildSymbolMaps(): void {
+    for (const [filePath, node] of this.nodes.entries()) {
+      const symbolMap = new Map<string, string[]>();
+      
+      for (const imp of node.imports) {
+        const fileDir = dirname(filePath);
+        const resolvedPath = this.pathResolver.resolve(imp.source, fileDir, this.getAllPaths());
+        
+        if (resolvedPath) {
+          const symbols = symbolMap.get(resolvedPath) || [];
+          
+          if (imp.isNamespace) {
+            symbols.push('*');
+          } else {
+            symbols.push(imp.symbol);
+          }
+          
+          symbolMap.set(resolvedPath, symbols);
+        }
+      }
+      
+      node.symbolMap = symbolMap;
+    }
+  }
+
+  private getAllPaths(): string[] {
+    return Array.from(this.nodes.keys());
+  }
+
+  private deduplicateCycles(cycles: string[][]): string[][] {
+    const normalized = cycles.map(cycle => {
+      const sorted = [...cycle].sort();
+      return sorted.join('|');
+    });
+    
+    const unique = new Set(normalized);
+    
+    return Array.from(unique).map(str => str.split('|'));
+  }
+}
+
+class PathResolver {
+  private static readonly EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json'];
+  
+  resolve(importPath: string, fromDir: string, allPaths: string[]): string | null {
+    if (this.isNodeModule(importPath)) {
+      return null;
+    }
+    
     if (!importPath.startsWith('.') && !importPath.startsWith('/')) {
-      return importPath;
+      return null;
     }
-
-    // Handle relative imports
-    const dir = dirname(fromPath);
-    let resolved = this.normalizePath(join(dir, importPath));
-
-    // Add extension if missing
-    if (!resolved.match(/\.(ts|js|tsx|jsx|mts|cts|mjs|cjs)$/)) {
-      // Try common extensions
-      const extensions = ['.ts', '.js', '.tsx', '.jsx', '.mts', '.cts'];
-      for (const ext of extensions) {
-        const candidate = resolved + ext;
-        if (this.nodes.has(candidate)) {
-          return candidate;
-        }
+    
+    const basePath = this.joinPaths(fromDir, importPath);
+    
+    const candidates = this.generateCandidates(basePath);
+    
+    for (const candidate of candidates) {
+      if (allPaths.includes(candidate)) {
+        return candidate;
       }
-      // Default to .ts
-      resolved = resolved + '.ts';
     }
-
-    return resolved;
+    
+    return null;
   }
-
-  /**
-   * Gets node metadata for a file
-   */
-  public getNode(path: string): DependencyNode | undefined {
-    return this.nodes.get(this.normalizePath(path));
+  
+  private isNodeModule(importPath: string): boolean {
+    return !importPath.startsWith('.') && !importPath.startsWith('/');
   }
-
-  /**
-   * Gets all registered nodes
-   */
-  public getAllNodes(): DependencyNode[] {
-    return Array.from(this.nodes.values());
-  }
-
-  /**
-   * Gets all transitive dependencies up to maxDepth
-   */
-  public getTransitiveDependencies(path: string, maxDepth: number = Infinity): Set<string> {
-    const normalizedPath = this.normalizePath(path);
-    const result = new Set<string>();
-    const visited = new Set<string>();
-
-    const traverse = (currentPath: string, depth: number): void => {
-      if (depth > maxDepth || visited.has(currentPath)) {
-        return;
-      }
-
-      visited.add(currentPath);
-      
-      if (currentPath !== normalizedPath) {
-        result.add(currentPath);
-      }
-
-      const deps = this.dependencyEdges.get(currentPath);
-      if (deps) {
-        for (const dep of deps) {
-          traverse(dep, depth + 1);
-        }
-      }
-    };
-
-    traverse(normalizedPath, 0);
-    return result;
-  }
-
-  /**
-   * Gets all transitive dependents (files that depend on this) up to maxDepth
-   */
-  public getTransitiveDependents(path: string, maxDepth: number = Infinity): Set<string> {
-    const normalizedPath = this.normalizePath(path);
-    const result = new Set<string>();
-    const visited = new Set<string>();
-
-    const traverse = (currentPath: string, depth: number): void => {
-      if (depth > maxDepth || visited.has(currentPath)) {
-        return;
-      }
-
-      visited.add(currentPath);
-      
-      if (currentPath !== normalizedPath) {
-        result.add(currentPath);
-      }
-
-      const dependents = this.reverseDependencyEdges.get(currentPath);
-      if (dependents) {
-        for (const dependent of dependents) {
-          traverse(dependent, depth + 1);
-        }
-      }
-    };
-
-    traverse(normalizedPath, 0);
-    return result;
-  }
-
-  /**
-   * Clears all data from the graph
-   */
-  public clear(): void {
-    this.nodes.clear();
-    this.dependencyEdges.clear();
-    this.reverseDependencyEdges.clear();
-  }
-
-  /**
-   * Gets graph statistics
-   */
-  public getStats(): { nodeCount: number; edgeCount: number; avgDependencies: number } {
-    let edgeCount = 0;
-    for (const deps of this.dependencyEdges.values()) {
-      edgeCount += deps.size;
+  
+  private generateCandidates(basePath: string): string[] {
+    const candidates: string[] = [];
+    
+    const normalizedBase = this.normalizePath(basePath);
+    
+    const ext = extname(normalizedBase);
+    if (ext) {
+      candidates.push(normalizedBase);
+      return candidates;
     }
-
-    const nodeCount = this.nodes.size;
-    const avgDependencies = nodeCount > 0 ? edgeCount / nodeCount : 0;
-
-    return { nodeCount, edgeCount, avgDependencies };
+    
+    for (const extension of PathResolver.EXTENSIONS) {
+      candidates.push(normalizedBase + extension);
+    }
+    
+    for (const extension of PathResolver.EXTENSIONS) {
+      candidates.push(this.joinPaths(normalizedBase, 'index' + extension));
+    }
+    
+    return candidates;
+  }
+  
+  private joinPaths(...parts: string[]): string {
+    const joined = parts.join('/');
+    return this.normalizePath(joined);
+  }
+  
+  private normalizePath(path: string): string {
+    const parts = path.split('/');
+    const normalized: string[] = [];
+    
+    for (const part of parts) {
+      if (part === '..') {
+        normalized.pop();
+      } else if (part !== '.' && part !== '') {
+        normalized.push(part);
+      }
+    }
+    
+    return normalized.join('/') || '.';
   }
 }

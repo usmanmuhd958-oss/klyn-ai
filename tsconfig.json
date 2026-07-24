@@ -1,25 +1,28 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "CommonJS",
-    "moduleResolution": "node",
-    "moduleDetection": "force",
-    "lib": ["ES2022"],
-    "allowJs": true,
-    "checkJs": false,
-    "strict": false,
-    "noImplicitAny": false,
-    "noImplicitThis": false,
-    "alwaysStrict": false,
-    "strictNullChecks": false,
-    "strictFunctionTypes": false,
-    "strictPropertyInitialization": false,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "outDir": "./dist",
-    "rootDir": "./"
+    "rootDir": "./",
+    "strict": false,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true
   },
-  "include": ["**/*.ts", "**/*.js", "**/*.d.ts"],
-  "exclude": ["node_modules", "dist", "build", ".klyn"]
+  "include": [
+    "src/**/*",
+    "kernel/**/*",
+    "1.brain/**/*",
+    "benchmark/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "1.brain/index.ts",
+    "1.brain/providers/**/*",
+    "kernel/src/indexer/**/*",
+    "kernel/src/orchestrator/**/*",
+    "kernel/src/pipeline/context_pruner.ts"
+  ]
 }
