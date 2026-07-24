@@ -29,14 +29,17 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^26.1.1",
-    "typescript": "^7.0.2"
+    "@types/sql.js": "^1.4.11",
+    "typescript": "5.4.5"
   },
   "dependencies": {
+    "@babel/parser": "^8.0.4",
     "better-sqlite3": "^13.0.1",
     "framer-motion": "^12.42.2",
     "hono": "^4.12.32",
     "lucide-react": "^1.26.0",
     "picocolors": "^1.1.1",
+    "sql.js": "^1.14.1",
     "zod": "^4.4.3"
   }
 }
