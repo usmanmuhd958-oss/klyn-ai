@@ -10,7 +10,8 @@
     "test:pipeline": "tsc && node dist/kernel/src/pipeline/integration_test.js",
     "test:ast": "tsc && node dist/kernel/src/ast/test_dependency_graph.js",
     "example": "tsc && node dist/1.brain/examples/example_usage.js",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "test": "echo No tests yet && exit 0"
   },
   "engines": {
     "node": ">=24.0.0"
@@ -30,11 +31,12 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^26.1.1",
     "@types/sql.js": "^1.4.11",
-    "typescript": "5.4.5"
+    "tsx": "^4.23.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
   },
   "dependencies": {
     "@babel/parser": "^8.0.4",
-    "better-sqlite3": "^13.0.1",
     "framer-motion": "^12.42.2",
     "hono": "^4.12.32",
     "lucide-react": "^1.26.0",

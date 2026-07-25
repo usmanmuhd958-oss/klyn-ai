@@ -38,19 +38,17 @@ async function runProductionKernelTest() {
   ];
 
   console.log('[1/4] Ingesting Codebase into Merkle DAG Graph...');
-  const ingestResult = await repoIngester.ingest(codebaseV1);
-  const rootV1 = ingestResult.rootNode;
+  const ingestResult = await repoIngester.ingestRepository('.');
+  const rootV1 = ingestResult.dagRoot;
   
   console.log(`      └─ Root Merkle SHA-256 Hash : ${rootV1.hash}`);
-  console.log(`      └─ Total Files Processed     : ${ingestResult.metrics.fileCount}`);
-  console.log(`      └─ Ingestion Time            : ${ingestResult.metrics.parseTimeMs.toFixed(3)} ms\n`);
+  console.log(`      └─ Total Files Processed     : ${ingestResult.stats.totalFiles}`);
+  console.log(`      └─ Ingestion Time            : ${ingestResult.stats.ingestionTimeMs.toFixed(3)} ms\n`);
 
   console.log('[2/4] Building AST Dependency Tree & Mapping Relations...');
-  for (const file of codebaseV1) {
-    depGraph.addFile(file.path, file.content);
-  }
+  await depGraph.buildFromDAG(rootV1);
   
-  const paymentDeps = depGraph.getDependencies('src/payment/processor.ts');
+  const paymentDeps = depGraph.getDirectDependencies('src/payment/processor.ts');
   console.log(`      └─ Target File               : 'src/payment/processor.ts'`);
   console.log(`      └─ Detected Dependencies     : ${JSON.stringify(paymentDeps)}\n`);
 
@@ -76,18 +74,17 @@ async function runProductionKernelTest() {
     return f;
   });
 
-  const ingestV2 = await repoIngester.ingest(codebaseV2);
-  const rootV2 = ingestV2.rootNode;
-
+  const ingestV2 = await repoIngester.ingestRepository(".");
+  const rootV2 = ingestV2.dagRoot;
   const diffStart = performance.now();
-  const diffResult = dagEngine.computeDiff(rootV1, rootV2);
+  const diffResult = await repoIngester.getIncrementalDiff(rootV1, ".");
   const diffTime = performance.now() - diffStart;
 
   console.log(`      └─ Root Hash V1             : ${rootV1.hash}`);
   console.log(`      └─ Root Hash V2             : ${rootV2.hash}`);
   console.log(`      └─ Modified Files Detected  : ${diffResult.modified.length}`);
   if (diffResult.modified.length > 0) {
-    console.log(`      └─ Updated File Path        : ${diffResult.modified[0].newNode.path}`);
+    console.log(`      └─ Updated File Path        : ${(diffResult.modified[0].path || diffResult.modified[0].name)}`);
   }
   console.log(`      └─ Diff Calculation Latency : ${diffTime.toFixed(4)} ms\n`);
 

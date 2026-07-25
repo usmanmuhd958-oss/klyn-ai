@@ -128,11 +128,11 @@ export class ContextPruner {
 
     relevantFiles.add(targetFile);
 
-    const dependencies = this.dependencyGraph.getTransitiveDependencies(targetFile, maxDepth);
+    const dependencies = this.dependencyGraph.getAllDependencies(targetFile, maxDepth);
     dependencies.forEach(dep => relevantFiles.add(dep));
 
     const dependentDepth = Math.min(maxDepth, 1);
-    const dependents = this.dependencyGraph.getTransitiveDependents(targetFile, dependentDepth);
+    const dependents = this.dependencyGraph.getAllDependents(targetFile, dependentDepth);
     dependents.forEach(dep => relevantFiles.add(dep));
 
     return relevantFiles;
@@ -192,6 +192,7 @@ export class ContextPruner {
    * Accounts for: whitespace, comments, keywords, operators, identifiers
    */
   private estimateTokens(content: string): number {
+    if (!content || typeof content !== "string") return 0;
     const normalized = content
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/\/\/.*/g, '')
