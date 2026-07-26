@@ -13,3 +13,4 @@ runtime/
 create_remaining_sonnet_files.sh
 .env
 .env
+target/
