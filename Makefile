@@ -1,11 +1,14 @@
-.PHONY: start status logs clean
+default:
+@cargo build --manifest-path 0.kernel/Cargo.toml
 
-start:
-bash boot.sh
-status:
-bash scripts/health_check.sh
-logs:
-tail -f runtime/logs/system.jsonl
+build:
+cargo build --release --manifest-path 0.kernel/Cargo.toml
+
+bench:
+cargo bench --manifest-path 0.kernel/Cargo.toml --bench kernel_bench
+
+test:
+cargo test --manifest-path 0.kernel/Cargo.toml
+
 clean:
-pkill -f "node api/server.js" || true
-rm -rf runtime/*.db runtime/*.log
+cargo clean --manifest-path 0.kernel/Cargo.toml

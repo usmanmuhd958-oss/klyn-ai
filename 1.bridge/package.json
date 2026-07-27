@@ -1,0 +1,15 @@
+{
+  "name": "@klyn/bridge",
+  "version": "3.0.0",
+  "description": "TypeScript Bridge to KLYN AI OS Native Rust Kernel Layer",
+  "main": "dist/kernel_bridge.js",
+  "types": "dist/kernel_bridge.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "typescript": "^5.0.0"
+  }
+}

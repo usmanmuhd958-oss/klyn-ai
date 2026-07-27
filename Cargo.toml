@@ -7,8 +7,11 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
+aes-gcm = "0.11.0"
+libc = "0.2.189"
 napi = { version = "2.16", default-features = false, features = ["napi9"] }
 napi-derive = "2.16"
+zeroize = "1.9.0"
 
 [build-dependencies]
 napi-build = "2.1"
@@ -20,3 +23,7 @@ codegen-units = 1
 panic = "abort"
 strip = true
 opt-level = 3
+
+[dev-dependencies]
+criterion = "0.8.2"
+proptest = "1.11.0"
