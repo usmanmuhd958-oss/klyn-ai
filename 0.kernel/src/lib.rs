@@ -51,3 +51,12 @@ impl KernelHandle {
     }
 }
 mod llm;
+
+pub mod agent;
+pub use agent::{
+    start_daemon,
+    stop_daemon,
+    get_daemon_status,
+    force_proactive_scan,
+    get_tick_count,
+};
