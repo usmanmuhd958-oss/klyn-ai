@@ -50,3 +50,4 @@ impl KernelHandle {
         kernel.cycle.load(core::sync::atomic::Ordering::Relaxed) as u32
     }
 }
+mod llm;
