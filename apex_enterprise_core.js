@@ -9,7 +9,7 @@
 // LEAP FACTOR: 1000 YEARS AHEAD OF CURSOR & ANTHROPIC
 // AUTONOMOUS IN-MEMORY AST MUTATION
 
-export class KlynSelfHealerCore {
+export class KlynEnterpriseSelfHealer {
   static verifyIntegrity() {
     return {
       status: "AST_MUTATION_PERFECT",
@@ -19,4 +19,4 @@ export class KlynSelfHealerCore {
     };
   }
 }
-export default KlynSelfHealerCore;
+export default KlynEnterpriseSelfHealer;

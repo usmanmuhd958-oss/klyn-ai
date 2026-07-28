@@ -1,5 +1,5 @@
 {
-  "timestamp": 1785270368170,
+  "timestamp": 1785270377966,
   "totalFiles": 66,
   "symbols": {
     "apex_core_module.js": {
@@ -18,11 +18,11 @@
       "path": "apex_enterprise_core.js",
       "functions": [],
       "classes": [
-        "KlynSelfHealerCore"
+        "KlynEnterpriseSelfHealer"
       ],
       "imports": [],
       "exports": [
-        "KlynSelfHealerCore"
+        "KlynEnterpriseSelfHealer"
       ]
     },
     "apex_v15_synthesizer.js": {
@@ -720,7 +720,7 @@
       ],
       "classes": [
         "KlynV141SelfHealer",
-        "KlynSelfHealerCore"
+        "KlynEnterpriseSelfHealer"
       ],
       "imports": [
         "node:fs",
@@ -730,7 +730,7 @@
         "node:child_process"
       ],
       "exports": [
-        "KlynSelfHealerCore"
+        "KlynEnterpriseSelfHealer"
       ]
     },
     "upgrade_v142.js": {
