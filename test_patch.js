@@ -1,0 +1,1 @@
+console.log("Klyn OS Safe Patch Applied!");
