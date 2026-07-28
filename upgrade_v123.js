@@ -1,4 +1,7 @@
-#!/usr/bin/env node
+import fs from 'node:fs';
+import path from 'node:path';
+
+const cliCode = `#!/usr/bin/env node
 
 import http from 'node:http';
 import { spawn, execSync } from 'node:child_process';
@@ -65,15 +68,15 @@ class DirectQuantumKernel {
   }
 
   async runCluster(task) {
-    const txId = `v123_direct_${Date.now()}`;
+    const txId = \`v123_direct_\${Date.now()}\`;
     const startTime = process.hrtime.bigint();
     const clusterFile = path.join(this.dir, 'quantum_cluster_module.js');
-    const code = `// Klyn AI OS v12.3 Direct Cluster Engine\nexport const config = { task: "${task}", txId: "${txId}" };\n`;
+    const code = \`// Klyn AI OS v12.3 Direct Cluster Engine\\nexport const config = { task: "\${task}", txId: "\${txId}" };\\n\`;
     fs.writeFileSync(clusterFile, code, 'utf8');
     const endTime = process.hrtime.bigint();
 
     try {
-      execSync(`git add . && git commit -m "feat(klyn-v123): synthesis cluster for ${task} [TX: ${txId}]"`, { cwd: this.dir, stdio: 'ignore' });
+      execSync(\`git add . && git commit -m "feat(klyn-v123): synthesis cluster for \${task} [TX: \${txId}]"\`, { cwd: this.dir, stdio: 'ignore' });
     } catch (e) {}
 
     return {
@@ -121,7 +124,7 @@ async function main() {
       // Step 1: Indexing 1,000 Synthetic Code Vectors
       const indexStart = process.hrtime.bigint();
       for (let i = 0; i < 1000; i++) {
-        kernel.indexDocument(`doc_${i}.js`, `function module_${i}() { const quantum = "ultra_low_latency_store_${i}"; return quantum; }`);
+        kernel.indexDocument(\`doc_\${i}.js\`, \`function module_\${i}() { const quantum = "ultra_low_latency_store_\${i}"; return quantum; }\`);
       }
       const indexEnd = process.hrtime.bigint();
       const indexTimeUs = (Number(indexEnd - indexStart) / 1000).toFixed(2);
@@ -135,7 +138,7 @@ async function main() {
       // Step 3: RAM Memory Metrics
       const mem = process.memoryUsage();
 
-      console.log('\n=================== QUANTUM BENCHMARK READOUT ===================');
+      console.log('\\n=================== QUANTUM BENCHMARK READOUT ===================');
       console.log(JSON.stringify({
         version: "v12.3 Quantum Engine",
         vectorStoreEntries: kernel.vectorStore.size,
@@ -148,7 +151,7 @@ async function main() {
         },
         efficiencyRating: "SUPREME_SUB_MILLISECOND"
       }, null, 2));
-      console.log('=================================================================\n');
+      console.log('=================================================================\\n');
       break;
 
     case 'start':
@@ -172,17 +175,17 @@ async function main() {
 
     case 'cluster':
       const taskText = args.slice(1).join(' ') || 'Distributed Parallel Processing';
-      console.log(`[KLYN V12.3 QUANTUM] Synthesizing 8-Node Cluster: "${taskText}"...`);
+      console.log(\`[KLYN V12.3 QUANTUM] Synthesizing 8-Node Cluster: "\${taskText}"...\`);
       try {
         const res = await fetchJSON('/v1/cluster', 'POST', { task: taskText, nodes: 8 });
-        console.log('\n=================== QUANTUM CLUSTER RESULT ===================');
+        console.log('\\n=================== QUANTUM CLUSTER RESULT ===================');
         console.log(JSON.stringify(res, null, 2));
-        console.log('=============================================================\n');
+        console.log('=============================================================\\n');
       } catch (err) {
         const res = await directKernel.runCluster(taskText);
-        console.log('\n=================== QUANTUM CLUSTER RESULT ===================');
+        console.log('\\n=================== QUANTUM CLUSTER RESULT ===================');
         console.log(JSON.stringify(res, null, 2));
-        console.log('=============================================================\n');
+        console.log('=============================================================\\n');
       }
       break;
 
@@ -190,32 +193,32 @@ async function main() {
       console.log('[KLYN V12.3 MEMORY] Telemetry Readout...');
       try {
         const res = await fetchJSON('/v1/memory', 'GET');
-        console.log('\n=================== MEMORY TELEMETRY ===================');
+        console.log('\\n=================== MEMORY TELEMETRY ===================');
         console.log(JSON.stringify(res, null, 2));
-        console.log('========================================================\n');
+        console.log('========================================================\\n');
       } catch (err) {
         const mem = process.memoryUsage();
-        console.log('\n=================== MEMORY TELEMETRY ===================');
+        console.log('\\n=================== MEMORY TELEMETRY ===================');
         console.log(JSON.stringify({
           heapUsedMB: (mem.heapUsed / 1024 / 1024).toFixed(2),
           heapTotalMB: (mem.heapTotal / 1024 / 1024).toFixed(2),
           rssMB: (mem.rss / 1024 / 1024).toFixed(2),
           mode: "NATIVE_TERMUX_DIRECT"
         }, null, 2));
-        console.log('========================================================\n');
+        console.log('========================================================\\n');
       }
       break;
 
     case 'status':
       try {
         const data = await fetchJSON('/v1/telemetry');
-        console.log('\n=== KLYN V12.3 TELEMETRY ===');
+        console.log('\\n=== KLYN V12.3 TELEMETRY ===');
         console.log(JSON.stringify(data, null, 2));
-        console.log('============================\n');
+        console.log('============================\\n');
       } catch (err) {
-        console.log('\n=== KLYN V12.3 TELEMETRY ===');
+        console.log('\\n=== KLYN V12.3 TELEMETRY ===');
         console.log(JSON.stringify({ status: "STANDALONE_DIRECT_READY", system: "Klyn AI OS v12.3 Quantum Engine" }, null, 2));
-        console.log('============================\n');
+        console.log('============================\\n');
       }
       break;
 
@@ -225,3 +228,7 @@ async function main() {
 }
 
 main();
+`;
+
+fs.writeFileSync('klyn_cli.js', cliCode, 'utf8');
+console.log('v12.3 Benchmark Module Applied Successfully!');
