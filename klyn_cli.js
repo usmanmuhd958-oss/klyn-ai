@@ -34,35 +34,22 @@ function fetchJSON(urlPath, method = 'GET', body = null) {
 async function main() {
   switch (command) {
     case 'start':
-      console.log('Starting Klyn AI OS v9.0 Swarm Engine...');
+      console.log('Starting Klyn AI OS v10.0 Apex Swarm Engine...');
       try { execSync('fuser -k 7860/tcp 2>/dev/null || pkill -f "klyn_server.js"'); } catch (e) {}
       const logFd = fs.openSync(path.join(workDir, 'klyn_server.log'), 'a');
       const server = spawn('node', [path.join(workDir, 'klyn_server.js')], { 
         cwd: workDir, detached: true, stdio: ['ignore', logFd, logFd] 
       });
       server.unref();
-      setTimeout(() => console.log('Klyn AI OS v9.0 Running on http://localhost:7860'), 1000);
+      setTimeout(() => console.log('Klyn AI OS v10.0 Running on http://localhost:7860'), 1000);
       break;
 
-    case 'heal':
-      const targetFile = args[1] || 'ast_woven_module.js';
-      console.log(`[KLYN V9.0 HEAL] Triggering Self-Healing Loop on: "${targetFile}"...`);
+    case 'apex':
+      const promptText = args.slice(1).join(' ') || 'Autonomous Microservice Engine';
+      console.log(`[KLYN V10.0 APEX] Executing Apex Pipeline: "${promptText}"...`);
       try {
-        const res = await fetchJSON('/v1/heal', 'POST', { file: targetFile });
-        console.log('\n=================== SELF-HEALING RESULT ===================');
-        console.log(JSON.stringify(res, null, 2));
-        console.log('==========================================================\n');
-      } catch (err) {
-        console.log('Server offline. Run `klyn start` first.');
-      }
-      break;
-
-    case 'swarm':
-      const promptText = args.slice(1).join(' ') || 'Distributed Autonomous Swarm Engine';
-      console.log(`[KLYN V9.0 SWARM] Synthesizing 5-Node Swarm: "${promptText}"...`);
-      try {
-        const res = await fetchJSON('/v1/swarm', 'POST', { prompt: promptText, file: 'swarm_cluster_module.js' });
-        console.log('\n=================== SWARM CLUSTER RESULT ===================');
+        const res = await fetchJSON('/v1/apex', 'POST', { prompt: promptText, file: 'apex_core_module.js' });
+        console.log('\n=================== APEX PIPELINE RESULT ===================');
         console.log(JSON.stringify(res, null, 2));
         console.log('===========================================================\n');
       } catch (err) {
@@ -70,14 +57,13 @@ async function main() {
       }
       break;
 
-    case 'search':
-      const queryText = args.slice(1).join(' ') || 'swarm';
-      console.log(`[MICRO-VECTOR SEARCH] Searching RAM for: "${queryText}"...`);
+    case 'benchmark':
+      console.log('[BENCHMARK] Calculating Speed Differential Against Cloud AIs...');
       try {
-        const res = await fetchJSON('/v1/search', 'POST', { query: queryText });
-        console.log('\n=================== VECTOR SEARCH RESULTS ===================');
+        const res = await fetchJSON('/v1/benchmark', 'GET');
+        console.log('\n=================== LATENCY BENCHMARK ===================');
         console.log(JSON.stringify(res, null, 2));
-        console.log('==========================================================\n');
+        console.log('========================================================\n');
       } catch (err) {
         console.log('Server offline. Run `klyn start` first.');
       }
@@ -86,9 +72,9 @@ async function main() {
     case 'status':
       try {
         const data = await fetchJSON('/v1/telemetry');
-        console.log('\n=== KLYN V9.0 TELEMETRY ===');
+        console.log('\n=== KLYN V10.0 TELEMETRY ===');
         console.log(JSON.stringify(data, null, 2));
-        console.log('===========================\n');
+        console.log('============================\n');
       } catch (err) {
         console.log('Server offline. Run `klyn start` first.');
       }
@@ -102,7 +88,7 @@ async function main() {
       break;
 
     default:
-      console.log('Usage: klyn <start|heal|swarm|search|status|stop>');
+      console.log('Usage: klyn <start|apex|benchmark|status|stop>');
   }
 }
 
