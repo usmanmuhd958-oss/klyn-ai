@@ -34,24 +34,49 @@ function fetchJSON(urlPath, method = 'GET', body = null) {
 async function main() {
   switch (command) {
     case 'start':
-      console.log('Starting Klyn AI OS v10.0 Apex Swarm Engine...');
+      console.log('Starting Klyn AI OS v11.0 Matrix Swarm Engine...');
       try { execSync('fuser -k 7860/tcp 2>/dev/null || pkill -f "klyn_server.js"'); } catch (e) {}
       const logFd = fs.openSync(path.join(workDir, 'klyn_server.log'), 'a');
       const server = spawn('node', [path.join(workDir, 'klyn_server.js')], { 
         cwd: workDir, detached: true, stdio: ['ignore', logFd, logFd] 
       });
       server.unref();
-      setTimeout(() => console.log('Klyn AI OS v10.0 Running on http://localhost:7860'), 1000);
+      setTimeout(() => console.log('Klyn AI OS v11.0 Running on http://localhost:7860'), 1000);
       break;
 
     case 'apex':
       const promptText = args.slice(1).join(' ') || 'Autonomous Microservice Engine';
-      console.log(`[KLYN V10.0 APEX] Executing Apex Pipeline: "${promptText}"...`);
+      console.log(`[KLYN V11.0 APEX] Executing Matrix Pipeline: "${promptText}"...`);
       try {
         const res = await fetchJSON('/v1/apex', 'POST', { prompt: promptText, file: 'apex_core_module.js' });
         console.log('\n=================== APEX PIPELINE RESULT ===================');
         console.log(JSON.stringify(res, null, 2));
         console.log('===========================================================\n');
+      } catch (err) {
+        console.log('Server offline. Run `klyn start` first.');
+      }
+      break;
+
+    case 'refactor':
+      const targetFile = args[1] || 'apex_core_module.js';
+      console.log(`[KLYN V11.0 MATRIX] Running Refactor Pass on "${targetFile}"...`);
+      try {
+        const res = await fetchJSON('/v1/refactor', 'POST', { targetFile });
+        console.log('\n=================== REFACTOR RESULT ===================');
+        console.log(JSON.stringify(res, null, 2));
+        console.log('======================================================\n');
+      } catch (err) {
+        console.log('Server offline. Run `klyn start` first.');
+      }
+      break;
+
+    case 'memory':
+      console.log('[KLYN V11.0 MEMORY] Telemetry Readout...');
+      try {
+        const res = await fetchJSON('/v1/memory', 'GET');
+        console.log('\n=================== MEMORY TELEMETRY ===================');
+        console.log(JSON.stringify(res, null, 2));
+        console.log('========================================================\n');
       } catch (err) {
         console.log('Server offline. Run `klyn start` first.');
       }
@@ -72,7 +97,7 @@ async function main() {
     case 'status':
       try {
         const data = await fetchJSON('/v1/telemetry');
-        console.log('\n=== KLYN V10.0 TELEMETRY ===');
+        console.log('\n=== KLYN V11.0 TELEMETRY ===');
         console.log(JSON.stringify(data, null, 2));
         console.log('============================\n');
       } catch (err) {
@@ -88,7 +113,7 @@ async function main() {
       break;
 
     default:
-      console.log('Usage: klyn <start|apex|benchmark|status|stop>');
+      console.log('Usage: klyn <start|apex|refactor|memory|benchmark|status|stop>');
   }
 }
 
