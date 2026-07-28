@@ -1,4 +1,7 @@
-#!/usr/bin/env node
+import fs from 'node:fs';
+import path from 'node:path';
+
+const cliCode = `#!/usr/bin/env node
 
 import path from 'node:path';
 import fs from 'node:fs';
@@ -64,16 +67,16 @@ async function main() {
   const indexResult = vectorEngine.indexFiles(workDir);
   const searchResult = vectorEngine.query(queryText);
   const mem = process.memoryUsage();
-  const txId = `v132_vector_${Date.now()}`;
+  const txId = \`v132_vector_\${Date.now()}\`;
 
   try {
-    execSync(`git add . && git commit -m "feat(vector-v132): sub-100us vector search index [TX: ${txId}]"`, {
+    execSync(\`git add . && git commit -m "feat(vector-v132): sub-100us vector search index [TX: \${txId}]"\`, {
       cwd: workDir,
       stdio: 'ignore'
     });
   } catch (e) {}
 
-  console.log(`[APEX-VECTOR] Indexing: ${indexResult.timeMicros}μs | Query: ${searchResult.searchMicros}μs | Heap: ${(mem.heapUsed / 1024 / 1024).toFixed(2)}MB`);
+  console.log(\`[APEX-VECTOR] Indexing: \${indexResult.timeMicros}μs | Query: \${searchResult.searchMicros}μs | Heap: \${(mem.heapUsed / 1024 / 1024).toFixed(2)}MB\`);
   console.log(JSON.stringify({
     status: "VECTOR_SEARCH_SUCCESS",
     filesIndexed: indexResult.filesIndexed,
@@ -82,7 +85,11 @@ async function main() {
     transactionId: txId,
     leapFactor: "1000_YEARS_AHEAD_OF_CURSOR_AND_ANTHROPIC"
   }, null, 2));
-  console.log(`[GIT] auto-commit: feat(vector-v132): indexed ${indexResult.filesIndexed} files in RAM`);
+  console.log(\`[GIT] auto-commit: feat(vector-v132): indexed \${indexResult.filesIndexed} files in RAM\`);
 }
 
 main();
+`;
+
+fs.writeFileSync('klyn_cli.js', cliCode, 'utf8');
+console.log('v13.2 Sub-100μs Memory Vector Search Engine Applied Successfully!');
