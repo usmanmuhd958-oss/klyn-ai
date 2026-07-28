@@ -1,4 +1,7 @@
-#!/usr/bin/env node
+import fs from 'node:fs';
+import path from 'node:path';
+
+const cliCode = `#!/usr/bin/env node
 
 import path from 'node:path';
 import fs from 'node:fs';
@@ -21,12 +24,12 @@ class KlynRealEngine {
     }
     const content = fs.readFileSync(filePath, 'utf8');
     
-    const functions = (content.match(/function\s+\w+|const\s+\w+\s*=\s*\(/g) || []).map(f => f.trim());
-    const classes = (content.match(/class\s+\w+/g) || []).map(c => c.trim());
-    const imports = (content.match(/import\s+.*from\s+['"].*['"]/g) || []).map(i => i.trim());
+    const functions = (content.match(/function\\s+\\w+|const\\s+\\w+\\s*=\\s*\\(/g) || []).map(f => f.trim());
+    const classes = (content.match(/class\\s+\\w+/g) || []).map(c => c.trim());
+    const imports = (content.match(/import\\s+.*from\\s+['"].*['"]/g) || []).map(i => i.trim());
 
     return {
-      lineCount: content.split('\n').length,
+      lineCount: content.split('\\n').length,
       bytes: content.length,
       functions,
       classes,
@@ -41,17 +44,17 @@ class KlynRealEngine {
     const ast = this.parseAST(fullPath);
 
     if (ast.error) {
-      console.log(`[KLYN ERROR] ${ast.error}: ${filePath}`);
+      console.log(\`[KLYN ERROR] \${ast.error}: \${filePath}\`);
       return;
     }
 
-    const txId = `klyn_real_${Date.now()}`;
+    const txId = \`klyn_real_\${Date.now()}\`;
     
     // Injecting Real Metadata Header into the Codebase
     const originalContent = fs.readFileSync(fullPath, 'utf8');
-    const header = `// [KLYN-AI-OS ENGINE] Auto-Refactored AST Target
-// AST Metadata: Lines: ${ast.lineCount} | Functions: ${ast.functions.length} | Classes: ${ast.classes.length}
-`;
+    const header = \`// [KLYN-AI-OS ENGINE] Auto-Refactored AST Target
+// AST Metadata: Lines: \${ast.lineCount} | Functions: \${ast.functions.length} | Classes: \${ast.classes.length}
+\`;
 
     if (!originalContent.startsWith('// [KLYN-AI-OS ENGINE]')) {
       fs.writeFileSync(fullPath, header + originalContent, 'utf8');
@@ -61,7 +64,7 @@ class KlynRealEngine {
     const micros = (Number(end - start) / 1000).toFixed(2);
 
     try {
-      execSync(`git add . && git commit -m "refactor(klyn-engine): native AST parse & optimize ${filePath} [TX: ${txId}]"`, {
+      execSync(\`git add . && git commit -m "refactor(klyn-engine): native AST parse & optimize \${filePath} [TX: \${txId}]"\`, {
         cwd: this.dir,
         stdio: 'ignore'
       });
@@ -82,7 +85,7 @@ async function main() {
   const mem = process.memoryUsage();
 
   if (result) {
-    console.log(`[KLYN-REAL-ENGINE] Executed in ${result.latencyMicros}μs | Heap: ${(mem.heapUsed / 1024 / 1024).toFixed(2)}MB`);
+    console.log(\`[KLYN-REAL-ENGINE] Executed in \${result.latencyMicros}μs | Heap: \${(mem.heapUsed / 1024 / 1024).toFixed(2)}MB\`);
     console.log(JSON.stringify({
       status: "SUCCESS",
       targetFile,
@@ -91,8 +94,12 @@ async function main() {
       classesFound: result.astSummary.classes,
       transactionId: result.transactionId
     }, null, 2));
-    console.log(`[GIT] auto-commit applied for ${targetFile}`);
+    console.log(\`[GIT] auto-commit applied for \${targetFile}\`);
   }
 }
 
 main();
+`;
+
+fs.writeFileSync('klyn_cli.js', cliCode, 'utf8');
+console.log('Real Native AST Parser & Refactoring Engine Deployed Successfully!');
