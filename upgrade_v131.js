@@ -1,4 +1,10 @@
-#!/usr/bin/env node
+import fs from 'node:fs';
+import path from 'node:path';
+import { execSync } from 'node:child_process';
+
+const workDir = process.cwd();
+
+const cliCode = `#!/usr/bin/env node
 
 import path from 'node:path';
 import fs from 'node:fs';
@@ -21,26 +27,26 @@ class KlynASTMutationEngine {
     let code = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
     
     // In-Place Memory Mutation Logic
-    const mutatedCode = `// KLYN AI OS v13.1 AST MUTATED MODULE
-// MUTATION TYPE: ${mutationType}
+    const mutatedCode = \`// KLYN AI OS v13.1 AST MUTATED MODULE
+// MUTATION TYPE: \${mutationType}
 // SPECULATIVE PARALLEL STATE: 8/8 NODES ACTIVE
 
-${code}
+\${code}
 
 export class ASTOptimizedWorker {
   static executeSubMicrosecond() {
     return "ZERO_COPY_NATIVE_EXECUTION";
   }
 }
-`;
+\`;
 
     fs.writeFileSync(filePath, mutatedCode, 'utf8');
     const endTime = process.hrtime.bigint();
     const micros = (Number(endTime - startTime) / 1000).toFixed(2);
-    const txId = `v131_ast_${Date.now()}`;
+    const txId = \`v131_ast_\${Date.now()}\`;
 
     try {
-      execSync(`git add . && git commit -m "refactor(ast-v131): in-place mutation [${mutationType}] [TX: ${txId}]"`, {
+      execSync(\`git add . && git commit -m "refactor(ast-v131): in-place mutation [\${mutationType}] [TX: \${txId}]"\`, {
         cwd: this.dir,
         stdio: 'ignore'
       });
@@ -63,9 +69,13 @@ async function main() {
   const result = astEngine.mutateAST(targetFile, 'OPTIMIZE_SEARCH_LATENCY');
   const mem = process.memoryUsage();
 
-  console.log(`[APEX-AST] Executed in ${result.latencyMicros}μs | Heap: ${(mem.heapUsed / 1024 / 1024).toFixed(2)}MB | Nodes: 8/8`);
+  console.log(\`[APEX-AST] Executed in \${result.latencyMicros}μs | Heap: \${(mem.heapUsed / 1024 / 1024).toFixed(2)}MB | Nodes: 8/8\`);
   console.log(JSON.stringify(result, null, 2));
-  console.log(`[GIT] auto-commit: refactor(ast-v131): in-place mutation for ${targetFile}`);
+  console.log(\`[GIT] auto-commit: refactor(ast-v131): in-place mutation for \${targetFile}\`);
 }
 
 main();
+`;
+
+fs.writeFileSync('klyn_cli.js', cliCode, 'utf8');
+console.log('v13.1 AST Mutation & Speculative Engine Applied Successfully!');
