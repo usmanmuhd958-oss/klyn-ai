@@ -17,3 +17,5 @@ Klyn OS Safe Patch Applied!
 ✅ Klyn Master Server successfully upgraded to v5.0 Swarm Engine!
 [HEALER] Detected syntax error in upgrade_v51.js. Applying autonomous patch...
 [KLYN SWARM ENGINE v5.2] Multi-Agent Consensus Server on http://localhost:7860
+[KLYN SWARM ENGINE v5.3] Micro-Vector Gateway on http://localhost:7860
+[KLYN SWARM ENGINE v5.4] Pipeline Gateway on http://localhost:7860
