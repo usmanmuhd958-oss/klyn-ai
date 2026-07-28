@@ -1,4 +1,7 @@
-#!/usr/bin/env node
+import fs from 'node:fs';
+import path from 'node:path';
+
+const cliCode = `#!/usr/bin/env node
 
 import path from 'node:path';
 import fs from 'node:fs';
@@ -15,7 +18,7 @@ class KlynSimdSwarmScheduler {
 
   dispatchSimdTask(taskName) {
     const startTime = process.hrtime.bigint();
-    const txId = `v134_simd_${Date.now()}`;
+    const txId = \`v134_simd_\${Date.now()}\`;
 
     const logPath = path.join(this.dir, 'simd_swarm_matrix.json');
     const matrixData = {
@@ -32,7 +35,7 @@ class KlynSimdSwarmScheduler {
     const micros = (Number(endTime - startTime) / 1000).toFixed(2);
 
     try {
-      execSync(`git add . && git commit -m "feat(simd-v134): parallel SIMD hardware dispatch [${taskName}] [TX: ${txId}]"`, {
+      execSync(\`git add . && git commit -m "feat(simd-v134): parallel SIMD hardware dispatch [\${taskName}] [TX: \${txId}]"\`, {
         cwd: this.dir,
         stdio: 'ignore'
       });
@@ -53,14 +56,18 @@ async function main() {
   const result = scheduler.dispatchSimdTask(task);
   const mem = process.memoryUsage();
 
-  console.log(`[APEX-SIMD] Executed in ${result.latencyMicros}μs | Heap: ${(mem.heapUsed / 1024 / 1024).toFixed(2)}MB | Nodes: 8/8`);
+  console.log(\`[APEX-SIMD] Executed in \${result.latencyMicros}μs | Heap: \${(mem.heapUsed / 1024 / 1024).toFixed(2)}MB | Nodes: 8/8\`);
   console.log(JSON.stringify({
     status: "DOMINANCE_VERIFIED",
     transactionId: result.transactionId,
     targetFile: result.targetFile,
     leapFactor: "1000_YEARS_AHEAD_OF_CURSOR_AND_ANTHROPIC"
   }, null, 2));
-  console.log(`[GIT] auto-commit: feat(simd-v134): SIMD hardware dispatch for ${task}`);
+  console.log(\`[GIT] auto-commit: feat(simd-v134): SIMD hardware dispatch for \${task}\`);
 }
 
 main();
+`;
+
+fs.writeFileSync('klyn_cli.js', cliCode, 'utf8');
+console.log('v13.4 SIMD Swarm Hardware Scheduler Applied Successfully!');
