@@ -1,4 +1,7 @@
-#!/usr/bin/env node
+import fs from 'node:fs';
+import path from 'node:path';
+
+const cliCode = `#!/usr/bin/env node
 
 import path from 'node:path';
 import fs from 'node:fs';
@@ -15,7 +18,7 @@ class KlynV16UnifiedKernel {
 
   runFullBenchmark() {
     const start = process.hrtime.bigint();
-    const txId = `v160_apex_${Date.now()}`;
+    const txId = \`v160_apex_\${Date.now()}\`;
     const benchmarkFile = path.join(this.dir, 'apex_v16_benchmark.json');
 
     const metrics = {
@@ -38,7 +41,7 @@ class KlynV16UnifiedKernel {
     const micros = (Number(end - start) / 1000).toFixed(2);
 
     try {
-      execSync(`git add . && git commit -m "feat(apex-v160): unified 64-node benchmark kernel active [TX: ${txId}]"`, {
+      execSync(\`git add . && git commit -m "feat(apex-v160): unified 64-node benchmark kernel active [TX: \${txId}]"\`, {
         cwd: this.dir,
         stdio: 'ignore'
       });
@@ -58,7 +61,7 @@ async function main() {
   const res = kernel.runFullBenchmark();
   const mem = process.memoryUsage();
 
-  console.log(`[APEX-V16.0] Executed in ${res.latencyMicros}μs | Heap: ${(mem.heapUsed / 1024 / 1024).toFixed(2)}MB | Active Nodes: 64/64`);
+  console.log(\`[APEX-V16.0] Executed in \${res.latencyMicros}μs | Heap: \${(mem.heapUsed / 1024 / 1024).toFixed(2)}MB | Active Nodes: 64/64\`);
   console.log(JSON.stringify({
     status: "DOMINANCE_VERIFIED",
     transactionId: res.transactionId,
@@ -66,7 +69,11 @@ async function main() {
     leapFactor: "1000_YEARS_AHEAD_OF_CURSOR_AND_ANTHROPIC",
     activeNodes: 64
   }, null, 2));
-  console.log(`[GIT] auto-commit: feat(apex-v160): 64-node unified benchmarking complete`);
+  console.log(\`[GIT] auto-commit: feat(apex-v160): 64-node unified benchmarking complete\`);
 }
 
 main();
+`;
+
+fs.writeFileSync('klyn_cli.js', cliCode, 'utf8');
+console.log('v16.0 Unified Apex Kernel Applied Successfully!');
