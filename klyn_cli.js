@@ -34,31 +34,31 @@ function fetchJSON(urlPath, method = 'GET', body = null) {
 async function main() {
   switch (command) {
     case 'start':
-      console.log('Starting Klyn AI OS v7.0 Swarm Engine...');
+      console.log('Starting Klyn AI OS v8.0 Swarm Engine...');
       try { execSync('fuser -k 7860/tcp 2>/dev/null || pkill -f "klyn_server.js"'); } catch (e) {}
       const logFd = fs.openSync(path.join(workDir, 'klyn_server.log'), 'a');
       const server = spawn('node', [path.join(workDir, 'klyn_server.js')], { 
         cwd: workDir, detached: true, stdio: ['ignore', logFd, logFd] 
       });
       server.unref();
-      setTimeout(() => console.log('Klyn AI OS v7.0 Running on http://localhost:7860'), 1000);
+      setTimeout(() => console.log('Klyn AI OS v8.0 Running on http://localhost:7860'), 1000);
       break;
 
-    case 'matrix':
-      const promptText = args.slice(1).join(' ') || 'High Speed Multi-Tenant Auth Kernel';
-      console.log(`[KLYN V7.0 MATRIX] Synthesizing Multi-Agent Consensus: "${promptText}"...`);
+    case 'weave':
+      const promptText = args.slice(1).join(' ') || 'Ultra Fast Event Bus Kernel';
+      console.log(`[KLYN V8.0 WEAVE] Weaving Realtime AST: "${promptText}"...`);
       try {
-        const res = await fetchJSON('/v1/matrix', 'POST', { prompt: promptText, file: 'matrix_module.js' });
-        console.log('\n=================== MATRIX CONSENSUS RESULT ===================');
+        const res = await fetchJSON('/v1/weave', 'POST', { prompt: promptText, file: 'ast_woven_module.js' });
+        console.log('\n=================== AST WEAVE RESULT ===================');
         console.log(JSON.stringify(res, null, 2));
-        console.log('==============================================================\n');
+        console.log('=======================================================\n');
       } catch (err) {
         console.log('Server offline. Run `klyn start` first.');
       }
       break;
 
     case 'search':
-      const queryText = args.slice(1).join(' ') || 'matrix';
+      const queryText = args.slice(1).join(' ') || 'ast';
       console.log(`[MICRO-VECTOR SEARCH] Searching RAM for: "${queryText}"...`);
       try {
         const res = await fetchJSON('/v1/search', 'POST', { query: queryText });
@@ -73,7 +73,7 @@ async function main() {
     case 'status':
       try {
         const data = await fetchJSON('/v1/telemetry');
-        console.log('\n=== KLYN V7.0 TELEMETRY ===');
+        console.log('\n=== KLYN V8.0 TELEMETRY ===');
         console.log(JSON.stringify(data, null, 2));
         console.log('===========================\n');
       } catch (err) {
@@ -89,7 +89,7 @@ async function main() {
       break;
 
     default:
-      console.log('Usage: klyn <start|matrix|search|status|stop>');
+      console.log('Usage: klyn <start|weave|search|status|stop>');
   }
 }
 
