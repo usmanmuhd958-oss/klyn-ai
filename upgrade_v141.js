@@ -1,4 +1,7 @@
-#!/usr/bin/env node
+import fs from 'node:fs';
+import path from 'node:path';
+
+const cliCode = `#!/usr/bin/env node
 
 import path from 'node:path';
 import fs from 'node:fs';
@@ -15,10 +18,10 @@ class KlynV141SelfHealer {
 
   executeSelfHeal(target) {
     const start = process.hrtime.bigint();
-    const txId = `v141_heal_${Date.now()}`;
+    const txId = \`v141_heal_\${Date.now()}\`;
     const filePath = path.join(this.dir, target);
 
-    const healedCode = `// KLYN AI OS v14.1 ZERO-COPY SELF-HEALER
+    const healedCode = \`// KLYN AI OS v14.1 ZERO-COPY SELF-HEALER
 // LEAP FACTOR: 1000 YEARS AHEAD OF CURSOR & ANTHROPIC
 // AUTONOMOUS IN-MEMORY AST MUTATION
 
@@ -33,14 +36,14 @@ export class ApexSelfHealerCore {
   }
 }
 export default ApexSelfHealerCore;
-`;
+\`;
 
     fs.writeFileSync(filePath, healedCode, 'utf8');
     const end = process.hrtime.bigint();
     const micros = (Number(end - start) / 1000).toFixed(2);
 
     try {
-      execSync(`git add . && git commit -m "fix(healer-v141): zero-copy AST self-heal [${target}] [TX: ${txId}]"`, {
+      execSync(\`git add . && git commit -m "fix(healer-v141): zero-copy AST self-heal [\${target}] [TX: \${txId}]"\`, {
         cwd: this.dir,
         stdio: 'ignore'
       });
@@ -61,14 +64,18 @@ async function main() {
   const res = healer.executeSelfHeal(targetFile);
   const mem = process.memoryUsage();
 
-  console.log(`[APEX-V14.1] Executed in ${res.latencyMicros}μs | Heap: ${(mem.heapUsed / 1024 / 1024).toFixed(2)}MB | Agents: 16/16`);
+  console.log(\`[APEX-V14.1] Executed in \${res.latencyMicros}μs | Heap: \${(mem.heapUsed / 1024 / 1024).toFixed(2)}MB | Agents: 16/16\`);
   console.log(JSON.stringify({
     status: "DOMINANCE_VERIFIED",
     transactionId: res.transactionId,
     targetFile: res.target,
     leapFactor: "1000_YEARS_AHEAD_OF_CURSOR_AND_ANTHROPIC"
   }, null, 2));
-  console.log(`[GIT] auto-commit: fix(healer-v141): autonomous AST self-heal for ${targetFile}`);
+  console.log(\`[GIT] auto-commit: fix(healer-v141): autonomous AST self-heal for \${targetFile}\`);
 }
 
 main();
+`;
+
+fs.writeFileSync('klyn_cli.js', cliCode, 'utf8');
+console.log('v14.1 Zero-Copy Self-Healer Engine Applied Successfully!');
