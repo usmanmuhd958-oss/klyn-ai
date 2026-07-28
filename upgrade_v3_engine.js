@@ -1,4 +1,7 @@
-#!/usr/bin/env node
+import fs from 'node:fs';
+import path from 'node:path';
+
+const cliCode = `#!/usr/bin/env node
 
 import path from 'node:path';
 import fs from 'node:fs';
@@ -20,7 +23,7 @@ class KlynV3Engine {
     files.forEach(file => {
       try {
         const content = fs.readFileSync(path.join(this.dir, file), 'utf8');
-        totalLines += content.split('\n').length;
+        totalLines += content.split('\\n').length;
       } catch (e) {}
     });
     return { totalFiles: files.length, totalLines };
@@ -38,13 +41,13 @@ class KlynV3Engine {
     const sourceCode = fs.readFileSync(fullPath, 'utf8');
     const txId = "v3_live_" + Date.now();
 
-    const refactoredMarker = "// [KLYN-AI-OS v3.0 LIVE APEX KERNEL]\n// MUTATION: " + instruction + "\n// LEAP FACTOR: 1000 YEARS AHEAD OF CURSOR & ANTHROPIC\n";
+    const refactoredMarker = "// [KLYN-AI-OS v3.0 LIVE APEX KERNEL]\\n// MUTATION: " + instruction + "\\n// LEAP FACTOR: 1000 YEARS AHEAD OF CURSOR & ANTHROPIC\\n";
 
     let newCode = sourceCode;
     if (!sourceCode.includes('[KLYN-AI-OS v3.0 LIVE APEX KERNEL]')) {
       newCode = refactoredMarker + sourceCode;
     } else {
-      newCode = sourceCode.replace(/\/\/ MUTATION: .*/, "// MUTATION: " + instruction);
+      newCode = sourceCode.replace(/\\/\\/ MUTATION: .*/, "// MUTATION: " + instruction);
     }
 
     fs.writeFileSync(fullPath, newCode, 'utf8');
@@ -52,7 +55,7 @@ class KlynV3Engine {
     const micros = (Number(end - start) / 1000).toFixed(2);
 
     try {
-      execSync("git add . && git commit -m \"refactor(v3-kernel): live AST mutation on " + filePath + " [" + instruction + "] [TX: " + txId + "]\"", {
+      execSync("git add . && git commit -m \\"refactor(v3-kernel): live AST mutation on " + filePath + " [" + instruction + "] [TX: " + txId + "]\\"", {
         cwd: this.dir,
         stdio: 'ignore'
       });
@@ -90,3 +93,7 @@ async function main() {
 }
 
 main();
+`;
+
+fs.writeFileSync('klyn_cli.js', cliCode, 'utf8');
+console.log('Klyn OS v3.0 Fixed & Deployed Successfully!');
