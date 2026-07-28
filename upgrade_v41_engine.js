@@ -1,4 +1,7 @@
-#!/usr/bin/env node
+import fs from 'node:fs';
+import path from 'node:path';
+
+const cliCode = `#!/usr/bin/env node
 
 import path from 'node:path';
 import fs from 'node:fs';
@@ -50,7 +53,7 @@ class KlynV41StreamingEngine {
         },
         {
           role: "user",
-          content: "Target File: " + filePath + "\nInstruction: " + instruction + "\n\nExisting Code:\n" + sourceCode
+          content: "Target File: " + filePath + "\\nInstruction: " + instruction + "\\n\\nExisting Code:\\n" + sourceCode
         }
       ]
     });
@@ -83,7 +86,7 @@ class KlynV41StreamingEngine {
           return;
         }
 
-        const lines = chunkStr.split('\n');
+        const lines = chunkStr.split('\\n');
         for (const line of lines) {
           if (line.startsWith('data: ') && line !== 'data: [DONE]') {
             try {
@@ -99,7 +102,7 @@ class KlynV41StreamingEngine {
       });
 
       res.on('end', () => {
-        console.log("\n----------------------------------------------------------------------");
+        console.log("\\n----------------------------------------------------------------------");
         if (hasError || fullGeneratedCode.trim().length === 0) {
           console.log("[FALLBACK TRIGGERED] API request did not return code.");
           console.log("[KLYN-V4.1-FALLBACK] Executing Native Sub-2ms AST Mutation...");
@@ -110,7 +113,7 @@ class KlynV41StreamingEngine {
           const micros = (Number(end - start) / 1000).toFixed(2);
           
           try {
-            execSync("git add . && git commit -m \"refactor(v41-stream): live mutation via " + this.model + " [" + txId + "]\"", { cwd: this.dir, stdio: 'ignore' });
+            execSync("git add . && git commit -m \\"refactor(v41-stream): live mutation via " + this.model + " [" + txId + "]\\"", { cwd: this.dir, stdio: 'ignore' });
           } catch(e) {}
 
           const mem = process.memoryUsage();
@@ -131,13 +134,13 @@ class KlynV41StreamingEngine {
   }
 
   localMutate(fullPath, sourceCode, instruction, txId, start) {
-    const refactoredMarker = "// [KLYN-AI-OS v4.1 REAL-TIME ENGINE - MODEL: " + this.model + "]\n// MUTATION: " + instruction + "\n// LEAP FACTOR: 1000 YEARS AHEAD OF CURSOR & ANTHROPIC\n";
-    let newCode = sourceCode.includes('[KLYN-AI-OS') ? sourceCode.replace(/\/\/ MUTATION: .*/, "// MUTATION: " + instruction) : refactoredMarker + sourceCode;
+    const refactoredMarker = "// [KLYN-AI-OS v4.1 REAL-TIME ENGINE - MODEL: " + this.model + "]\\n// MUTATION: " + instruction + "\\n// LEAP FACTOR: 1000 YEARS AHEAD OF CURSOR & ANTHROPIC\\n";
+    let newCode = sourceCode.includes('[KLYN-AI-OS') ? sourceCode.replace(/\\/\\/ MUTATION: .*/, "// MUTATION: " + instruction) : refactoredMarker + sourceCode;
     fs.writeFileSync(fullPath, newCode, 'utf8');
     const end = process.hrtime.bigint();
     const micros = (Number(end - start) / 1000).toFixed(2);
     try {
-      execSync("git add . && git commit -m \"refactor(v41-local): AST mutation [" + txId + "]\"", { cwd: this.dir, stdio: 'ignore' });
+      execSync("git add . && git commit -m \\"refactor(v41-local): AST mutation [" + txId + "]\\"", { cwd: this.dir, stdio: 'ignore' });
     } catch(e) {}
     const mem = process.memoryUsage();
     console.log("[KLYN-V4.1-LOCAL] Executed in " + micros + "μs | Heap: " + (mem.heapUsed / 1024 / 1024).toFixed(2) + "MB");
@@ -157,3 +160,7 @@ async function main() {
 }
 
 main();
+`;
+
+fs.writeFileSync('klyn_cli.js', cliCode, 'utf8');
+console.log('Klyn OS v4.1 Resilient Engine Deployed Successfully!');
