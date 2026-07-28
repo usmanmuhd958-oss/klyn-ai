@@ -25,7 +25,7 @@ class KlynV141SelfHealer {
 // LEAP FACTOR: 1000 YEARS AHEAD OF CURSOR & ANTHROPIC
 // AUTONOMOUS IN-MEMORY AST MUTATION
 
-export class ApexSelfHealerCore {
+export class KlynSelfHealerCore {
   static verifyIntegrity() {
     return {
       status: "AST_MUTATION_PERFECT",
@@ -35,7 +35,7 @@ export class ApexSelfHealerCore {
     };
   }
 }
-export default ApexSelfHealerCore;
+export default KlynSelfHealerCore;
 \`;
 
     fs.writeFileSync(filePath, healedCode, 'utf8');

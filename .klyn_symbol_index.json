@@ -1,6 +1,6 @@
 {
-  "timestamp": 1785269070507,
-  "totalFiles": 64,
+  "timestamp": 1785269893816,
+  "totalFiles": 66,
   "symbols": {
     "apex_core_module.js": {
       "path": "apex_core_module.js",
@@ -18,11 +18,11 @@
       "path": "apex_enterprise_core.js",
       "functions": [],
       "classes": [
-        "ApexSelfHealerCore"
+        "KlynSelfHealerCore"
       ],
       "imports": [],
       "exports": [
-        "ApexSelfHealerCore"
+        "KlynSelfHealerCore"
       ]
     },
     "apex_v15_synthesizer.js": {
@@ -153,13 +153,16 @@
       ],
       "classes": [
         "KlynV43SymbolIndexer",
-        "KlynV43Engine"
+        "KlynV44Visualizer",
+        "KlynV45SelfHealer",
+        "KlynV46SwarmRefactorEngine"
       ],
       "imports": [
         "node:path",
         "node:fs",
         "node:http",
         "node:https",
+        "node:vm",
         "node:child_process"
       ],
       "exports": []
@@ -716,7 +719,7 @@
       ],
       "classes": [
         "KlynV141SelfHealer",
-        "ApexSelfHealerCore"
+        "KlynSelfHealerCore"
       ],
       "imports": [
         "node:fs",
@@ -726,7 +729,7 @@
         "node:child_process"
       ],
       "exports": [
-        "ApexSelfHealerCore"
+        "KlynSelfHealerCore"
       ]
     },
     "upgrade_v142.js": {
@@ -870,6 +873,49 @@
         "node:fs",
         "node:http",
         "node:https",
+        "node:child_process"
+      ],
+      "exports": []
+    },
+    "upgrade_v44_engine.js": {
+      "path": "upgrade_v44_engine.js",
+      "functions": [
+        "main"
+      ],
+      "classes": [
+        "KlynV43SymbolIndexer",
+        "KlynV44Visualizer",
+        "KlynV44Engine"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:path",
+        "node:fs",
+        "node:http",
+        "node:https",
+        "node:child_process"
+      ],
+      "exports": []
+    },
+    "upgrade_v45_engine.js": {
+      "path": "upgrade_v45_engine.js",
+      "functions": [
+        "main"
+      ],
+      "classes": [
+        "KlynV43SymbolIndexer",
+        "KlynV45SelfHealer",
+        "KlynV45Engine"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:path",
+        "node:fs",
+        "node:http",
+        "node:https",
+        "node:vm",
         "node:child_process"
       ],
       "exports": []
