@@ -34,44 +34,31 @@ function fetchJSON(urlPath, method = 'GET', body = null) {
 async function main() {
   switch (command) {
     case 'start':
-      console.log('Starting Klyn AI OS v6.0 Swarm Engine...');
+      console.log('Starting Klyn AI OS v7.0 Swarm Engine...');
       try { execSync('fuser -k 7860/tcp 2>/dev/null || pkill -f "klyn_server.js"'); } catch (e) {}
       const logFd = fs.openSync(path.join(workDir, 'klyn_server.log'), 'a');
       const server = spawn('node', [path.join(workDir, 'klyn_server.js')], { 
         cwd: workDir, detached: true, stdio: ['ignore', logFd, logFd] 
       });
       server.unref();
-      setTimeout(() => console.log('Klyn AI OS v6.0 Running on http://localhost:7860'), 1000);
+      setTimeout(() => console.log('Klyn AI OS v7.0 Running on http://localhost:7860'), 1000);
       break;
 
-    case 'evolve':
-      console.log('[KLYN V6.0 EVOLVE] Initiating Self-Evolving Kernel Pass...');
+    case 'matrix':
+      const promptText = args.slice(1).join(' ') || 'High Speed Multi-Tenant Auth Kernel';
+      console.log(`[KLYN V7.0 MATRIX] Synthesizing Multi-Agent Consensus: "${promptText}"...`);
       try {
-        const res = await fetchJSON('/v1/evolve', 'POST', {});
-        console.log('\n=================== EVOLUTION RESULT ===================');
+        const res = await fetchJSON('/v1/matrix', 'POST', { prompt: promptText, file: 'matrix_module.js' });
+        console.log('\n=================== MATRIX CONSENSUS RESULT ===================');
         console.log(JSON.stringify(res, null, 2));
-        console.log('=======================================================\n');
-      } catch (err) {
-        console.log('Server offline. Run `klyn start` first.');
-      }
-      break;
-
-    case 'pipeline':
-    case 'build':
-      const promptText = args.slice(1).join(' ') || 'High Performance Module';
-      console.log(`[KLYN V6.0 PIPELINE] Synthesizing: "${promptText}"...`);
-      try {
-        const res = await fetchJSON('/v1/pipeline', 'POST', { prompt: promptText, file: 'pipeline_module.js' });
-        console.log('\n=================== PIPELINE RESULT ===================');
-        console.log(JSON.stringify(res, null, 2));
-        console.log('======================================================\n');
+        console.log('==============================================================\n');
       } catch (err) {
         console.log('Server offline. Run `klyn start` first.');
       }
       break;
 
     case 'search':
-      const queryText = args.slice(1).join(' ') || 'kernel';
+      const queryText = args.slice(1).join(' ') || 'matrix';
       console.log(`[MICRO-VECTOR SEARCH] Searching RAM for: "${queryText}"...`);
       try {
         const res = await fetchJSON('/v1/search', 'POST', { query: queryText });
@@ -86,7 +73,7 @@ async function main() {
     case 'status':
       try {
         const data = await fetchJSON('/v1/telemetry');
-        console.log('\n=== KLYN V6.0 TELEMETRY ===');
+        console.log('\n=== KLYN V7.0 TELEMETRY ===');
         console.log(JSON.stringify(data, null, 2));
         console.log('===========================\n');
       } catch (err) {
@@ -102,7 +89,7 @@ async function main() {
       break;
 
     default:
-      console.log('Usage: klyn <start|evolve|pipeline|search|status|stop>');
+      console.log('Usage: klyn <start|matrix|search|status|stop>');
   }
 }
 
