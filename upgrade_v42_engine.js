@@ -1,4 +1,7 @@
-#!/usr/bin/env node
+import fs from 'node:fs';
+import path from 'node:path';
+
+const cliCode = `#!/usr/bin/env node
 
 import path from 'node:path';
 import fs from 'node:fs';
@@ -50,7 +53,7 @@ class KlynV42LocalEngine {
   streamOllama(fullPath, sourceCode, instruction, txId, start) {
     const payload = JSON.stringify({
       model: this.model,
-      prompt: "Instruction: " + instruction + "\nSource:\n" + sourceCode,
+      prompt: "Instruction: " + instruction + "\\nSource:\\n" + sourceCode,
       stream: true
     });
 
@@ -74,7 +77,7 @@ class KlynV42LocalEngine {
       });
 
       res.on('end', () => {
-        console.log("\n----------------------------------------------------------------------");
+        console.log("\\n----------------------------------------------------------------------");
         this.saveAndCommit(fullPath, fullCode, txId, start, "ollama-" + this.model);
       });
     });
@@ -89,14 +92,14 @@ class KlynV42LocalEngine {
   }
 
   localMutate(fullPath, sourceCode, instruction, txId, start) {
-    const refactoredMarker = "// [KLYN-AI-OS v4.2 APEX LOCAL MATRIX]\n// MUTATION: " + instruction + "\n// LEAP FACTOR: 1000 YEARS AHEAD OF CURSOR & ANTHROPIC\n";
-    let newCode = sourceCode.includes('[KLYN-AI-OS') ? sourceCode.replace(/\/\/ MUTATION: .*/, "// MUTATION: " + instruction) : refactoredMarker + sourceCode;
+    const refactoredMarker = "// [KLYN-AI-OS v4.2 APEX LOCAL MATRIX]\\n// MUTATION: " + instruction + "\\n// LEAP FACTOR: 1000 YEARS AHEAD OF CURSOR & ANTHROPIC\\n";
+    let newCode = sourceCode.includes('[KLYN-AI-OS') ? sourceCode.replace(/\\/\\/ MUTATION: .*/, "// MUTATION: " + instruction) : refactoredMarker + sourceCode;
     fs.writeFileSync(fullPath, newCode, 'utf8');
     const end = process.hrtime.bigint();
     const micros = (Number(end - start) / 1000).toFixed(2);
     
     try {
-      execSync("git add . && git commit -m \"refactor(v42-local): instant AST mutation [" + txId + "]\"", { cwd: this.dir, stdio: 'ignore' });
+      execSync("git add . && git commit -m \\"refactor(v42-local): instant AST mutation [" + txId + "]\\"", { cwd: this.dir, stdio: 'ignore' });
     } catch(e) {}
 
     const mem = process.memoryUsage();
@@ -110,7 +113,7 @@ class KlynV42LocalEngine {
       const end = process.hrtime.bigint();
       const micros = (Number(end - start) / 1000).toFixed(2);
       try {
-        execSync("git add . && git commit -m \"refactor(v42-stream): live mutation via " + modelTag + " [" + txId + "]\"", { cwd: this.dir, stdio: 'ignore' });
+        execSync("git add . && git commit -m \\"refactor(v42-stream): live mutation via " + modelTag + " [" + txId + "]\\"", { cwd: this.dir, stdio: 'ignore' });
       } catch(e) {}
       console.log("[KLYN-V4.2-STREAM] Complete in " + micros + "μs");
     }
@@ -129,3 +132,7 @@ async function main() {
 }
 
 main();
+`;
+
+fs.writeFileSync('klyn_cli.js', cliCode, 'utf8');
+console.log('Klyn OS v4.2 Local & Instant Offline Engine Deployed!');
