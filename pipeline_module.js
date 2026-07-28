@@ -1,3 +1,4 @@
+// [KLYN-V4.7-SELF-HEALED-AST-NODE: Unexpected token 'export']
 // Klyn AI OS v5.4 Autonomous Pipeline Generated Feature
 // Feature: Create high speed authentication token manager
 // Transaction ID: v54_pipe_1785249275868

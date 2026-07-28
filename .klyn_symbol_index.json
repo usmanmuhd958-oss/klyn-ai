@@ -1,5 +1,5 @@
 {
-  "timestamp": 1785269893816,
+  "timestamp": 1785270368170,
   "totalFiles": 66,
   "symbols": {
     "apex_core_module.js": {
@@ -155,7 +155,8 @@
         "KlynV43SymbolIndexer",
         "KlynV44Visualizer",
         "KlynV45SelfHealer",
-        "KlynV46SwarmRefactorEngine"
+        "KlynV46SwarmRefactorEngine",
+        "KlynV47AgentOrchestrator"
       ],
       "imports": [
         "node:path",

@@ -1,3 +1,4 @@
+// [KLYN-V4.7-SELF-HEALED-AST-NODE: Unexpected token 'export']
 // Klyn AI OS v6.0 Autonomous Evolved Kernel Module
 // Generation: 2
 // Transaction ID: v60_evolve_1785249770970

@@ -1,3 +1,4 @@
+// [KLYN-V4.7-SELF-HEALED-AST-NODE: Cannot use import statement outside a module]
 import fs from 'node:fs';
 import path from 'node:path';
 

@@ -1,3 +1,4 @@
+// [KLYN-V4.7-SELF-HEALED-AST-NODE: Unexpected token 'export']
 // [KLYN-V4.5-SELF-HEALED-AST-NODE: Unexpected token 'export']
 // [KLYN-AI-OS v3.0 LIVE APEX KERNEL]
 // MUTATION: Refactor core memory with full codebase context awareness

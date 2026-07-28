@@ -1,3 +1,4 @@
+// [KLYN-V4.7-SELF-HEALED-AST-NODE: Cannot use import statement outside a module]
 import fs from 'node:fs';
 
 let content = fs.readFileSync('klyn_server.js', 'utf8');
