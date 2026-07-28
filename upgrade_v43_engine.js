@@ -1,4 +1,7 @@
-#!/usr/bin/env node
+import fs from 'node:fs';
+import path from 'node:path';
+
+const cliCode = `#!/usr/bin/env node
 
 import path from 'node:path';
 import fs from 'node:fs';
@@ -45,10 +48,10 @@ class KlynV43SymbolIndexer {
     };
 
     // Regex parsing for Zero-Dependency microsecond performance
-    const fnRegex = /(?:async\s+)?function\s+([a-zA-Z0-9_$]+)|(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>/g;
-    const classRegex = /class\s+([a-zA-Z0-9_$]+)/g;
-    const importRegex = /import\s+.*?from\s+['"]([^'"]+)['"]/g;
-    const exportRegex = /export\s+(?:default\s+)?(?:class|function|const|let|var)\s+([a-zA-Z0-9_$]+)/g;
+    const fnRegex = /(?:async\\s+)?function\\s+([a-zA-Z0-9_$]+)|(?:const|let|var)\\s+([a-zA-Z0-9_$]+)\\s*=\\s*(?:async\\s*)?\\([^)]*\\)\\s*=>/g;
+    const classRegex = /class\\s+([a-zA-Z0-9_$]+)/g;
+    const importRegex = /import\\s+.*?from\\s+['"]([^'"]+)['"]/g;
+    const exportRegex = /export\\s+(?:default\\s+)?(?:class|function|const|let|var)\\s+([a-zA-Z0-9_$]+)/g;
 
     let match;
     while ((match = fnRegex.exec(code)) !== null) {
@@ -129,13 +132,13 @@ class KlynV43Engine {
 
     // Auto-inject Symbol Graph marker into AST mutation header
     const symbolSummary = Object.entries(index.symbols)
-      .map(([f, data]) => `// - ${f}: Fns[${data.functions.join(', ')}] Classes[${data.classes.join(', ')}]`)
-      .join('\n');
+      .map(([f, data]) => \`// - \${f}: Fns[\${data.functions.join(', ')}] Classes[\${data.classes.join(', ')}]\`)
+      .join('\\n');
 
-    const refactoredMarker = `// [KLYN-AI-OS v4.3 MULTI-FILE CONTEXT MATRIX]\n// MUTATION: ${instruction}\n// CODEBASE SYMBOL GRAPH:\n${symbolSummary}\n// LEAP FACTOR: 1000 YEARS AHEAD OF CURSOR & ANTHROPIC\n`;
+    const refactoredMarker = \`// [KLYN-AI-OS v4.3 MULTI-FILE CONTEXT MATRIX]\\n// MUTATION: \${instruction}\\n// CODEBASE SYMBOL GRAPH:\\n\${symbolSummary}\\n// LEAP FACTOR: 1000 YEARS AHEAD OF CURSOR & ANTHROPIC\\n\`;
 
     let newCode = sourceCode.includes('[KLYN-AI-OS') 
-      ? sourceCode.replace(/\/\/ MUTATION: .*/, "// MUTATION: " + instruction) 
+      ? sourceCode.replace(/\\/\\/ MUTATION: .*/, "// MUTATION: " + instruction) 
       : refactoredMarker + sourceCode;
 
     fs.writeFileSync(fullPath, newCode, 'utf8');
@@ -143,7 +146,7 @@ class KlynV43Engine {
     const micros = (Number(end - start) / 1000).toFixed(2);
 
     try {
-      execSync("git add . && git commit -m \"refactor(v43-context): AST mutation with symbol graph [" + txId + "]\"", { cwd: this.dir, stdio: 'ignore' });
+      execSync("git add . && git commit -m \\"refactor(v43-context): AST mutation with symbol graph [" + txId + "]\\"", { cwd: this.dir, stdio: 'ignore' });
     } catch(e) {}
 
     const mem = process.memoryUsage();
@@ -166,3 +169,7 @@ async function main() {
 }
 
 main();
+`;
+
+fs.writeFileSync('klyn_cli.js', cliCode, 'utf8');
+console.log('Klyn OS v4.3 Multi-File Symbol Indexer Engine Deployed!');

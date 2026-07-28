@@ -1,0 +1,1172 @@
+{
+  "timestamp": 1785269070507,
+  "totalFiles": 64,
+  "symbols": {
+    "apex_core_module.js": {
+      "path": "apex_core_module.js",
+      "functions": [],
+      "classes": [
+        "ApexMicroserviceEngine"
+      ],
+      "imports": [],
+      "exports": [
+        "apexArchitecture",
+        "ApexMicroserviceEngine"
+      ]
+    },
+    "apex_enterprise_core.js": {
+      "path": "apex_enterprise_core.js",
+      "functions": [],
+      "classes": [
+        "ApexSelfHealerCore"
+      ],
+      "imports": [],
+      "exports": [
+        "ApexSelfHealerCore"
+      ]
+    },
+    "apex_v15_synthesizer.js": {
+      "path": "apex_v15_synthesizer.js",
+      "functions": [],
+      "classes": [
+        "Apexv15Synthesizer"
+      ],
+      "imports": [],
+      "exports": [
+        "Apexv15Synthesizer"
+      ]
+    },
+    "app.js": {
+      "path": "app.js",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "selfHealed"
+      ]
+    },
+    "ast_woven_module.js": {
+      "path": "ast_woven_module.js",
+      "functions": [],
+      "classes": [
+        "KlynWovenKernel"
+      ],
+      "imports": [
+        "node:events"
+      ],
+      "exports": [
+        "KlynWovenKernel",
+        "wovenInstance",
+        "selfHealingGuard"
+      ]
+    },
+    "engine.js": {
+      "path": "engine.js",
+      "functions": [],
+      "classes": [
+        "KlynEngine"
+      ],
+      "imports": [],
+      "exports": [
+        "selfHealed"
+      ]
+    },
+    "fix_klyn_v5.js": {
+      "path": "fix_klyn_v5.js",
+      "functions": [
+        "initializeVault",
+        "storeMemory",
+        "executeFeature",
+        "startServer",
+        "fetchJSON",
+        "main"
+      ],
+      "classes": [
+        "KlynSwarmEngine"
+      ],
+      "imports": [
+        "node:fs",
+        "node:http",
+        "node:path",
+        "node:fs",
+        "node:child_process",
+        "node:url",
+        "node:http",
+        "node:child_process",
+        "node:path",
+        "node:fs"
+      ],
+      "exports": [
+        "featureMeta",
+        "executeFeature"
+      ]
+    },
+    "healed_test.js": {
+      "path": "healed_test.js",
+      "functions": [
+        "autoFixExample"
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": []
+    },
+    "index.d.ts": {
+      "path": "index.d.ts",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": []
+    },
+    "index.js": {
+      "path": "index.js",
+      "functions": [
+        "initializeVault",
+        "storeMemory",
+        "queryMemory"
+      ],
+      "classes": [],
+      "imports": [
+        "node:fs",
+        "node:path"
+      ],
+      "exports": [
+        "initializeVault",
+        "storeMemory",
+        "queryMemory"
+      ]
+    },
+    "klyn_agent_loop.js": {
+      "path": "klyn_agent_loop.js",
+      "functions": [],
+      "classes": [
+        "KlynAgentEngine"
+      ],
+      "imports": [],
+      "exports": [
+        "selfHealed"
+      ]
+    },
+    "klyn_cli.js": {
+      "path": "klyn_cli.js",
+      "functions": [
+        "main"
+      ],
+      "classes": [
+        "KlynV43SymbolIndexer",
+        "KlynV43Engine"
+      ],
+      "imports": [
+        "node:path",
+        "node:fs",
+        "node:http",
+        "node:https",
+        "node:child_process"
+      ],
+      "exports": []
+    },
+    "klyn_core.js": {
+      "path": "klyn_core.js",
+      "functions": [],
+      "classes": [
+        "KlynCoreOS"
+      ],
+      "imports": [],
+      "exports": [
+        "selfHealed"
+      ]
+    },
+    "klyn_daemon.js": {
+      "path": "klyn_daemon.js",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "selfHealed"
+      ]
+    },
+    "klyn_evolved_kernel.js": {
+      "path": "klyn_evolved_kernel.js",
+      "functions": [
+        "executeEvolvedTask"
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "kernelMetadata",
+        "executeEvolvedTask"
+      ]
+    },
+    "klyn_query.js": {
+      "path": "klyn_query.js",
+      "functions": [
+        "hashWord",
+        "tokenize",
+        "generateEmbedding",
+        "indexDir"
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "selfHealed"
+      ]
+    },
+    "klyn_server.js": {
+      "path": "klyn_server.js",
+      "functions": [],
+      "classes": [
+        "KlynApexV13",
+        "ApexSwarmWorker"
+      ],
+      "imports": [
+        "node:http",
+        "node:path",
+        "node:fs",
+        "node:child_process"
+      ],
+      "exports": [
+        "KlynApexV13",
+        "APEX_MATRIX",
+        "ApexSwarmWorker"
+      ]
+    },
+    "matrix_module.js": {
+      "path": "matrix_module.js",
+      "functions": [
+        "executeMatrixService"
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "matrixMetadata",
+        "executeMatrixService"
+      ]
+    },
+    "mod_a.js": {
+      "path": "mod_a.js",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": []
+    },
+    "mod_b.js": {
+      "path": "mod_b.js",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "selfHealed"
+      ]
+    },
+    "neural_fabric_core.js": {
+      "path": "neural_fabric_core.js",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "NEURAL_FABRIC_MATRIX"
+      ]
+    },
+    "patch_engine.js": {
+      "path": "patch_engine.js",
+      "functions": [],
+      "classes": [
+        "KlynEngine",
+        "KlynPatchSynthesizer"
+      ],
+      "imports": [],
+      "exports": [
+        "selfHealed"
+      ]
+    },
+    "pipeline_module.js": {
+      "path": "pipeline_module.js",
+      "functions": [
+        "runPipelineTask"
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "pipelineMeta",
+        "runPipelineTask"
+      ]
+    },
+    "quantum_cluster_module.js": {
+      "path": "quantum_cluster_module.js",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "config"
+      ]
+    },
+    "quantum_v14_core.js": {
+      "path": "quantum_v14_core.js",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "QUANTUM_SWARM"
+      ]
+    },
+    "swarm_cluster_module.js": {
+      "path": "swarm_cluster_module.js",
+      "functions": [
+        "dispatchSwarmWorkload"
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "swarmClusterConfig",
+        "dispatchSwarmWorkload"
+      ]
+    },
+    "swarm_module.js": {
+      "path": "swarm_module.js",
+      "functions": [
+        "executeFeature"
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "featureMeta",
+        "executeFeature"
+      ]
+    },
+    "swarm_v52.js": {
+      "path": "swarm_v52.js",
+      "functions": [
+        "executeTask"
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "meta",
+        "executeTask"
+      ]
+    },
+    "test-vault.js": {
+      "path": "test-vault.js",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [
+        "selfHealed"
+      ]
+    },
+    "test_patch.js": {
+      "path": "test_patch.js",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": []
+    },
+    "update_v42.js": {
+      "path": "update_v42.js",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        "node:fs"
+      ],
+      "exports": []
+    },
+    "upgrade_real_engine.js": {
+      "path": "upgrade_real_engine.js",
+      "functions": [
+        "main"
+      ],
+      "classes": [
+        "KlynRealEngine"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:path",
+        "node:fs",
+        "node:child_process"
+      ],
+      "exports": []
+    },
+    "upgrade_v100.js": {
+      "path": "upgrade_v100.js",
+      "functions": [
+        "fetchJSON",
+        "main"
+      ],
+      "classes": [
+        "KlynVectorMemoryKernel",
+        "KlynApexEngineV100",
+        "ApexMicroserviceEngine"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:child_process",
+        "node:url",
+        "node:http",
+        "node:path",
+        "node:fs",
+        "node:child_process",
+        "node:url",
+        "node:http",
+        "node:child_process",
+        "node:path",
+        "node:fs"
+      ],
+      "exports": [
+        "apexArchitecture",
+        "ApexMicroserviceEngine"
+      ]
+    },
+    "upgrade_v110.js": {
+      "path": "upgrade_v110.js",
+      "functions": [
+        "fetchJSON",
+        "main"
+      ],
+      "classes": [
+        "KlynVectorMemoryKernel",
+        "KlynMatrixEngineV110",
+        "MatrixMicroserviceEngine"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:child_process",
+        "node:url",
+        "node:http",
+        "node:path",
+        "node:fs",
+        "node:child_process",
+        "node:url",
+        "node:http",
+        "node:child_process",
+        "node:path",
+        "node:fs"
+      ],
+      "exports": [
+        "matrixArchitecture",
+        "MatrixMicroserviceEngine"
+      ]
+    },
+    "upgrade_v120.js": {
+      "path": "upgrade_v120.js",
+      "functions": [
+        "fetchJSON",
+        "main"
+      ],
+      "classes": [
+        "KlynVectorMemoryKernel",
+        "KlynQuantumEngineV120",
+        "QuantumNodeCluster"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:child_process",
+        "node:url",
+        "node:http",
+        "node:path",
+        "node:fs",
+        "node:child_process",
+        "node:url",
+        "node:http",
+        "node:child_process",
+        "node:path",
+        "node:fs"
+      ],
+      "exports": [
+        "quantumConfig",
+        "QuantumNodeCluster"
+      ]
+    },
+    "upgrade_v121.js": {
+      "path": "upgrade_v121.js",
+      "functions": [
+        "fetchJSON",
+        "main"
+      ],
+      "classes": [
+        "KlynVectorMemoryKernel",
+        "KlynQuantumEngineV121",
+        "QuantumNodeCluster"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:child_process",
+        "node:url",
+        "node:http",
+        "node:path",
+        "node:fs",
+        "node:child_process",
+        "node:url",
+        "node:http",
+        "node:child_process",
+        "node:path",
+        "node:fs",
+        "./klyn_server.js"
+      ],
+      "exports": [
+        "KlynQuantumEngineV121",
+        "quantumConfig",
+        "QuantumNodeCluster"
+      ]
+    },
+    "upgrade_v122.js": {
+      "path": "upgrade_v122.js",
+      "functions": [
+        "fetchJSON",
+        "main"
+      ],
+      "classes": [
+        "KlynVectorMemoryKernel",
+        "KlynQuantumEngineV122",
+        "QuantumNodeCluster",
+        "DirectQuantumKernel"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:child_process",
+        "node:http",
+        "node:path",
+        "node:fs",
+        "node:child_process",
+        "node:http",
+        "node:child_process",
+        "node:path",
+        "node:fs"
+      ],
+      "exports": [
+        "KlynQuantumEngineV122",
+        "quantumConfig",
+        "QuantumNodeCluster",
+        "config"
+      ]
+    },
+    "upgrade_v123.js": {
+      "path": "upgrade_v123.js",
+      "functions": [
+        "fetchJSON",
+        "main",
+        "module_"
+      ],
+      "classes": [
+        "KlynVectorMemoryKernel",
+        "DirectQuantumKernel"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:http",
+        "node:child_process",
+        "node:path",
+        "node:fs"
+      ],
+      "exports": [
+        "config"
+      ]
+    },
+    "upgrade_v130.js": {
+      "path": "upgrade_v130.js",
+      "functions": [
+        "main"
+      ],
+      "classes": [
+        "KlynApexV13",
+        "ApexSwarmWorker",
+        "KlynApexCliEngine"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:child_process",
+        "node:http",
+        "node:path",
+        "node:fs",
+        "node:child_process",
+        "node:path",
+        "node:fs",
+        "node:child_process"
+      ],
+      "exports": [
+        "KlynApexV13",
+        "APEX_MATRIX",
+        "ApexSwarmWorker",
+        "APEX_CONFIG"
+      ]
+    },
+    "upgrade_v131.js": {
+      "path": "upgrade_v131.js",
+      "functions": [
+        "main"
+      ],
+      "classes": [
+        "KlynASTMutationEngine",
+        "ASTOptimizedWorker"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:child_process",
+        "node:path",
+        "node:fs",
+        "node:child_process"
+      ],
+      "exports": [
+        "ASTOptimizedWorker"
+      ]
+    },
+    "upgrade_v132.js": {
+      "path": "upgrade_v132.js",
+      "functions": [
+        "main"
+      ],
+      "classes": [
+        "KlynFastVectorEngine"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:path",
+        "node:fs",
+        "node:child_process"
+      ],
+      "exports": []
+    },
+    "upgrade_v133.js": {
+      "path": "upgrade_v133.js",
+      "functions": [
+        "main"
+      ],
+      "classes": [
+        "KlynAutonomousWeaver",
+        "ApexWeaverKernel"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:path",
+        "node:fs",
+        "node:child_process"
+      ],
+      "exports": [
+        "ApexWeaverKernel"
+      ]
+    },
+    "upgrade_v134.js": {
+      "path": "upgrade_v134.js",
+      "functions": [
+        "main"
+      ],
+      "classes": [
+        "KlynSimdSwarmScheduler"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:path",
+        "node:fs",
+        "node:child_process"
+      ],
+      "exports": []
+    },
+    "upgrade_v135.js": {
+      "path": "upgrade_v135.js",
+      "functions": [
+        "main"
+      ],
+      "classes": [
+        "KlynNeuralFabricKernel"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:path",
+        "node:fs",
+        "node:child_process"
+      ],
+      "exports": [
+        "NEURAL_FABRIC_MATRIX"
+      ]
+    },
+    "upgrade_v140.js": {
+      "path": "upgrade_v140.js",
+      "functions": [
+        "main"
+      ],
+      "classes": [
+        "KlynV14QuantumOrchestrator"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:path",
+        "node:fs",
+        "node:child_process"
+      ],
+      "exports": [
+        "QUANTUM_SWARM"
+      ]
+    },
+    "upgrade_v141.js": {
+      "path": "upgrade_v141.js",
+      "functions": [
+        "main"
+      ],
+      "classes": [
+        "KlynV141SelfHealer",
+        "ApexSelfHealerCore"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:path",
+        "node:fs",
+        "node:child_process"
+      ],
+      "exports": [
+        "ApexSelfHealerCore"
+      ]
+    },
+    "upgrade_v142.js": {
+      "path": "upgrade_v142.js",
+      "functions": [
+        "main"
+      ],
+      "classes": [
+        "KlynV142DependencyGraph"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:path",
+        "node:fs",
+        "node:child_process"
+      ],
+      "exports": []
+    },
+    "upgrade_v150.js": {
+      "path": "upgrade_v150.js",
+      "functions": [
+        "main"
+      ],
+      "classes": [
+        "KlynV15ApexSynthesisKernel",
+        "Apexv15Synthesizer"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:path",
+        "node:fs",
+        "node:child_process"
+      ],
+      "exports": [
+        "Apexv15Synthesizer"
+      ]
+    },
+    "upgrade_v160.js": {
+      "path": "upgrade_v160.js",
+      "functions": [
+        "main"
+      ],
+      "classes": [
+        "KlynV16UnifiedKernel"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:path",
+        "node:fs",
+        "node:child_process"
+      ],
+      "exports": []
+    },
+    "upgrade_v2_engine.js": {
+      "path": "upgrade_v2_engine.js",
+      "functions": [
+        "main"
+      ],
+      "classes": [
+        "KlynV2Engine"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:path",
+        "node:fs",
+        "node:child_process"
+      ],
+      "exports": []
+    },
+    "upgrade_v3_engine.js": {
+      "path": "upgrade_v3_engine.js",
+      "functions": [
+        "main"
+      ],
+      "classes": [
+        "KlynV3Engine"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:path",
+        "node:fs",
+        "node:child_process"
+      ],
+      "exports": []
+    },
+    "upgrade_v41_engine.js": {
+      "path": "upgrade_v41_engine.js",
+      "functions": [
+        "main"
+      ],
+      "classes": [
+        "KlynV41StreamingEngine"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:path",
+        "node:fs",
+        "node:https",
+        "node:child_process"
+      ],
+      "exports": []
+    },
+    "upgrade_v42_engine.js": {
+      "path": "upgrade_v42_engine.js",
+      "functions": [
+        "main"
+      ],
+      "classes": [
+        "KlynV42LocalEngine"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:path",
+        "node:fs",
+        "node:http",
+        "node:https",
+        "node:child_process"
+      ],
+      "exports": []
+    },
+    "upgrade_v43_engine.js": {
+      "path": "upgrade_v43_engine.js",
+      "functions": [
+        "main"
+      ],
+      "classes": [
+        "KlynV43SymbolIndexer",
+        "KlynV43Engine"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:path",
+        "node:fs",
+        "node:http",
+        "node:https",
+        "node:child_process"
+      ],
+      "exports": []
+    },
+    "upgrade_v4_engine.js": {
+      "path": "upgrade_v4_engine.js",
+      "functions": [
+        "main"
+      ],
+      "classes": [
+        "KlynV4StreamingEngine"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:path",
+        "node:fs",
+        "node:https",
+        "node:child_process"
+      ],
+      "exports": []
+    },
+    "upgrade_v50.js": {
+      "path": "upgrade_v50.js",
+      "functions": [
+        "executeFeature",
+        "startServer"
+      ],
+      "classes": [
+        "KlynSwarmEngine"
+      ],
+      "imports": [
+        "node:fs",
+        "node:http",
+        "node:path",
+        "node:fs",
+        "node:child_process",
+        "node:url",
+        "./index.js"
+      ],
+      "exports": [
+        "featureMeta",
+        "executeFeature"
+      ]
+    },
+    "upgrade_v51.js": {
+      "path": "upgrade_v51.js",
+      "functions": [
+        "processTask",
+        "fetchJSON",
+        "main"
+      ],
+      "classes": [
+        "KlynSwarmEngine"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:child_process",
+        "node:url",
+        "node:http",
+        "node:path",
+        "node:fs",
+        "node:child_process",
+        "node:url",
+        "node:http",
+        "node:child_process",
+        "node:path",
+        "node:fs"
+      ],
+      "exports": [
+        "meta",
+        "processTask",
+        "selfHealed",
+        "selfHealed"
+      ]
+    },
+    "upgrade_v52.js": {
+      "path": "upgrade_v52.js",
+      "functions": [
+        "executeTask",
+        "fetchJSON",
+        "main"
+      ],
+      "classes": [
+        "KlynSwarmEngineV52"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:child_process",
+        "node:url",
+        "node:http",
+        "node:path",
+        "node:fs",
+        "node:child_process",
+        "node:url",
+        "node:http",
+        "node:child_process",
+        "node:path",
+        "node:fs"
+      ],
+      "exports": [
+        "meta",
+        "executeTask"
+      ]
+    },
+    "upgrade_v53.js": {
+      "path": "upgrade_v53.js",
+      "functions": [
+        "executeTask",
+        "fetchJSON",
+        "main"
+      ],
+      "classes": [
+        "KlynVectorMemoryKernel",
+        "KlynSwarmEngineV53"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:child_process",
+        "node:url",
+        "node:http",
+        "node:path",
+        "node:fs",
+        "node:child_process",
+        "node:url",
+        "node:http",
+        "node:child_process",
+        "node:path",
+        "node:fs"
+      ],
+      "exports": [
+        "meta",
+        "executeTask"
+      ]
+    },
+    "upgrade_v54.js": {
+      "path": "upgrade_v54.js",
+      "functions": [
+        "runPipelineTask",
+        "fetchJSON",
+        "main"
+      ],
+      "classes": [
+        "KlynVectorMemoryKernel",
+        "KlynSwarmEngineV54"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:child_process",
+        "node:url",
+        "node:http",
+        "node:path",
+        "node:fs",
+        "node:child_process",
+        "node:url",
+        "node:http",
+        "node:child_process",
+        "node:path",
+        "node:fs"
+      ],
+      "exports": [
+        "pipelineMeta",
+        "runPipelineTask"
+      ]
+    },
+    "upgrade_v60.js": {
+      "path": "upgrade_v60.js",
+      "functions": [
+        "executeEvolvedTask",
+        "runPipelineTask",
+        "fetchJSON",
+        "main"
+      ],
+      "classes": [
+        "KlynVectorMemoryKernel",
+        "KlynSelfEvolvingEngineV60"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:child_process",
+        "node:url",
+        "node:http",
+        "node:path",
+        "node:fs",
+        "node:child_process",
+        "node:url",
+        "node:http",
+        "node:child_process",
+        "node:path",
+        "node:fs"
+      ],
+      "exports": [
+        "kernelMetadata",
+        "executeEvolvedTask",
+        "moduleMeta",
+        "runPipelineTask"
+      ]
+    },
+    "upgrade_v70.js": {
+      "path": "upgrade_v70.js",
+      "functions": [
+        "executeMatrixService",
+        "fetchJSON",
+        "main"
+      ],
+      "classes": [
+        "KlynVectorMemoryKernel",
+        "KlynMultiAgentMatrixV70"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:child_process",
+        "node:url",
+        "node:http",
+        "node:path",
+        "node:fs",
+        "node:child_process",
+        "node:url",
+        "node:http",
+        "node:child_process",
+        "node:path",
+        "node:fs"
+      ],
+      "exports": [
+        "matrixMetadata",
+        "executeMatrixService"
+      ]
+    },
+    "upgrade_v80.js": {
+      "path": "upgrade_v80.js",
+      "functions": [
+        "fetchJSON",
+        "main"
+      ],
+      "classes": [
+        "KlynVectorMemoryKernel",
+        "KlynASTWeaverEngineV80",
+        "KlynWovenKernel"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:child_process",
+        "node:url",
+        "node:http",
+        "node:path",
+        "node:fs",
+        "node:child_process",
+        "node:url",
+        "node:events",
+        "node:http",
+        "node:child_process",
+        "node:path",
+        "node:fs"
+      ],
+      "exports": [
+        "KlynWovenKernel",
+        "wovenInstance"
+      ]
+    },
+    "upgrade_v90.js": {
+      "path": "upgrade_v90.js",
+      "functions": [
+        "dispatchSwarmWorkload",
+        "fetchJSON",
+        "main"
+      ],
+      "classes": [
+        "KlynVectorMemoryKernel",
+        "KlynSelfHealingSwarmEngineV90"
+      ],
+      "imports": [
+        "node:fs",
+        "node:path",
+        "node:child_process",
+        "node:url",
+        "node:http",
+        "node:path",
+        "node:fs",
+        "node:child_process",
+        "node:url",
+        "node:http",
+        "node:child_process",
+        "node:path",
+        "node:fs"
+      ],
+      "exports": [
+        "selfHealingGuard",
+        "swarmClusterConfig",
+        "dispatchSwarmWorkload"
+      ]
+    }
+  }
+}
