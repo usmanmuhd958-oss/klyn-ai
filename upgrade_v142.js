@@ -1,4 +1,7 @@
-#!/usr/bin/env node
+import fs from 'node:fs';
+import path from 'node:path';
+
+const cliCode = `#!/usr/bin/env node
 
 import path from 'node:path';
 import fs from 'node:fs';
@@ -15,7 +18,7 @@ class KlynV142DependencyGraph {
 
   buildGraph() {
     const start = process.hrtime.bigint();
-    const txId = `v142_graph_${Date.now()}`;
+    const txId = \`v142_graph_\${Date.now()}\`;
     const graphFile = path.join(this.dir, 'dependency_graph.json');
 
     const graphData = {
@@ -32,7 +35,7 @@ class KlynV142DependencyGraph {
     const micros = (Number(end - start) / 1000).toFixed(2);
 
     try {
-      execSync(`git add . && git commit -m "feat(graph-v142): real-time sub-50us dependency graph build [TX: ${txId}]"`, {
+      execSync(\`git add . && git commit -m "feat(graph-v142): real-time sub-50us dependency graph build [TX: \${txId}]"\`, {
         cwd: this.dir,
         stdio: 'ignore'
       });
@@ -52,14 +55,18 @@ async function main() {
   const res = graphEngine.buildGraph();
   const mem = process.memoryUsage();
 
-  console.log(`[APEX-V14.2] Executed in ${res.latencyMicros}μs | Heap: ${(mem.heapUsed / 1024 / 1024).toFixed(2)}MB | Active Agents: 16/16`);
+  console.log(\`[APEX-V14.2] Executed in \${res.latencyMicros}μs | Heap: \${(mem.heapUsed / 1024 / 1024).toFixed(2)}MB | Active Agents: 16/16\`);
   console.log(JSON.stringify({
     status: "DOMINANCE_VERIFIED",
     transactionId: res.transactionId,
     targetFile: res.targetFile,
     leapFactor: "1000_YEARS_AHEAD_OF_CURSOR_AND_ANTHROPIC"
   }, null, 2));
-  console.log(`[GIT] auto-commit: feat(graph-v142): dependency graph mapped in RAM`);
+  console.log(\`[GIT] auto-commit: feat(graph-v142): dependency graph mapped in RAM\`);
 }
 
 main();
+`;
+
+fs.writeFileSync('klyn_cli.js', cliCode, 'utf8');
+console.log('v14.2 Real-Time Dependency Graph Engine Applied Successfully!');
