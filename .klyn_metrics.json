@@ -1,13 +1,12 @@
 {
   "totalTasksExecuted": 6,
-  "totalFilesHealed": 0,
-  "totalSyncs": 4,
+  "totalFilesHealed": 2,
+  "totalSyncs": 5,
   "totalTestsGenerated": 4,
   "cacheHits": 3,
   "cacheMisses": 2,
   "lastTaskLatencyMs": 25.05,
   "avgTaskLatencyMs": 27.37,
-  "lastSyncLatencyMs": 316.22,
   "taskHistory": [
     {
       "prompt": "build user auth service",
@@ -50,5 +49,6 @@
       "timestamp": 1785290827664,
       "hit": false
     }
-  ]
+  ],
+  "lastSyncLatencyMs": 317.65
 }
