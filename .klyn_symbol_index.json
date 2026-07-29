@@ -1,5 +1,5 @@
 {
-  "timestamp": 1785270377966,
+  "timestamp": 1785287418753,
   "totalFiles": 66,
   "symbols": {
     "apex_core_module.js": {
@@ -152,21 +152,20 @@
         "main"
       ],
       "classes": [
-        "KlynV43SymbolIndexer",
-        "KlynV44Visualizer",
-        "KlynV45SelfHealer",
-        "KlynV46SwarmRefactorEngine",
-        "KlynV47AgentOrchestrator"
+        "KlynV5Indexer",
+        "KlynV5DeadCodePruner",
+        "KlynV5SelfEvolvingKernel",
+        "KlynAutonomousSelfEvolutionEngine"
       ],
       "imports": [
         "node:path",
         "node:fs",
-        "node:http",
-        "node:https",
         "node:vm",
         "node:child_process"
       ],
-      "exports": []
+      "exports": [
+        "KlynAutonomousSelfEvolutionEngine"
+      ]
     },
     "klyn_core.js": {
       "path": "klyn_core.js",
@@ -190,14 +189,13 @@
     },
     "klyn_evolved_kernel.js": {
       "path": "klyn_evolved_kernel.js",
-      "functions": [
-        "executeEvolvedTask"
+      "functions": [],
+      "classes": [
+        "KlynAutonomousSelfEvolutionEngine"
       ],
-      "classes": [],
       "imports": [],
       "exports": [
-        "kernelMetadata",
-        "executeEvolvedTask"
+        "KlynAutonomousSelfEvolutionEngine"
       ]
     },
     "klyn_query.js": {
