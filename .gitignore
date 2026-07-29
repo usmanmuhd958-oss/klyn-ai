@@ -1,0 +1,16 @@
+node_modules/
+runtime/
+*.log
+*.db
+*.lock
+*.pid
+.DS_Store
+config/ai_keys.env
+config/ai_keys.env
+llama.cpp/
+runtime/
+.env.template
+create_remaining_sonnet_files.sh
+.env
+.env
+target/

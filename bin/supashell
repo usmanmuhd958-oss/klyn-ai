@@ -1,0 +1,102 @@
+#!/bin/bash
+PROJECT_ROOT="/data/data/com.termux/files/home/klyn-ai-os"
+cd "$PROJECT_ROOT"
+
+echo "👑 Klyn AI OS v25 – Enterprise Supashell"
+echo "Type 'help' for commands"
+
+show_help() {
+    echo "Commands:"
+    echo "  start    - Boot all services"
+    echo "  status   - Health check"
+    echo "  services - List running services"
+    echo "  sysinfo  - System resources (CPU, Mem, Disk)"
+    echo "  top      - Live process view"
+    echo "  agent    - Run offline template AI (e.g. 'agent password generator')"
+    echo "  edit     - AI code editing (e.g. 'edit file.js \"Add validation\"')"
+    echo "  improve  - Run autonomous self-improvement"
+    echo "  backup   - Create and rotate backups"
+    echo "  models   - Check status of all AI models"
+    echo "  project  - Manage projects (init, list, switch)"
+    echo "  help     - Show this message"
+    echo "  exit     - Exit supashell"
+}
+
+check_models() {
+    echo "🤖 Model Status:"
+    # Local DeepSeek
+    if [ -f llama.cpp/models/deepseek-coder-6.7b-instruct.Q4_K_M.gguf ] && [ -f llama.cpp/build/bin/llama-cli ]; then
+        echo "  ✅ DeepSeek-Coder-6.7B (local offline) - Ready"
+    else
+        echo "  ❌ DeepSeek-Coder-6.7B - Not fully installed"
+    fi
+    # Offline templates
+    if [ -f agents/src/local_intelligence.sh ]; then
+        echo "  ✅ Offline Template Intelligence - Active"
+    else
+        echo "  ❌ Offline Template Intelligence - Missing"
+    fi
+    # Cloud keys
+    if [ -f config/ai_keys.env ]; then
+        echo "  $(grep -q 'OPENAI_API_KEY=sk-' config/ai_keys.env 2>/dev/null && echo '✅' || echo '❌') OpenAI API Key"
+        echo "  $(grep -q 'ANTHROPIC_API_KEY=sk-ant-' config/ai_keys.env 2>/dev/null && echo '✅' || echo '❌') Anthropic API Key"
+        echo "  $(grep -q 'GEMINI_API_KEY=' config/ai_keys.env 2>/dev/null && grep -v '***REMOVED***' config/ai_keys.env 2>/dev/null | grep -q 'GEMINI_API_KEY=.' && echo '✅' || echo '❌') Gemini API Key"
+        echo "  $(grep -q 'DEEPSEEK_API_KEY=' config/ai_keys.env 2>/dev/null && grep -v '***REMOVED***' config/ai_keys.env 2>/dev/null | grep -q 'DEEPSEEK_API_KEY=.' && echo '✅' || echo '❌') DeepSeek API Key"
+    else
+        echo "  ❌ config/ai_keys.env not found (cloud models not configured)"
+    fi
+    # Copilot
+    if command -v gh >/dev/null 2>&1 && gh copilot --version >/dev/null 2>&1; then
+        echo "  ✅ GitHub Copilot - Authenticated"
+    else
+        echo "  ❌ GitHub Copilot - Not configured"
+    fi
+    echo ""
+}
+
+while true; do
+    read -r -p "supashell> " cmd args
+    case "$cmd" in
+        autopilot) bash agents/src/autonomous_orchestrator.sh & ;;
+        autopilot) bash agents/src/autonomous_orchestrator.sh & ;;
+        bestmodel) node kernel/src/services/agent_memory.js best ;;
+        recall) node kernel/src/services/agent_memory.js recall "$args" ;;
+        remember) shift; node kernel/src/services/agent_memory.js learn "$@" ;;
+        start) bash boot.sh ;;
+        status) node scripts/health_check.js ;;
+        services) for svc in api metrics admin web_editor gateway collaboration; do pgrep -f "node.*${svc}" >/dev/null && echo "$svc: RUNNING" || echo "$svc: DEAD"; done ;;
+        sysinfo) echo "CPU: $(top -bn1 | grep 'Cpu(s)' | awk '{print $2+$4}')%  Mem: $(free -m | awk '/Mem:/ {printf "%dMB free", $4}')  Disk: $(df -h /data | awk 'NR==2 {print $5 " used"}')" ;;
+        top) top -bn1 | head -15 ;;
+        agent) bash agents/src/local_intelligence.sh "$args" ;;
+        edit) bash agents/src/ai_code_editor.sh "$args" ;;
+        improve) bash agents/src/autonomous_improver.sh ;;
+        backup) bash scripts/backup_rotate.sh ;;
+        models) check_models ;;
+        project) shift; bash bin/klyn-project "$@" ;;
+        help) show_help ;;
+        exit) echo "Goodbye."; exit 0 ;;
+        "") ;; # ignore empty input
+        *) echo "Unknown command: $cmd. Type 'help' for available commands." ;;
+    esac
+done
+
+# Model switcher
+model() {
+    case "$1" in
+        use) 
+            export KLYN_MODEL="$2"
+            echo "Model set to: $KLYN_MODEL"
+            ;;
+        list)
+            echo "Available models:"
+            echo "  local     (DeepSeek‑Coder‑6.7B, offline)"
+            echo "  openai    (GPT‑5.5 Pro)"
+            echo "  anthropic (Opus 4.8)"
+            echo "  gemini    (Gemini 3.5 Pro)"
+            echo "  deepseek  (DeepSeek R1)"
+            ;;
+        *) 
+            echo "Usage: model use <name> | model list"
+            ;;
+    esac
+}
