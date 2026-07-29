@@ -1,3 +1,4 @@
+// [KLYN-V4.7-SELF-HEALED-AST-NODE: Unexpected token 'export']
 // Klyn AI OS v5.0 Swarm Generated Feature: Create high speed authentication token manager
 export const featureMeta = {
   description: "Create high speed authentication token manager",

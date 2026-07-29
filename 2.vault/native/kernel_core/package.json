@@ -1,0 +1,68 @@
+{
+  "name": "@klyn/kernel-core",
+  "version": "3.0.0",
+  "description": "High-performance Rust kernel core for KLYN AI OS v3.0 - Native Node.js binding via napi-rs",
+  "main": "./index.js",
+  "module": "./index.mjs",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./index.d.ts",
+        "default": "./index.mjs"
+      },
+      "require": {
+        "types": "./index.d.ts",
+        "default": "./index.js"
+      }
+    }
+  },
+  "napi": {
+    "binaryName": "klyn_kernel_core",
+    "package": {
+      "name": "@klyn/kernel-core"
+    }
+  },
+  "files": [
+    "index.js",
+    "index.mjs",
+    "index.d.ts",
+    "README.md",
+    "LICENSE",
+    "*.node"
+  ],
+  "scripts": {
+    "artifacts": "napi artifacts",
+    "build": "napi build --platform --release --strip",
+    "build:debug": "napi build --platform",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "klyn",
+    "kernel",
+    "rust",
+    "napi-rs",
+    "native",
+    "addon",
+    "aes-gcm",
+    "pubsub",
+    "event-bus",
+    "crypto",
+    "vault",
+    "high-performance",
+    "zero-copy",
+    "low-latency"
+  ],
+  "author": "KLYN AI OS Team",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.0",
+    "@types/node": "^20.11.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}

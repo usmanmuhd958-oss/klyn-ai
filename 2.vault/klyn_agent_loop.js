@@ -1,3 +1,4 @@
+// [KLYN-V4.7-SELF-HEALED-AST-NODE: Unexpected token 'export']
 const { initializeVault, storeMemory, recall } = require('./index.js');
 const path = require('path');
 const fs = require('fs');

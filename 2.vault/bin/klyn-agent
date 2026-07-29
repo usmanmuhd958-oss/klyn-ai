@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT="$HOME/klyn-ai-os"
+cd "$ROOT"
+
+source kernel/agents/executor.sh
+agent_loop "${1:?agent required}"

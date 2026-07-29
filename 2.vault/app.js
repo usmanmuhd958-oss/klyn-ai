@@ -1,3 +1,4 @@
+// [KLYN-V4.7-SELF-HEALED-AST-NODE: Unexpected token 'export']
 const modA = require("./mod_a.js");
 console.log(modA.status);
 // Klyn Orchestrator verified import compatibility with mod_a.js

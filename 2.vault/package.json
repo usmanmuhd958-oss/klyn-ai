@@ -1,0 +1,10 @@
+{
+  "name": "klyn-ai-os",
+  "version": "4.2.0",
+  "type": "module",
+  "description": "Autonomous AI Operating System surpassing traditional IDEs",
+  "main": "klyn_server.js",
+  "bin": {
+    "klyn": "./klyn_cli.js"
+  }
+}
