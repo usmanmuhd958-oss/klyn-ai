@@ -1,16 +1,39 @@
 {
-  "totalTasksExecuted": 1,
+  "totalTasksExecuted": 4,
   "totalFilesHealed": 0,
-  "totalSyncs": 1,
-  "lastTaskLatencyMs": 23.96,
-  "avgTaskLatencyMs": 23.96,
-  "lastSyncLatencyMs": 372.14,
+  "totalSyncs": 2,
+  "cacheHits": 2,
+  "cacheMisses": 1,
+  "lastTaskLatencyMs": 25.63,
+  "avgTaskLatencyMs": 27.26,
+  "lastSyncLatencyMs": 312.8,
   "taskHistory": [
     {
       "prompt": "build user auth service",
       "timeMs": 23.96,
       "modules": 2,
       "timestamp": 1785289503009
+    },
+    {
+      "prompt": "build user auth service",
+      "timeMs": 35.47,
+      "modules": 2,
+      "timestamp": 1785289998131,
+      "hit": false
+    },
+    {
+      "prompt": "build user auth service",
+      "timeMs": 23.99,
+      "modules": 2,
+      "timestamp": 1785290010459,
+      "hit": true
+    },
+    {
+      "prompt": "build user auth service",
+      "timeMs": 25.63,
+      "modules": 2,
+      "timestamp": 1785290355620,
+      "hit": true
     }
   ]
 }
