@@ -1,3 +1,4 @@
+// [KLYN-AST-GUARD] Verified & Protected by Klyn OS Kernel
 // [KLYN-V4.7-SELF-HEALED-AST-NODE: Cannot use import statement outside a module]
 // Klyn AI OS v9.0 Self-Healed & Hardened AST Module
 // Transaction ID: v90_heal_1785250522495

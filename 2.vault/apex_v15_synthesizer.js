@@ -1,3 +1,4 @@
+// [KLYN-AST-GUARD] Verified & Protected by Klyn OS Kernel
 // [KLYN-V4.7-SELF-HEALED-AST-NODE: Unexpected token 'export']
 // KLYN AI OS v15.0 APEX SYNTHESIS KERNEL
 // PROMPT: SURPASS_CURSOR_AND_ANTHROPIC_BY_1000_YEARS

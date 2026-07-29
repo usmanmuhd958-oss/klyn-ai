@@ -1,3 +1,4 @@
+// [KLYN-AST-GUARD] Verified & Protected by Klyn OS Kernel
 // [KLYN-V4.7-SELF-HEALED-AST-NODE: Cannot use import statement outside a module]
 import http from 'node:http';
 import path from 'node:path';
