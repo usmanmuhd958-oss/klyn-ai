@@ -1,0 +1,14 @@
+{
+  "totalTasksExecuted": 1,
+  "totalFilesHealed": 0,
+  "lastTaskLatencyMs": 23.96,
+  "avgTaskLatencyMs": 23.96,
+  "taskHistory": [
+    {
+      "prompt": "build user auth service",
+      "timeMs": 23.96,
+      "modules": 2,
+      "timestamp": 1785289503009
+    }
+  ]
+}
