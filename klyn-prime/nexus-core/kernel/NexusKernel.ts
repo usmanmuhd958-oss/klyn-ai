@@ -1,80 +1,131 @@
-import { NexusRegistry } from "../registry/PrimeRegistry";
+import { PrimeRegistry } from "../registry/PrimeRegistry";
 import { NexusBus } from "../communication/NexusBus";
-import { NexusOrchestrator } from "../orchestration/NexusOrchestrator";
 import { SystemHealth } from "../health/SystemHealth";
 import { IntelligenceTelemetry } from "../telemetry/IntelligenceTelemetry";
 
+
 export class NexusKernel {
 
-  private registry: NexusRegistry;
+  private registry: PrimeRegistry;
   private bus: NexusBus;
-  private orchestrator: NexusOrchestrator;
   private health: SystemHealth;
   private telemetry: IntelligenceTelemetry;
 
+  private running: boolean;
+
+
   constructor() {
-    this.registry = new NexusRegistry();
+
+    this.registry = new PrimeRegistry();
     this.bus = new NexusBus();
-    this.orchestrator = new NexusOrchestrator(this.bus);
     this.health = new SystemHealth();
     this.telemetry = new IntelligenceTelemetry();
+
+    this.running = false;
+
   }
 
 
-  boot() {
+  boot(): void {
+
+    if (this.running) {
+      return;
+    }
+
+
+    this.running = true;
+
 
     this.telemetry.record(
       "kernel_boot",
       {
-        status: "starting",
-        time: Date.now()
+        timestamp: Date.now()
       }
     );
 
 
-    this.health.initialize();
+    this.bus.publish(
+      "kernel.started",
+      {
+        status: "online"
+      }
+    );
 
-    this.bus.initialize();
 
-    this.orchestrator.initialize();
+    console.log(
+      "[NEXUS KERNEL] System online"
+    );
+
+  }
+
+
+
+  shutdown(): void {
+
+
+    this.running = false;
+
+
+    this.bus.publish(
+      "kernel.shutdown",
+      {
+        status:"offline"
+      }
+    );
+
+
+    console.log(
+      "[NEXUS KERNEL] Shutdown complete"
+    );
+
+  }
+
+
+
+  registerModule(module:any){
+
+    this.registry.register(module);
 
 
     this.telemetry.record(
-      "kernel_ready",
+      "module_registered",
       {
-        status:"online"
+        module: module.id
       }
     );
 
-
-    return {
-      status:"NEXUS ONLINE",
-      modules:this.registry.list()
-    };
-
   }
 
-
-  registerModule(
-    name:string,
-    module:any
-  ){
-
-    this.registry.register(
-      name,
-      module
-    );
-
-  }
 
 
   status(){
 
     return {
-      health:this.health.status(),
-      modules:this.registry.list(),
-      telemetry:this.telemetry.snapshot()
+
+      running:this.running,
+
+      modules:
+        this.registry.list(),
+
+      health:
+        this.health.check()
+
     };
+
+  }
+
+
+
+  getRegistry(){
+
+    return this.registry;
+
+  }
+
+
+  getBus(){
+
+    return this.bus;
 
   }
 
