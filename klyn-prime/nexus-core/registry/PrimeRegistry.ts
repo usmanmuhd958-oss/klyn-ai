@@ -1,54 +1,83 @@
-export class NexusRegistry {
+export interface RegisteredModule {
+  id: string;
+  name: string;
+  version: string;
+  type: string;
+  status: "active" | "inactive" | "failed";
+  capabilities: string[];
+  metadata?: Record<string, unknown>;
+}
 
 
- private modules:Map<string,any>;
+export class PrimeRegistry {
+
+  private modules: Map<string, RegisteredModule>;
+
+  constructor() {
+    this.modules = new Map();
+  }
 
 
- constructor(){
+  register(module: RegisteredModule): void {
+    this.modules.set(module.id, module);
 
-  this.modules = new Map();
-
- }
-
-
-
- register(
-  name:string,
-  instance:any
- ){
-
-  this.modules.set(
-    name,
-    instance
-  );
-
- }
+    console.log(
+      `[REGISTRY] Module registered: ${module.name}`
+    );
+  }
 
 
+  unregister(id: string): boolean {
 
- resolve(name:string){
+    return this.modules.delete(id);
 
-  return this.modules.get(name);
-
- }
-
+  }
 
 
- list(){
+  get(id: string): RegisteredModule | undefined {
 
-  return Array.from(
-    this.modules.keys()
-  );
+    return this.modules.get(id);
 
- }
+  }
 
 
+  list(): RegisteredModule[] {
 
- remove(name:string){
+    return Array.from(
+      this.modules.values()
+    );
 
-  this.modules.delete(name);
+  }
 
- }
 
+  findCapability(capability: string): RegisteredModule[] {
+
+    return this.list().filter(
+      module =>
+        module.capabilities.includes(capability)
+    );
+
+  }
+
+
+  healthReport() {
+
+    const modules = this.list();
+
+    return {
+      total: modules.length,
+
+      active:
+        modules.filter(
+          m => m.status === "active"
+        ).length,
+
+      failed:
+        modules.filter(
+          m => m.status === "failed"
+        ).length
+    };
+
+  }
 
 }
