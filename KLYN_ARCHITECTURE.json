@@ -1,0 +1,13 @@
+{
+  "name": "KLYN AI OS",
+  "version": "2.0.0",
+  "architecture": "autonomous-ai-operating-system",
+  "layers": {
+    "kernel": true,
+    "agent_runtime": true,
+    "memory_engine": true,
+    "model_router": true,
+    "workflow_engine": true,
+    "security_layer": true
+  }
+}
