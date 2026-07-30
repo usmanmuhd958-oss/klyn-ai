@@ -14,3 +14,12 @@ create_remaining_sonnet_files.sh
 .env
 .env
 target/
+
+# KLYN local runtime/state
+.klyn_config/
+.klyn_runtime/
+.klyn_state/
+
+# Local archives and generated builds
+archive/
+dist/
