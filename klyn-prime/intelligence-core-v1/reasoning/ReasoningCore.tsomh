@@ -1,0 +1,25 @@
+export class ReasoningCore {
+
+
+    reason(problem:any){
+
+        return {
+
+            problem,
+
+            steps:[
+
+                "analyze",
+
+                "plan",
+
+                "solve"
+
+            ]
+
+        };
+
+    }
+
+
+}
