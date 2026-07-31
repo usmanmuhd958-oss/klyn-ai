@@ -1,24 +1,31 @@
 /**
  * KLYN Prime World Model v2
  *
- * Global software intelligence representation layer.
+ * Software understanding and prediction foundation.
  */
 
 
-export interface Entity {
+export type EntityType =
+    | "service"
+    | "module"
+    | "agent"
+    | "database"
+    | "workflow"
+    | "dependency";
+
+
+
+export interface WorldEntity {
 
     id:string;
 
     name:string;
 
-    type:
-        | "service"
-        | "module"
-        | "agent"
-        | "database"
-        | "workflow";
+    type:EntityType;
 
-    metadata:Record<string,unknown>;
+    properties:Record<string,unknown>;
+
+    createdAt:number;
 
 }
 
@@ -26,19 +33,39 @@ export interface Entity {
 
 export interface Relationship {
 
-    from:string;
+    source:string;
 
-    to:string;
+    target:string;
 
     relation:
         | "depends_on"
         | "communicates_with"
-        | "controls"
-        | "stores";
-
-    strength:number;
+        | "contains"
+        | "produces";
 
 }
+
+
+
+
+
+
+
+export interface Prediction {
+
+    id:string;
+
+    target:string;
+
+    outcome:string;
+
+    confidence:number;
+
+    timestamp:number;
+
+}
+
+
 
 
 
@@ -48,38 +75,30 @@ export class WorldModel {
 
 
     private entities:
-        Map<string,Entity>;
+        WorldEntity[];
 
 
     private relationships:
         Relationship[];
 
 
+    private predictions:
+        Prediction[];
+
+
 
 
     constructor(){
 
-        this.entities =
-            new Map();
+        this.entities=[];
 
-        this.relationships =
-            [];
+        this.relationships=[];
 
-    }
+        this.predictions=[];
 
 
-
-
-
-
-
-    registerEntity(
-        entity:Entity
-    ){
-
-        this.entities.set(
-            entity.id,
-            entity
+        console.log(
+            "[KLYN WORLD MODEL v2] Online"
         );
 
     }
@@ -90,7 +109,26 @@ export class WorldModel {
 
 
 
-    connect(
+    observeEntity(
+        entity:WorldEntity
+    ){
+
+        this.entities.push(
+            entity
+        );
+
+
+        return entity;
+
+    }
+
+
+
+
+
+
+
+    createRelationship(
         relationship:Relationship
     ){
 
@@ -98,6 +136,9 @@ export class WorldModel {
             relationship
         );
 
+
+        return relationship;
+
     }
 
 
@@ -106,44 +147,64 @@ export class WorldModel {
 
 
 
-    understand(
-        id:string
+    findDependencies(
+        entityId:string
     ){
 
-        const entity =
-            this.entities.get(id);
+        return this.relationships.filter(
 
+            item =>
+            item.source === entityId
+            &&
+            item.relation === "depends_on"
 
-        if(!entity){
+        );
 
-            return null;
-
-        }
-
-
-
-        const connections =
-            this.relationships.filter(
-                r =>
-                r.from === id ||
-                r.to === id
-            );
+    }
 
 
 
-        return {
 
-            entity,
 
-            connections,
 
-            intelligence:
-            this.calculateImportance(
-                id
-            )
+
+    predict(
+        target:string,
+        outcome:string,
+        confidence:number
+    ){
+
+
+        const prediction:Prediction = {
+
+
+            id:
+            crypto.randomUUID(),
+
+
+            target,
+
+
+            outcome,
+
+
+            confidence,
+
+
+            timestamp:
+            Date.now()
+
 
         };
 
+
+        this.predictions.push(
+            prediction
+        );
+
+
+        return prediction;
+
     }
 
 
@@ -152,30 +213,20 @@ export class WorldModel {
 
 
 
-    private calculateImportance(
-        id:string
-    ){
-
-        const count =
-            this.relationships.filter(
-                r =>
-                r.from === id ||
-                r.to === id
-            ).length;
-
-
+    analyze(){
 
         return {
 
-            influence:
-            count,
+            entities:
+            this.entities.length,
 
 
-            score:
-            Math.min(
-                count * 10,
-                100
-            )
+            relationships:
+            this.relationships.length,
+
+
+            predictions:
+            this.predictions.length
 
         };
 
@@ -192,17 +243,20 @@ export class WorldModel {
         return {
 
             entities:
-            Array.from(
-                this.entities.values()
-            ),
+            this.entities,
 
 
             relationships:
-            this.relationships
+            this.relationships,
+
+
+            predictions:
+            this.predictions
 
         };
 
     }
+
 
 
 }
