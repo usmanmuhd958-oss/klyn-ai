@@ -1,32 +1,25 @@
 /**
- * KLYN Prime Observability Intelligence v2
+ * KLYN Prime Autonomous Observability Intelligence v2
  *
- * Enterprise reliability intelligence foundation.
+ * System reliability and monitoring intelligence.
  */
 
 
-export type SignalType =
-    | "metric"
-    | "event"
-    | "trace";
+export type MetricType =
+    | "cpu"
+    | "memory"
+    | "latency"
+    | "error-rate"
+    | "availability";
 
 
-export type HealthStatus =
-    | "healthy"
-    | "warning"
-    | "critical";
-
-
-
-export interface SystemSignal {
+export interface MetricRecord {
 
     id:string;
 
-    component:string;
+    service:string;
 
-    type:SignalType;
-
-    name:string;
+    type:MetricType;
 
     value:number;
 
@@ -36,34 +29,35 @@ export interface SystemSignal {
 
 
 
-export interface Incident {
+export interface HealthReport {
 
-    id:string;
+    service:string;
 
-    component:string;
-
-    description:string;
-
-    severity:number;
+    score:number;
 
     status:
-        | "open"
-        | "investigating"
-        | "resolved";
+        | "healthy"
+        | "warning"
+        | "critical";
 
 }
 
 
 
-export interface HealthReport {
+export interface Incident {
 
-    component:string;
+    id:string;
 
-    score:number;
+    service:string;
 
-    status:HealthStatus;
+    description:string;
 
-    recommendations:string[];
+    severity:
+        | "low"
+        | "medium"
+        | "high";
+
+    createdAt:number;
 
 }
 
@@ -76,8 +70,8 @@ export interface HealthReport {
 export class ObservabilityBrain {
 
 
-    private signals:
-        SystemSignal[];
+    private metrics:
+        MetricRecord[];
 
 
     private incidents:
@@ -88,7 +82,7 @@ export class ObservabilityBrain {
 
     constructor(){
 
-        this.signals=[];
+        this.metrics=[];
 
         this.incidents=[];
 
@@ -105,16 +99,16 @@ export class ObservabilityBrain {
 
 
 
-    ingestSignal(
-        signal:SystemSignal
+    ingestMetric(
+        metric:MetricRecord
     ){
 
-        this.signals.push(
-            signal
+        this.metrics.push(
+            metric
         );
 
 
-        return signal;
+        return metric;
 
     }
 
@@ -124,39 +118,59 @@ export class ObservabilityBrain {
 
 
 
-    detectAnomaly(
-        component:string
-    ){
+    analyzeHealth(
+        service:string
+    ):HealthReport{
 
-        const data =
-            this.signals.filter(
+
+        const records =
+            this.metrics.filter(
 
                 item =>
-                item.component === component
+                item.service === service
 
             );
 
 
-        const abnormal =
-            data.filter(
 
-                item =>
-                item.value > 90
+        const average =
+            records.length === 0
+            ?
+            100
+            :
+            records.reduce(
 
-            );
+                (sum,item)=>
+
+                sum + item.value,
+
+                0
+
+            )
+            /
+            records.length;
 
 
 
         return {
 
-            component,
-
-            anomalyDetected:
-            abnormal.length > 0,
+            service,
 
 
-            count:
-            abnormal.length
+            score:
+            average,
+
+
+            status:
+            average > 80
+            ?
+            "healthy"
+            :
+            average > 50
+            ?
+            "warning"
+            :
+            "critical"
 
         };
 
@@ -169,33 +183,8 @@ export class ObservabilityBrain {
 
 
     createIncident(
-        component:string,
-        description:string,
-        severity:number
+        incident:Incident
     ){
-
-        const incident:Incident = {
-
-
-            id:
-            crypto.randomUUID(),
-
-
-            component,
-
-
-            description,
-
-
-            severity,
-
-
-            status:
-            "open"
-
-
-        };
-
 
         this.incidents.push(
             incident
@@ -212,81 +201,19 @@ export class ObservabilityBrain {
 
 
 
-    generateHealthReport(
-        component:string
-    ):HealthReport{
-
-
-        const issues =
-            this.incidents.filter(
-
-                item =>
-                item.component === component
-
-            );
-
-
-
-        const score =
-            Math.max(
-                100 -
-                issues.length * 20,
-                0
-            );
-
-
+    systemReport(){
 
         return {
 
-            component,
-
-
-            score,
-
-
-            status:
-            score > 70
-            ?
-            "healthy"
-            :
-            score > 40
-            ?
-            "warning"
-            :
-            "critical",
-
-
-            recommendations:
-            issues.map(
-
-                item =>
-                "Investigate: " + item.description
-
-            )
-
-        };
-
-    }
-
-
-
-
-
-
-
-    snapshot(){
-
-        return {
-
-            signals:
-            this.signals,
+            metrics:
+            this.metrics,
 
 
             incidents:
             this.incidents,
 
 
-            timestamp:
+            generatedAt:
             Date.now()
 
         };
