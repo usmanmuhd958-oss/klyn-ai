@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Environment secrets
+.env
+.env.*
+!.env.example
+
+# Runtime data
+.runtime/
+.klyn/
+.klyn_state/
+.klyn_runtime/
+logs/
+
+# Build output
+dist/
+build/
+coverage/
+
+# OS files
+.DS_Store
+
+# Termux temporary
+*.tmp
+
+# Generated backups
+*.zip
+backup/
