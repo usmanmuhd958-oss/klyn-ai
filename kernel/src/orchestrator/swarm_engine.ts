@@ -1118,15 +1118,16 @@ export class SwarmEngine extends EventEmitter {
   }
 
   /**
-   * Gets agent context with caching
+   * Gets agent context with caching and backpressure
    */
   private async getAgentContext(
     descriptor: AgentTaskDescriptor,
     tokenBudget: number
   ): Promise<AgentContextPayload> {
+    this.checkMemoryPressure();
+
     const cacheKey = this.generateContextCacheKey(descriptor, tokenBudget);
     
-    // Check cache
     if (this.config.cache.enableContextCache) {
       const cached = this.contextCache.get(cacheKey);
       if (cached && !this.isCacheExpired(cached)) {
@@ -1137,7 +1138,6 @@ export class SwarmEngine extends EventEmitter {
       }
     }
     
-    // Cache miss - generate context
     this.metrics.contextBridge.cacheMisses++;
     this.metrics.contextBridge.totalContextRequests++;
     
@@ -1152,14 +1152,13 @@ export class SwarmEngine extends EventEmitter {
     this.metrics.contextBridge.totalContextWeavingTimeMs += weavingTime;
     this.metrics.contextBridge.totalTokensGenerated += payload.estimatedTokens;
     
-    // Cache the result
     if (this.config.cache.enableContextCache) {
       this.contextCache.set(cacheKey, {
         payload,
         timestamp: Date.now(),
         hits: 0,
       });
-      this.evictExpiredCacheEntries();
+      this.enforceCacheLimit();
     }
     
     this.log(
@@ -1168,6 +1167,40 @@ export class SwarmEngine extends EventEmitter {
     );
     
     return payload;
+  }
+
+  /**
+   * Checks memory pressure and degrades gracefully under constrained conditions
+   */
+  private checkMemoryPressure(): void {
+    if (typeof process !== 'undefined' && process.memoryUsage) {
+      const mem = process.memoryUsage();
+      const heapUsedMB = mem.heapUsed / 1024 / 1024;
+      const heapTotalMB = mem.heapTotal / 1024 / 1024;
+      const ratio = heapUsedMB / heapTotalMB;
+
+      if (ratio > 0.9) {
+        this.log(`Memory pressure critical: ${heapUsedMB.toFixed(1)}MB / ${heapTotalMB.toFixed(1)}MB (${(ratio * 100).toFixed(1)}%)`);
+        this.enforceCacheLimit();
+        this.contextCache.clear();
+      } else if (ratio > 0.75) {
+        this.log(`Memory pressure elevated: ${heapUsedMB.toFixed(1)}MB / ${heapTotalMB.toFixed(1)}MB (${(ratio * 100).toFixed(1)}%)`);
+        this.enforceCacheLimit();
+      }
+    }
+  }
+
+  /**
+   * Enforces cache size limit using LRU eviction via Map insertion order
+   */
+  private enforceCacheLimit(): void {
+    const maxSize = this.config.cache.maxCacheSize;
+    while (this.contextCache.size > maxSize) {
+      const firstKey = this.contextCache.keys().next().value;
+      if (firstKey) {
+        this.contextCache.delete(firstKey);
+      }
+    }
   }
 
   /* ===========================
@@ -1228,28 +1261,48 @@ export class SwarmEngine extends EventEmitter {
   }
 
   /**
-   * Executes sub-tasks in parallel
+   * Executes sub-tasks in parallel with bounded concurrency
    */
   private async executeParallel(
     subTasks: ReadonlyArray<AgentSubTask>,
     contextPayloads: Map<string, AgentContextPayload>,
     executionContext: TaskExecutionContext
   ): Promise<AgentExecutionResult[]> {
-    const results = await Promise.all(
-      subTasks.map(subTask =>
-        this.executeAgentSubTask(
-          subTask,
-          contextPayloads.get(subTask.subTaskId)!,
-          executionContext
-        )
-      )
+    const concurrency = Math.min(
+      this.config.maxConcurrentAgents,
+      subTasks.length
     );
-    
-    // Store results
+
+    const results: AgentExecutionResult[] = new Array(subTasks.length);
+    const executing: Promise<void>[] = [];
+
+    for (let i = 0; i < subTasks.length; i++) {
+      const subTask = subTasks[i];
+      const promise = this.executeAgentSubTask(
+        subTask,
+        contextPayloads.get(subTask.subTaskId)!,
+        executionContext
+      ).then(result => {
+        results[i] = result;
+      });
+
+      executing.push(promise);
+
+      if (executing.length >= concurrency) {
+        await Promise.race(executing);
+        executing.splice(
+          executing.findIndex(p => p === promise),
+          1
+        );
+      }
+    }
+
+    await Promise.all(executing);
+
     for (let i = 0; i < subTasks.length; i++) {
       executionContext.results.set(subTasks[i].subTaskId, results[i]);
     }
-    
+
     return results;
   }
 
@@ -1264,53 +1317,84 @@ export class SwarmEngine extends EventEmitter {
     const completed = new Set<string>();
     const results: AgentExecutionResult[] = [];
     const pending = [...subTasks];
-    
+    const concurrency = Math.min(this.config.maxConcurrentAgents, subTasks.length);
+
     while (pending.length > 0) {
-      // Find tasks with satisfied dependencies
       const ready = pending.filter(task => {
         if (!task.dependencies || task.dependencies.length === 0) {
           return true;
         }
         return task.dependencies.every(dep => completed.has(dep));
       });
-      
+
       if (ready.length === 0) {
         throw new Error('Circular dependency detected in sub-tasks');
       }
-      
-      // Execute ready tasks in parallel
-      const batchResults = await Promise.all(
-        ready.map(subTask =>
-          this.executeAgentSubTask(
-            subTask,
-            contextPayloads.get(subTask.subTaskId)!,
-            executionContext
-          )
-        )
+
+      const batchSize = Math.min(ready.length, concurrency);
+      const batch = ready.slice(0, batchSize);
+      const batchResults = await this.executeBatchedSubTasks(
+        batch,
+        contextPayloads,
+        executionContext
       );
-      
-      // Mark as completed and remove from pending
-      for (let i = 0; i < ready.length; i++) {
-        const subTask = ready[i];
+
+      for (let i = 0; i < batch.length; i++) {
+        const subTask = batch[i];
         const result = batchResults[i];
-        
+
         completed.add(subTask.subTaskId);
         results.push(result);
         executionContext.results.set(subTask.subTaskId, result);
-        
+
         const index = pending.indexOf(subTask);
         if (index !== -1) {
           pending.splice(index, 1);
         }
-        
-        // Stop pipeline on failure
+
         if (result.status === 'failed') {
           this.log(`Pipeline execution stopped due to failure in ${subTask.subTaskId}`);
           return results;
         }
       }
     }
-    
+
+    return results;
+  }
+
+  /**
+   * Executes a batch of sub-tasks with bounded concurrency
+   */
+  private async executeBatchedSubTasks(
+    subTasks: ReadonlyArray<AgentSubTask>,
+    contextPayloads: Map<string, AgentContextPayload>,
+    executionContext: TaskExecutionContext
+  ): Promise<AgentExecutionResult[]> {
+    const results: AgentExecutionResult[] = new Array(subTasks.length);
+    const executing: Promise<void>[] = [];
+
+    for (let i = 0; i < subTasks.length; i++) {
+      const subTask = subTasks[i];
+      const promise = this.executeAgentSubTask(
+        subTask,
+        contextPayloads.get(subTask.subTaskId)!,
+        executionContext
+      ).then(result => {
+        results[i] = result;
+      });
+
+      executing.push(promise);
+
+      if (executing.length >= this.config.maxConcurrentAgents) {
+        await Promise.race(executing);
+        executing.splice(
+          executing.findIndex(p => p === promise),
+          1
+        );
+      }
+    }
+
+    await Promise.all(executing);
     return results;
   }
 
@@ -1903,30 +1987,6 @@ export class SwarmEngine extends EventEmitter {
    */
   private isCacheExpired(entry: ContextCacheEntry): boolean {
     return Date.now() - entry.timestamp > this.config.cache.ttlMs;
-  }
-
-  /**
-   * Evicts expired cache entries
-   */
-  private evictExpiredCacheEntries(): void {
-    const now = Date.now();
-    
-    for (const [key, entry] of this.contextCache) {
-      if (now - entry.timestamp > this.config.cache.ttlMs) {
-        this.contextCache.delete(key);
-      }
-    }
-    
-    // Enforce cache size limit (LRU)
-    if (this.contextCache.size > this.config.cache.maxCacheSize) {
-      const entries = Array.from(this.contextCache.entries());
-      entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
-      
-      const toDelete = entries.slice(0, entries.length - this.config.cache.maxCacheSize);
-      for (const [key] of toDelete) {
-        this.contextCache.delete(key);
-      }
-    }
   }
 
   /**

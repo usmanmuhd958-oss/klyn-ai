@@ -7,8 +7,7 @@ export class MerkleDAGEngine {
   private pathToHash: Map<string, string> = new Map();
   
   add(data: Uint8Array, metadata: NodeMetadata, links: string[] = []): string {
-    const contentStr = Buffer.from(data).toString('utf-8');
-    const hash = HashEngine.contentHash(contentStr, links);
+    const hash = HashEngine.contentHash(data, links);
     
     if (this.nodes.has(hash)) {
       this.pathToHash.set(metadata.path, hash);

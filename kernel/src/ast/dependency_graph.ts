@@ -1,6 +1,6 @@
 // kernel/src/ast/dependency_graph.ts
 import type { DAGNode } from '../pipeline/repo_ingest.js';
-import { join, dirname, resolve, extname, sep } from 'node:path';
+import { join, dirname, resolve, extname } from 'node:path';
 
 export interface SymbolImport {
   symbol: string;
@@ -37,21 +37,18 @@ export interface CircularChain {
 
 export class ASTDependencyGraph {
   private nodes: Map<string, FileNode> = new Map();
-  private pathResolver: PathResolver = new PathResolver();
+  private pathIndex: Map<string, FileNode> = new Map();
   private rootPath: string = '';
 
   async buildFromDAG(dagRoot: DAGNode): Promise<void> {
     this.nodes.clear();
+    this.pathIndex.clear();
     this.rootPath = dagRoot.path;
-    
-    const fileNodes: Array<{ path: string; content: string; language: string; hash: string }> = [];
-    
-    this.collectFiles(dagRoot, fileNodes);
-    
-    for (const { path, content, language, hash } of fileNodes) {
+
+    for await (const { path, content, language, hash } of this.collectFiles(dagRoot)) {
       const imports = this.parseImports(content, language);
       const exports = this.parseExports(content, language);
-      
+
       const node: FileNode = {
         path,
         hash,
@@ -62,16 +59,17 @@ export class ASTDependencyGraph {
         directDependents: new Set(),
         symbolMap: new Map(),
       };
-      
+
       this.nodes.set(path, node);
+      this.pathIndex.set(path, node);
     }
-    
+
     this.resolveAllDependencies();
     this.buildSymbolMaps();
   }
 
   getDirectDependencies(filePath: string): string[] {
-    const node = this.nodes.get(filePath);
+    const node = this.pathIndex.get(filePath);
     if (!node) return [];
     return Array.from(node.directDependencies);
   }
@@ -79,22 +77,22 @@ export class ASTDependencyGraph {
   getAffectedFilesOnMutation(filePath: string): string[] {
     const affected = new Set<string>();
     const visited = new Set<string>();
-    
-    const traverse = (path: string) => {
-      if (visited.has(path)) return;
-      visited.add(path);
-      
-      const node = this.nodes.get(path);
-      if (!node) return;
-      
+    const queue = [filePath];
+
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      if (visited.has(current)) continue;
+      visited.add(current);
+
+      const node = this.pathIndex.get(current);
+      if (!node) continue;
+
       for (const dependent of node.directDependents) {
         affected.add(dependent);
-        traverse(dependent);
+        queue.push(dependent);
       }
-    };
-    
-    traverse(filePath);
-    
+    }
+
     return Array.from(affected).sort();
   }
 
@@ -103,7 +101,7 @@ export class ASTDependencyGraph {
     const visited = new Set<string>();
     const recursionStack = new Set<string>();
     const currentPath: string[] = [];
-    
+
     const dfs = (filePath: string): boolean => {
       if (recursionStack.has(filePath)) {
         const cycleStart = currentPath.indexOf(filePath);
@@ -112,100 +110,105 @@ export class ASTDependencyGraph {
         }
         return true;
       }
-      
+
       if (visited.has(filePath)) return false;
-      
+
       visited.add(filePath);
       recursionStack.add(filePath);
       currentPath.push(filePath);
-      
-      const node = this.nodes.get(filePath);
+
+      const node = this.pathIndex.get(filePath);
       if (node) {
         for (const dep of node.directDependencies) {
           dfs(dep);
         }
       }
-      
+
       currentPath.pop();
       recursionStack.delete(filePath);
-      
+
       return false;
     };
-    
-    for (const filePath of this.nodes.keys()) {
+
+    for (const filePath of this.pathIndex.keys()) {
       if (!visited.has(filePath)) {
         dfs(filePath);
       }
     }
-    
+
     return this.deduplicateCycles(cycles);
   }
 
   getAllDependencies(filePath: string, maxDepth: number = Infinity): Set<string> {
     const dependencies = new Set<string>();
     const visited = new Set<string>();
-    
-    const traverse = (path: string, depth: number) => {
-      if (depth > maxDepth || visited.has(path)) return;
+    const queue: Array<{ path: string; depth: number }> = [{ path: filePath, depth: 0 }];
+
+    while (queue.length > 0) {
+      const { path, depth } = queue.shift()!;
+      if (depth > maxDepth || visited.has(path)) continue;
       visited.add(path);
-      
-      const node = this.nodes.get(path);
-      if (!node) return;
-      
+
+      const node = this.pathIndex.get(path);
+      if (!node) continue;
+
       for (const dep of node.directDependencies) {
         dependencies.add(dep);
-        traverse(dep, depth + 1);
+        if (depth + 1 < maxDepth) {
+          queue.push({ path: dep, depth: depth + 1 });
+        }
       }
-    };
-    
-    traverse(filePath, 0);
+    }
+
     return dependencies;
   }
 
   getAllDependents(filePath: string, maxDepth: number = Infinity): Set<string> {
     const dependents = new Set<string>();
     const visited = new Set<string>();
-    
-    const traverse = (path: string, depth: number) => {
-      if (depth > maxDepth || visited.has(path)) return;
+    const queue: Array<{ path: string; depth: number }> = [{ path: filePath, depth: 0 }];
+
+    while (queue.length > 0) {
+      const { path, depth } = queue.shift()!;
+      if (depth > maxDepth || visited.has(path)) continue;
       visited.add(path);
-      
-      const node = this.nodes.get(path);
-      if (!node) return;
-      
+
+      const node = this.pathIndex.get(path);
+      if (!node) continue;
+
       for (const dependent of node.directDependents) {
         dependents.add(dependent);
-        traverse(dependent, depth + 1);
+        if (depth + 1 < maxDepth) {
+          queue.push({ path: dependent, depth: depth + 1 });
+        }
       }
-    };
-    
-    traverse(filePath, 0);
+    }
+
     return dependents;
   }
 
   getSymbolProviders(symbol: string): string[] {
     const providers: string[] = [];
-    
-    for (const [path, node] of this.nodes.entries()) {
-      const hasExport = node.exports.some(exp => 
-        exp.symbol === symbol || exp.symbol === 'default'
-      );
-      
+
+    for (const [path, node] of this.pathIndex.entries()) {
+      const hasExport = node.exports.some(exp => exp.symbol === symbol || exp.symbol === 'default');
       if (hasExport) {
         providers.push(path);
       }
     }
-    
+
     return providers;
   }
 
   getSymbolConsumers(filePath: string, symbol: string): string[] {
     const consumers: string[] = [];
-    
-    for (const [path, node] of this.nodes.entries()) {
-      for (const imp of node.imports) {
-        const resolvedSource = this.pathResolver.resolve(imp.source, dirname(path), this.getAllPaths());
-        
+    const node = this.pathIndex.get(filePath);
+    if (!node) return consumers;
+
+    for (const [path, otherNode] of this.pathIndex.entries()) {
+      if (path === filePath) continue;
+      for (const imp of otherNode.imports) {
+        const resolvedSource = this.resolveImport(imp.source, dirname(path));
         if (resolvedSource === filePath) {
           if (imp.symbol === symbol || imp.isNamespace || imp.isDefault) {
             consumers.push(path);
@@ -214,89 +217,91 @@ export class ASTDependencyGraph {
         }
       }
     }
-    
+
     return consumers;
   }
 
   getFileNode(filePath: string): FileNode | undefined {
-    return this.nodes.get(filePath);
+    return this.pathIndex.get(filePath);
+  }
+
+  getAllFilePaths(): string[] {
+    return Array.from(this.pathIndex.keys());
   }
 
   topologicalSort(): string[] {
     const result: string[] = [];
     const visited = new Set<string>();
     const temp = new Set<string>();
-    
+
     const visit = (path: string): boolean => {
       if (temp.has(path)) return false;
       if (visited.has(path)) return true;
-      
+
       temp.add(path);
-      
-      const node = this.nodes.get(path);
+
+      const node = this.pathIndex.get(path);
       if (node) {
         for (const dep of node.directDependencies) {
           if (!visit(dep)) return false;
         }
       }
-      
+
       temp.delete(path);
       visited.add(path);
       result.push(path);
-      
+
       return true;
     };
-    
-    for (const path of this.nodes.keys()) {
+
+    for (const path of this.pathIndex.keys()) {
       if (!visited.has(path)) {
         if (!visit(path)) {
           return [];
         }
       }
     }
-    
-    return result;
+
+    return result.reverse();
   }
 
   getStats() {
     let totalImports = 0;
     let totalExports = 0;
-    let filesWithCircular = 0;
-    
     const circular = new Set(this.findCircularImports().flat());
-    
-    for (const node of this.nodes.values()) {
+    let filesWithCircular = 0;
+
+    for (const node of this.pathIndex.values()) {
       totalImports += node.imports.length;
       totalExports += node.exports.length;
       if (circular.has(node.path)) filesWithCircular++;
     }
-    
+
     return {
-      totalFiles: this.nodes.size,
+      totalFiles: this.pathIndex.size,
       totalImports,
       totalExports,
-      avgImportsPerFile: totalImports / this.nodes.size,
-      avgExportsPerFile: totalExports / this.nodes.size,
+      avgImportsPerFile: totalImports / this.pathIndex.size,
+      avgExportsPerFile: totalExports / this.pathIndex.size,
       filesWithCircularDeps: filesWithCircular,
     };
   }
 
-  private collectFiles(
-    node: DAGNode,
-    result: Array<{ path: string; content: string; language: string; hash: string }>
-  ): void {
+  private async *collectFiles(
+    node: DAGNode
+  ): AsyncGenerator<{ path: string; content: string; language: string; hash: string }> {
     if (node.type === 'file' && node.content && node.language) {
       const content = Buffer.from(node.content).toString('utf-8');
-      result.push({
+      yield {
         path: node.path,
         content,
         language: node.language,
         hash: node.hash,
-      });
+      };
     }
-    
+
     for (const child of node.children) {
-      this.collectFiles(child, result);
+      yield* this.collectFiles(child);
     }
   }
 
@@ -327,11 +332,11 @@ export class ASTDependencyGraph {
   private parseJSImports(content: string): SymbolImport[] {
     const imports: SymbolImport[] = [];
     const lines = content.split('\n');
-    
+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const lineNum = i + 1;
-      
+
       let match = /import\s+(\w+)\s+from\s+['"]([^'"]+)['"]/g.exec(line);
       if (match) {
         imports.push({
@@ -343,7 +348,7 @@ export class ASTDependencyGraph {
           isDynamic: false,
         });
       }
-      
+
       match = /import\s+\*\s+as\s+(\w+)\s+from\s+['"]([^'"]+)['"]/g.exec(line);
       if (match) {
         imports.push({
@@ -355,18 +360,18 @@ export class ASTDependencyGraph {
           isDynamic: false,
         });
       }
-      
+
       const namedImportRegex = /import\s+\{([^}]+)\}\s+from\s+['"]([^'"]+)['"]/g;
       match = namedImportRegex.exec(line);
       if (match) {
         const source = match[2];
         const symbols = match[1].split(',').map(s => s.trim());
-        
+
         for (const symbolStr of symbols) {
           const parts = symbolStr.split(/\s+as\s+/);
           const symbol = parts[0].trim();
           const alias = parts[1]?.trim();
-          
+
           imports.push({
             symbol,
             alias,
@@ -378,18 +383,18 @@ export class ASTDependencyGraph {
           });
         }
       }
-      
+
       const requireRegex = /(?:const|let|var)\s+(?:\{([^}]+)\}|(\w+))\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
       match = requireRegex.exec(line);
       if (match) {
         const source = match[3];
-        
+
         if (match[1]) {
           const symbols = match[1].split(',').map(s => s.trim());
           for (const symbolStr of symbols) {
             const parts = symbolStr.split(':');
             const symbol = parts[0].trim();
-            
+
             imports.push({
               symbol,
               source,
@@ -410,7 +415,7 @@ export class ASTDependencyGraph {
           });
         }
       }
-      
+
       const dynamicImportRegex = /import\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
       match = dynamicImportRegex.exec(line);
       if (match) {
@@ -423,17 +428,17 @@ export class ASTDependencyGraph {
           isDynamic: true,
         });
       }
-      
+
       const reExportRegex = /export\s+\{([^}]+)\}\s+from\s+['"]([^'"]+)['"]/g;
       match = reExportRegex.exec(line);
       if (match) {
         const source = match[2];
         const symbols = match[1].split(',').map(s => s.trim());
-        
+
         for (const symbolStr of symbols) {
           const parts = symbolStr.split(/\s+as\s+/);
           const symbol = parts[0].trim();
-          
+
           imports.push({
             symbol,
             source,
@@ -444,7 +449,7 @@ export class ASTDependencyGraph {
           });
         }
       }
-      
+
       match = /export\s+\*\s+from\s+['"]([^'"]+)['"]/g.exec(line);
       if (match) {
         imports.push({
@@ -457,21 +462,21 @@ export class ASTDependencyGraph {
         });
       }
     }
-    
+
     return imports;
   }
 
   private parseJSExports(content: string): SymbolExport[] {
     const exports: SymbolExport[] = [];
     const lines = content.split('\n');
-    
+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const lineNum = i + 1;
-      
+
       const namedExportRegex = /export\s+(?:const|let|var|function|class|interface|type|enum)\s+(\w+)/g;
       let match: RegExpExecArray | null;
-      
+
       while ((match = namedExportRegex.exec(line)) !== null) {
         exports.push({
           symbol: match[1],
@@ -479,7 +484,7 @@ export class ASTDependencyGraph {
           isDefault: false,
         });
       }
-      
+
       const defaultExportRegex = /export\s+default\s+(?:(?:function|class)\s+)?(\w+)?/g;
       match = defaultExportRegex.exec(line);
       if (match) {
@@ -489,17 +494,17 @@ export class ASTDependencyGraph {
           isDefault: true,
         });
       }
-      
+
       const exportListRegex = /export\s+\{([^}]+)\}(?:\s+from\s+['"]([^'"]+)['"])?/g;
       match = exportListRegex.exec(line);
       if (match) {
         const symbols = match[1].split(',').map(s => s.trim());
         const reExportFrom = match[2];
-        
+
         for (const symbolStr of symbols) {
           const parts = symbolStr.split(/\s+as\s+/);
           const symbol = parts.length > 1 ? parts[1].trim() : parts[0].trim();
-          
+
           exports.push({
             symbol,
             line: lineNum,
@@ -508,7 +513,7 @@ export class ASTDependencyGraph {
           });
         }
       }
-      
+
       const moduleExportsRegex = /module\.exports\s*=\s*(\w+)/g;
       match = moduleExportsRegex.exec(line);
       if (match) {
@@ -518,7 +523,7 @@ export class ASTDependencyGraph {
           isDefault: true,
         });
       }
-      
+
       const moduleExportsObjRegex = /module\.exports\.(\w+)/g;
       while ((match = moduleExportsObjRegex.exec(line)) !== null) {
         exports.push({
@@ -527,7 +532,7 @@ export class ASTDependencyGraph {
           isDefault: false,
         });
       }
-      
+
       const exportsObjRegex = /exports\.(\w+)/g;
       while ((match = exportsObjRegex.exec(line)) !== null) {
         exports.push({
@@ -537,23 +542,24 @@ export class ASTDependencyGraph {
         });
       }
     }
-    
+
     return exports;
   }
 
   private resolveAllDependencies(): void {
-    const allPaths = this.getAllPaths();
-    
-    for (const [filePath, node] of this.nodes.entries()) {
+    const allPaths = Array.from(this.pathIndex.keys());
+    const pathSet = new Set(allPaths);
+
+    for (const [filePath, node] of this.pathIndex.entries()) {
       const fileDir = dirname(filePath);
-      
+
       for (const imp of node.imports) {
-        const resolvedPath = this.pathResolver.resolve(imp.source, fileDir, allPaths);
-        
-        if (resolvedPath && this.nodes.has(resolvedPath)) {
+        const resolvedPath = this.resolveImport(imp.source, fileDir, pathSet);
+
+        if (resolvedPath && this.pathIndex.has(resolvedPath)) {
           node.directDependencies.add(resolvedPath);
-          
-          const depNode = this.nodes.get(resolvedPath)!;
+
+          const depNode = this.pathIndex.get(resolvedPath)!;
           depNode.directDependents.add(filePath);
         }
       }
@@ -561,106 +567,93 @@ export class ASTDependencyGraph {
   }
 
   private buildSymbolMaps(): void {
-    for (const [filePath, node] of this.nodes.entries()) {
+    const allPaths = Array.from(this.pathIndex.keys());
+    const pathSet = new Set(allPaths);
+
+    for (const [filePath, node] of this.pathIndex.entries()) {
       const symbolMap = new Map<string, string[]>();
-      
+
       for (const imp of node.imports) {
         const fileDir = dirname(filePath);
-        const resolvedPath = this.pathResolver.resolve(imp.source, fileDir, this.getAllPaths());
-        
+        const resolvedPath = this.resolveImport(imp.source, fileDir, pathSet);
+
         if (resolvedPath) {
           const symbols = symbolMap.get(resolvedPath) || [];
-          
+
           if (imp.isNamespace) {
             symbols.push('*');
           } else {
             symbols.push(imp.symbol);
           }
-          
+
           symbolMap.set(resolvedPath, symbols);
         }
       }
-      
+
       node.symbolMap = symbolMap;
     }
   }
 
-  private getAllPaths(): string[] {
-    return Array.from(this.nodes.keys());
-  }
-
-  private deduplicateCycles(cycles: string[][]): string[][] {
-    const normalized = cycles.map(cycle => {
-      const sorted = [...cycle].sort();
-      return sorted.join('|');
-    });
-    
-    const unique = new Set(normalized);
-    
-    return Array.from(unique).map(str => str.split('|'));
-  }
-}
-
-class PathResolver {
-  private static readonly EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json'];
-  
-  resolve(importPath: string, fromDir: string, allPaths: string[]): string | null {
+  private resolveImport(
+    importPath: string,
+    fromDir: string,
+    allPathsSet?: Set<string>
+  ): string | null {
     if (this.isNodeModule(importPath)) {
       return null;
     }
-    
+
     if (!importPath.startsWith('.') && !importPath.startsWith('/')) {
       return null;
     }
-    
+
     const basePath = this.joinPaths(fromDir, importPath);
-    
     const candidates = this.generateCandidates(basePath);
-    
+    const allPaths = allPathsSet || new Set(this.pathIndex.keys());
+
     for (const candidate of candidates) {
-      if (allPaths.includes(candidate)) {
+      if (allPaths.has(candidate)) {
         return candidate;
       }
     }
-    
+
     return null;
   }
-  
+
   private isNodeModule(importPath: string): boolean {
     return !importPath.startsWith('.') && !importPath.startsWith('/');
   }
-  
+
   private generateCandidates(basePath: string): string[] {
     const candidates: string[] = [];
-    
     const normalizedBase = this.normalizePath(basePath);
-    
     const ext = extname(normalizedBase);
+
     if (ext) {
       candidates.push(normalizedBase);
       return candidates;
     }
-    
-    for (const extension of PathResolver.EXTENSIONS) {
+
+    for (const extension of EXTENSIONS) {
       candidates.push(normalizedBase + extension);
     }
-    
-    for (const extension of PathResolver.EXTENSIONS) {
+
+    for (const extension of EXTENSIONS) {
       candidates.push(this.joinPaths(normalizedBase, 'index' + extension));
     }
-    
+
     return candidates;
   }
-  
+
   private joinPaths(...parts: string[]): string {
     const joined = parts.join('/');
     return this.normalizePath(joined);
   }
-  
+
   private normalizePath(path: string): string {
     const parts = path.split('/');
     const normalized: string[] = [];
-    
+
     for (const part of parts) {
       if (part === '..') {
         normalized.pop();
@@ -668,7 +661,20 @@ class PathResolver {
         normalized.push(part);
       }
     }
-    
+
     return normalized.join('/') || '.';
   }
+
+  private deduplicateCycles(cycles: string[][]): string[][] {
+    const normalized = cycles.map(cycle => {
+      const sorted = [...cycle].sort();
+      return sorted.join('|');
+    });
+
+    const unique = new Set(normalized);
+
+    return Array.from(unique).map(str => str.split('|'));
+  }
 }
+
+const EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json'];

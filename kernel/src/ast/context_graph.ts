@@ -1,4 +1,4 @@
-// FILE: kernel/src/ast/context_graph.ts
+// kernel/src/ast/context_graph.ts
 
 interface SymbolNode {
   name: string;
@@ -22,6 +22,7 @@ interface ASTGraph {
   nodes: Map<string, SymbolNode>;
   fileSymbols: Map<string, string[]>;
   reverseImports: Map<string, Set<string>>;
+  symbolIndex: Map<string, SymbolNode>;
 }
 
 interface ContextResolutionResult {
@@ -40,23 +41,26 @@ interface ParsedImport {
 
 class ASTContextGraphEngine {
   private readonly estimatedTokensPerLine: number;
+  private symbolIndex: Map<string, SymbolNode> = new Map();
 
   constructor(estimatedTokensPerLine: number = 4) {
     this.estimatedTokensPerLine = estimatedTokensPerLine;
   }
 
-  buildGraph(files: Map<string, string>): ASTGraph {
+  async buildGraph(files: Map<string, string>): Promise<ASTGraph> {
     const nodes = new Map<string, SymbolNode>();
     const fileSymbols = new Map<string, string[]>();
     const reverseImports = new Map<string, Set<string>>();
+    this.symbolIndex.clear();
 
     for (const [filePath, content] of files.entries()) {
-      const symbols = this.parseFile(filePath, content);
+      const symbols = await this.parseFile(filePath, content);
       const symbolNames: string[] = [];
 
       for (const symbol of symbols) {
         const key = this.getSymbolKey(symbol.name, filePath);
         nodes.set(key, symbol);
+        this.symbolIndex.set(symbol.name, symbol);
         symbolNames.push(key);
 
         for (const dep of symbol.dependencies) {
@@ -72,7 +76,7 @@ class ASTContextGraphEngine {
 
     this.linkDependents(nodes);
 
-    return { nodes, fileSymbols, reverseImports };
+    return { nodes, fileSymbols, reverseImports, symbolIndex: this.symbolIndex };
   }
 
   resolveContextForSymbol(
@@ -80,7 +84,7 @@ class ASTContextGraphEngine {
     maxTokenBudget: number,
     graph: ASTGraph
   ): ContextResolutionResult {
-    const primarySymbol = this.findSymbol(symbolName, graph);
+    const primarySymbol = graph.symbolIndex.get(symbolName) || this.findSymbol(symbolName, graph);
 
     if (!primarySymbol) {
       return {
@@ -110,7 +114,7 @@ class ASTContextGraphEngine {
 
       visited.add(depName);
 
-      const depSymbol = this.findSymbol(depName, graph);
+      const depSymbol = graph.symbolIndex.get(depName) || this.findSymbol(depName, graph);
 
       if (!depSymbol) {
         continue;
@@ -142,63 +146,76 @@ class ASTContextGraphEngine {
     };
   }
 
-  private parseFile(filePath: string, content: string): SymbolNode[] {
-    const symbols: SymbolNode[] = [];
-    const lines = content.split('\n');
-    let i = 0;
+  private async parseFile(filePath: string, content: string): Promise<SymbolNode[]> {
+    return new Promise((resolve) => {
+      const symbols: SymbolNode[] = [];
+      const lines = content.split('\n');
+      let i = 0;
 
-    while (i < lines.length) {
-      const line = lines[i].trim();
+      const processChunk = () => {
+        const chunkSize = 50;
+        const end = Math.min(i + chunkSize, lines.length);
 
-      if (this.isComment(line) || line.length === 0) {
-        i++;
-        continue;
-      }
+        while (i < end) {
+          const line = lines[i].trim();
 
-      const classMatch = this.matchClass(line);
-      if (classMatch) {
-        const symbol = this.parseClass(lines, i, filePath, classMatch);
-        symbols.push(symbol);
-        i = symbol.endLine;
-        continue;
-      }
+          if (this.isComment(line) || line.length === 0) {
+            i++;
+            continue;
+          }
 
-      const interfaceMatch = this.matchInterface(line);
-      if (interfaceMatch) {
-        const symbol = this.parseInterface(lines, i, filePath, interfaceMatch);
-        symbols.push(symbol);
-        i = symbol.endLine;
-        continue;
-      }
+          const classMatch = this.matchClass(line);
+          if (classMatch) {
+            const symbol = this.parseClass(lines, i, filePath, classMatch);
+            symbols.push(symbol);
+            i = symbol.endLine;
+            continue;
+          }
 
-      const typeMatch = this.matchType(line);
-      if (typeMatch) {
-        const symbol = this.parseType(lines, i, filePath, typeMatch);
-        symbols.push(symbol);
-        i = symbol.endLine;
-        continue;
-      }
+          const interfaceMatch = this.matchInterface(line);
+          if (interfaceMatch) {
+            const symbol = this.parseInterface(lines, i, filePath, interfaceMatch);
+            symbols.push(symbol);
+            i = symbol.endLine;
+            continue;
+          }
 
-      const functionMatch = this.matchFunction(line);
-      if (functionMatch) {
-        const symbol = this.parseFunction(lines, i, filePath, functionMatch);
-        symbols.push(symbol);
-        i = symbol.endLine;
-        continue;
-      }
+          const typeMatch = this.matchType(line);
+          if (typeMatch) {
+            const symbol = this.parseType(lines, i, filePath, typeMatch);
+            symbols.push(symbol);
+            i = symbol.endLine;
+            continue;
+          }
 
-      const arrowMatch = this.matchArrowFunction(line);
-      if (arrowMatch) {
-        const symbol = this.parseArrowFunction(lines, i, filePath, arrowMatch);
-        symbols.push(symbol);
-        i = symbol.endLine;
-        continue;
-      }
+          const functionMatch = this.matchFunction(line);
+          if (functionMatch) {
+            const symbol = this.parseFunction(lines, i, filePath, functionMatch);
+            symbols.push(symbol);
+            i = symbol.endLine;
+            continue;
+          }
 
-      i++;
-    }
+          const arrowMatch = this.matchArrowFunction(line);
+          if (arrowMatch) {
+            const symbol = this.parseArrowFunction(lines, i, filePath, arrowMatch);
+            symbols.push(symbol);
+            i = symbol.endLine;
+            continue;
+          }
 
-    return symbols;
+          i++;
+        }
+
+        if (i < lines.length) {
+          setTimeout(processChunk, 0);
+        } else {
+          resolve(symbols);
+        }
+      };
+
+      processChunk();
+    });
   }
 
   private matchClass(line: string): RegExpMatchArray | null {
@@ -506,12 +523,7 @@ class ASTContextGraphEngine {
   }
 
   private findSymbol(symbolName: string, graph: ASTGraph): SymbolNode | null {
-    for (const [key, node] of graph.nodes.entries()) {
-      if (node.name === symbolName) {
-        return node;
-      }
-    }
-    return null;
+    return graph.symbolIndex.get(symbolName) || null;
   }
 
   private findSymbolInMap(symbolName: string, nodes: Map<string, SymbolNode>): SymbolNode | null {

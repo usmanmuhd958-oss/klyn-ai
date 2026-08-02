@@ -7,6 +7,7 @@ export interface ScanOptions {
   ignore?: string[];
   maxDepth?: number;
   maxFileSize?: number;
+  poolSize?: number;
 }
 
 export class FileScanner {
@@ -15,6 +16,8 @@ export class FileScanner {
     '.next', '.cache', 'out', 'target', '__pycache__', '.venv', 'venv'
   ];
 
+  private static readonly POOL_SIZE = 8;
+
   static async *scan(
     rootPath: string,
     options: ScanOptions = {}
@@ -22,14 +25,19 @@ export class FileScanner {
     const {
       ignore = this.DEFAULT_IGNORE,
       maxDepth = 20,
-      maxFileSize = 5 * 1024 * 1024, // 5MB limit for strict memory target
+      maxFileSize = 5 * 1024 * 1024,
+      poolSize = this.POOL_SIZE,
     } = options;
 
     const ignoreSet = new Set(ignore);
-    
-    // Zero-Copy Pipeline: SharedArrayBuffer pool
-    const sab = new SharedArrayBuffer(maxFileSize);
-    const poolView = new Uint8Array(sab);
+    const bufferPool: Uint8Array[] = [];
+    const poolSizeBytes = Math.min(maxFileSize, 2 * 1024 * 1024);
+
+    for (let i = 0; i < poolSize; i++) {
+      bufferPool.push(new Uint8Array(poolSizeBytes));
+    }
+
+    let poolIndex = 0;
 
     async function* walk(dir: string, depth: number): AsyncGenerator<{ path: string; content: Uint8Array; metadata: NodeMetadata }> {
       if (depth > maxDepth) return;
@@ -47,10 +55,13 @@ export class FileScanner {
         } else if (entry.isFile()) {
           if (stats.size > maxFileSize || stats.size === 0) continue;
 
+          const buffer = bufferPool[poolIndex % poolSize];
+          poolIndex++;
+
           let fileHandle;
           try {
             fileHandle = await open(fullPath, 'r');
-            const { bytesRead } = await fileHandle.read(poolView, 0, stats.size, 0);
+            const { bytesRead } = await fileHandle.read(buffer, 0, Math.min(stats.size, buffer.length), 0);
             
             const metadata: NodeMetadata = {
               path: fullPath,
@@ -59,7 +70,7 @@ export class FileScanner {
               type: 'file',
             };
             
-            yield { path: fullPath, content: poolView.subarray(0, bytesRead), metadata };
+            yield { path: fullPath, content: buffer.subarray(0, bytesRead), metadata };
           } finally {
             if (fileHandle) await fileHandle.close();
           }

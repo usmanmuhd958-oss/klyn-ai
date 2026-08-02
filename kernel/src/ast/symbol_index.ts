@@ -133,10 +133,9 @@ export class SymbolIndex {
   }
 
   private *getAllFiles(): Generator<string> {
-    const stats = this.graph.getStats();
-    for (let i = 0; i < stats.totalFiles; i++) {
-      const node = Array.from(this.graph['nodes'].values())[i];
-      if (node) yield node.path;
+    const allPaths = this.graph.getAllFilePaths();
+    for (const path of allPaths) {
+      yield path;
     }
   }
 }

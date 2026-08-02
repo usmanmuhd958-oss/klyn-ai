@@ -7,7 +7,7 @@ export class HashEngine {
   static hash(data: Uint8Array | string): string {
     const buffer = typeof data === 'string' 
       ? Buffer.from(data, 'utf-8') 
-      : Buffer.from(data);
+      : data;
     return createHash(this.HASH_ALGO).update(buffer).digest('hex');
   }
   
@@ -15,7 +15,15 @@ export class HashEngine {
     return this.hash(hashes.join(''));
   }
   
-  static contentHash(content: string, links: string[]): string {
-    return this.hash(content + links.sort().join(''));
+  static contentHash(content: Uint8Array | string, links: string[]): string {
+    const linkStr = links.sort().join(',');
+    if (typeof content === 'string') {
+      return this.hash(content + linkStr);
+    }
+    const combined = Buffer.concat([
+      content,
+      Buffer.from(linkStr, 'utf-8'),
+    ]);
+    return this.hash(combined);
   }
 }
