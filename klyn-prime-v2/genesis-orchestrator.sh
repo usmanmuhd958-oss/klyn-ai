@@ -6,67 +6,97 @@
 # Standard: Enterprise Production Grade Shell Script
 # ==============================================================================
 
-set -euo pipefail
+set -uo pipefail
 
 # ------------------------------------------------------------------------------
 # ENVIRONMENT & DYNAMIC PATH RESOLUTION
 # ------------------------------------------------------------------------------
-# Dynamic temporary directory fallback for Termux compatibility
 readonly BASE_TMP_DIR="${TMPDIR:-/tmp}"
 readonly LOG_DIR="${BASE_TMP_DIR}/genesis"
 readonly LOG_FILE="${LOG_DIR}/genesis_swarm.log"
-readonly LOG_MAX_BYTES=10485760          # 10MB Circular Log limit
+readonly LOG_MAX_BYTES=10485760
 readonly FIFO_PATH="${LOG_DIR}/genesis_fifo_$$"
+readonly SHUTDOWN_FLAG="${LOG_DIR}/genesis_shutdown_$$"
 
-# Ensure environment directories exist prior to process binding
 mkdir -p "${LOG_DIR}"
 
-# Performance & Memory Bounds
-readonly MAX_CONCURRENT_WORKERS=8        # Active concurrent worker threads
-readonly TOTAL_SWARM_TARGET=1000         # Scaled agent limit
-readonly MAX_MEMORY_PER_PROCESS=512      # Memory limit per agent in MB
-readonly MAX_RETRIES_PER_TASK=3          # Circuit breaker failure limit
+readonly MAX_CONCURRENT_WORKERS=8
+readonly TOTAL_SWARM_TARGET=1000
+readonly MAX_MEMORY_PER_PROCESS=512
+readonly MAX_RETRIES_PER_TASK=3
+readonly SHUTDOWN_TIMEOUT=30
 
-# Environment Enforcement
 export NODE_OPTIONS="--max-old-space-size=${MAX_MEMORY_PER_PROCESS}"
 export UV_THREADPOOL_SIZE="${MAX_CONCURRENT_WORKERS}"
 
-# Guard state for shutdown sequence
 IS_CLEANING_UP=0
+WORKER_PIDS=()
 
-# ------------------------------------------------------------------------------
-# SIGNAL TRAPPING & CLEANUP HANDLER (POSIX COMPLIANT)
-# ------------------------------------------------------------------------------
 cleanup() {
     if [ "${IS_CLEANING_UP}" -eq 1 ]; then
         return 0
     fi
     IS_CLEANING_UP=1
 
-    # Unbind interruption signals
-    trap - INT TERM
+    trap - INT TERM HUP QUIT USR1 USR2 ERR EXIT
 
     echo ""
     echo "[GENESIS ENGINE] Interruption signal received. Initiating graceful shutdown..."
 
-    # Close FIFO File Descriptor safely
-    exec 3>&- 2>/dev/null || true
-    rm -f "${FIFO_PATH}" 2>/dev/null || true
+    touch "${SHUTDOWN_FLAG}"
 
-    # Terminate process subshell group safely
-    pkill -P $$ 2>/dev/null || true
+    exec 3>&- 2>/dev/null || true
+
+    local pid
+    for pid in "${WORKER_PIDS[@]}"; do
+        if kill -0 "${pid}" 2>/dev/null; then
+            kill "${pid}" 2>/dev/null || true
+        fi
+    done
+
+    local wait_count=0
+    while [ "${wait_count}" -lt "${SHUTDOWN_TIMEOUT}" ]; do
+        local remaining=0
+        for pid in "${WORKER_PIDS[@]}"; do
+            if kill -0 "${pid}" 2>/dev/null; then
+                remaining=$((remaining + 1))
+            fi
+        done
+        if [ "${remaining}" -eq 0 ]; then
+            break
+        fi
+        sleep 1
+        wait_count=$((wait_count + 1))
+    done
+
+    for pid in "${WORKER_PIDS[@]}"; do
+        if kill -0 "${pid}" 2>/dev/null; then
+            kill -9 "${pid}" 2>/dev/null || true
+        fi
+    done
+
+    rm -f "${FIFO_PATH}" 2>/dev/null || true
+    rm -f "${SHUTDOWN_FLAG}" 2>/dev/null || true
 
     echo "[GENESIS ENGINE] All background workers terminated cleanly. System state saved."
     exit 0
 }
 
-# Bind explicit signal interruptions only (Prevents EXIT cascade loops)
-trap cleanup INT TERM
+trap cleanup INT TERM HUP QUIT USR1 USR2 ERR EXIT
 
 # ------------------------------------------------------------------------------
 # LOG ROTATION & AUDIT ENGINE
 # ------------------------------------------------------------------------------
+LOG_ROTATE_INTERVAL=100
+LOG_MESSAGE_COUNT=0
+
 rotate_logs_if_needed() {
+    LOG_MESSAGE_COUNT=$((LOG_MESSAGE_COUNT + 1))
+    if [ "${LOG_MESSAGE_COUNT}" -lt "${LOG_ROTATE_INTERVAL}" ]; then
+        return 0
+    fi
+    LOG_MESSAGE_COUNT=0
+
     if [ -f "${LOG_FILE}" ]; then
         local file_size
         file_size=$(stat -c%s "${LOG_FILE}" 2>/dev/null || stat -f%z "${LOG_FILE}" 2>/dev/null || echo 0)
@@ -82,7 +112,7 @@ log_message() {
     local message="$2"
     local timestamp
     timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    echo "[${timestamp}] [${level}] ${message}" | tee -a "${LOG_FILE}"
+    echo "[${timestamp}] [${level}] ${message}" >> "${LOG_FILE}"
     rotate_logs_if_needed
 }
 
@@ -90,6 +120,7 @@ log_message() {
 # SEMAPHORE INITIALIZATION (TOKEN BUCKET CONCURRENCY CONTROL)
 # ------------------------------------------------------------------------------
 init_semaphore() {
+    exec 3>&- 2>/dev/null || true
     rm -f "${FIFO_PATH}"
     mkfifo "${FIFO_PATH}"
     exec 3<>"${FIFO_PATH}"
@@ -109,10 +140,13 @@ execute_agent_task() {
     local success=0
 
     while [ "${retry_count}" -lt "${MAX_RETRIES_PER_TASK}" ]; do
-        if {
-            # Core Agent Workload Target Execution
-            sleep 0.02
-        } >> "${LOG_FILE}" 2>&1; then
+        if [ -f "${SHUTDOWN_FLAG}" ]; then
+            log_message "WARN" "Agent [${agent_id}] aborted: shutdown in progress."
+            echo >&3
+            return 1
+        fi
+
+        if sleep 0.02; then
             success=1
             break
         else
@@ -128,7 +162,10 @@ execute_agent_task() {
         log_message "ERROR" "Agent [${agent_id}] circuit breaker tripped. Task aborted."
     fi
 
-    # Release worker token back to queue
+    if [ -f "${SHUTDOWN_FLAG}" ]; then
+        return 1
+    fi
+
     echo >&3
 }
 
@@ -153,24 +190,40 @@ main() {
     log_message "INFO" "Deploying Swarm Queue for ${TOTAL_SWARM_TARGET} Agents..."
 
     for ((id = 1; id <= TOTAL_SWARM_TARGET; id++)); do
-        # Acquire slot from token bucket
         read -r -u 3
 
-        # Spawn asynchronous worker process
+        if [ -f "${SHUTDOWN_FLAG}" ]; then
+            log_message "WARN" "Shutdown flag detected. Releasing semaphore token and stopping dispatch."
+            echo >&3
+            break
+        fi
+
         execute_agent_task "${id}" &
+        WORKER_PIDS+=($!)
 
         if (( id % 100 == 0 )); then
             log_message "METRIC" "Progress: ${id}/${TOTAL_SWARM_TARGET} Agents Queued."
         fi
     done
 
-    # Wait for active subshell workers to drain
-    wait
+    local failed=0
+    for pid in "${WORKER_PIDS[@]}"; do
+        if ! wait "${pid}"; then
+            failed=$((failed + 1))
+        fi
+    done
 
-    log_message "SUCCESS" "All ${TOTAL_SWARM_TARGET} Autonomous Swarm Agents executed seamlessly."
+    rm -f "${FIFO_PATH}" 2>/dev/null || true
+    rm -f "${SHUTDOWN_FLAG}" 2>/dev/null || true
+
+    if [ "${failed}" -gt 0 ]; then
+        log_message "WARN" "${failed} worker(s) exited with non-zero status."
+    fi
+
+    log_message "SUCCESS" "All ${TOTAL_SWARM_TARGET} Autonomous Swarm Agents executed."
     echo ""
     echo "======================================================================"
-    echo " [GENESIS OS] Swarm Execution completed with zero fatal crashes."
+    echo " [GENESIS OS] Swarm Execution completed."
     echo "======================================================================"
 }
 

@@ -6,7 +6,25 @@
 # Platform: Termux / POSIX Linux / Android ARM64
 # ==============================================================================
 
-set -euo pipefail
+set -uo pipefail
+
+cleanup() {
+    if [ "${IS_CLEANING_UP:-0}" -eq 1 ]; then
+        return 0
+    fi
+    IS_CLEANING_UP=1
+
+    trap - INT TERM HUP QUIT USR1 USR2 ERR EXIT
+
+    echo "[AUTOPILOT] Shutdown signal received. Terminating child processes..."
+    pkill -P $$ 2>/dev/null || true
+    wait 2>/dev/null || true
+
+    echo "[AUTOPILOT] Autopilot engine shut down cleanly."
+    exit 0
+}
+
+trap cleanup INT TERM HUP QUIT USR1 USR2 ERR EXIT
 
 # ------------------------------------------------------------------------------
 # 1. SYSTEM LIMITS & ENVIRONMENT HARDENING
@@ -26,32 +44,28 @@ EXCLUDE_EXPR="\( -path */node_modules/* -o -path */.git/* -o -path */venv/* -o -
 run_batch_audits() {
     echo "[AUTOPILOT] ⚡ Starting High-Speed Polyglot Audits..."
 
-    # Shell Scripts Batch Audit
     if command -v shellcheck &> /dev/null; then
         echo "[AUTOPILOT] 🐚 Auditing Shell Scripts (.sh, .bash)..."
         find . -maxdepth 4 ${EXCLUDE_EXPR} -prune -o \( -name "*.sh" -o -name "*.bash" \) -not -name "genesis-autopilot.sh" -print0 2>/dev/null \
-            | xargs -0 -r -P 4 shellcheck -e SC1091,SC2086,SC1128 2>/dev/null || true
+            | xargs -0 -P 4 shellcheck -e SC1091,SC2086,SC1128 2>/dev/null || true
     fi
 
-    # Python Batch Audit
     if command -v python3 &> /dev/null; then
         echo "[AUTOPILOT] 🐍 Auditing Python Engines (.py)..."
         find . -maxdepth 4 ${EXCLUDE_EXPR} -prune -o -name "*.py" -print0 2>/dev/null \
-            | xargs -0 -r -P 4 python3 -m py_compile 2>/dev/null || true
+            | xargs -0 -P 4 python3 -m py_compile 2>/dev/null || true
     fi
 
-    # JavaScript / TypeScript Batch Audit
     if command -v node &> /dev/null; then
-        echo "[AUTOPILOT] 🟨 Auditing JS/TS Engines (.js, .ts)..."
+        echo "[AUTOPILOT] 🟨 Auditing JS/TS Engines (.js, .ts, .jsx, .tsx)..."
         find . -maxdepth 4 ${EXCLUDE_EXPR} -prune -o \( -name "*.js" -o -name "*.ts" -o -name "*.jsx" -o -name "*.tsx" \) -print0 2>/dev/null \
-            | xargs -0 -r -n 1 -P 4 node --check 2>/dev/null || true
+            | xargs -0 -P 4 node --check 2>/dev/null || true
     fi
 
-    # JSON Configurations Batch Audit
     if command -v jq &> /dev/null; then
         echo "[AUTOPILOT] 📋 Auditing JSON Configuration Files..."
         find . -maxdepth 4 ${EXCLUDE_EXPR} -prune -o -name "*.json" -print0 2>/dev/null \
-            | xargs -0 -r -n 1 jq . >/dev/null 2>&1 || true
+            | xargs -0 -P 4 jq . >/dev/null 2>&1 || true
     fi
 
     echo "[AUTOPILOT] ✅ All multi-language pre-flight checks complete."
@@ -65,11 +79,19 @@ launch_swarm_daemon() {
 
     if tmux has-session -t "$session_name" 2>/dev/null; then
         echo "[AUTOPILOT] Active Swarm session detected ($session_name). System healthy."
+        return 0
+    fi
+
+    if [ ! -f "./genesis-orchestrator.sh" ]; then
+        echo "[AUTOPILOT] WARNING: genesis-orchestrator.sh not found. Skipping swarm launch."
+        return 1
+    fi
+
+    if tmux new-session -d -s "$session_name" "./genesis-orchestrator.sh" 2>/dev/null; then
+        echo "[SUCCESS] Genesis Swarm Engine started in background (tmux: $session_name)."
     else
-        if [ -f "./genesis-orchestrator.sh" ]; then
-            tmux new-session -d -s "$session_name" "./genesis-orchestrator.sh"
-            echo "[SUCCESS] Genesis Swarm Engine started in background (tmux: $session_name)."
-        fi
+        echo "[AUTOPILOT] ERROR: Failed to launch swarm daemon."
+        return 1
     fi
 }
 
@@ -81,7 +103,7 @@ main() {
     echo "======================================================================"
     echo "       KLYN AI OS - ULTRA-FAST POLYGLOT AUTOPILOT ENGINE              "
     echo "======================================================================"
-    
+
     run_batch_audits
     launch_swarm_daemon
 
