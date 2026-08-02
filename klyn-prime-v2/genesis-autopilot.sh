@@ -64,11 +64,24 @@ launch_swarm_daemon() {
     local session_name="genesis_swarm"
 
     if tmux has-session -t "$session_name" 2>/dev/null; then
-        echo "[AUTOPILOT] Active Swarm session detected ($session_name). System healthy."
-    else
-        if [ -f "./genesis-orchestrator.sh" ]; then
-            tmux new-session -d -s "$session_name" "./genesis-orchestrator.sh"
+        # Verify the session is actually running, not just a stale socket
+        if tmux list-sessions -F "#{session_name}" 2>/dev/null | grep -q "^${session_name}$"; then
+            echo "[AUTOPILOT] Active Swarm session detected ($session_name). System healthy."
+            return 0
+        fi
+    fi
+    
+    if [ -f "./genesis-orchestrator.sh" ]; then
+        # Ensure no stale session exists
+        tmux kill-session -t "$session_name" 2>/dev/null || true
+        tmux new-session -d -s "$session_name" "./genesis-orchestrator.sh"
+        # Brief pause to allow process spawn; verify it started
+        sleep 1
+        if tmux has-session -t "$session_name" 2>/dev/null; then
             echo "[SUCCESS] Genesis Swarm Engine started in background (tmux: $session_name)."
+        else
+            echo "[ERROR] Failed to start Genesis Swarm Engine in tmux."
+            return 1
         fi
     fi
 }

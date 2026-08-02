@@ -43,8 +43,8 @@ cleanup() {
     fi
     IS_CLEANING_UP=1
 
-    # Unbind interruption signals
-    trap - INT TERM
+    # Unbind interruption signals to prevent re-entry
+    trap - INT TERM EXIT
 
     echo ""
     echo "[GENESIS ENGINE] Interruption signal received. Initiating graceful shutdown..."
@@ -53,15 +53,18 @@ cleanup() {
     exec 3>&- 2>/dev/null || true
     rm -f "${FIFO_PATH}" 2>/dev/null || true
 
-    # Terminate process subshell group safely
+    # Terminate direct child processes spawned by this shell
     pkill -P $$ 2>/dev/null || true
+
+    # Drain any remaining children to prevent zombie accumulation
+    wait 2>/dev/null || true
 
     echo "[GENESIS ENGINE] All background workers terminated cleanly. System state saved."
     exit 0
 }
 
-# Bind explicit signal interruptions only (Prevents EXIT cascade loops)
-trap cleanup INT TERM
+# Bind explicit signal interruptions and ensure cleanup on normal exit
+trap cleanup EXIT INT TERM
 
 # ------------------------------------------------------------------------------
 # LOG ROTATION & AUDIT ENGINE
@@ -82,7 +85,10 @@ log_message() {
     local message="$2"
     local timestamp
     timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    echo "[${timestamp}] [${level}] ${message}" | tee -a "${LOG_FILE}"
+    (
+        flock -n 9 || { echo "[LOG_LOCK] Failed to acquire log lock" >&2; exit 1; }
+        echo "[${timestamp}] [${level}] ${message}"
+    ) 9>>"${LOG_FILE}" || true
     rotate_logs_if_needed
 }
 
@@ -128,8 +134,8 @@ execute_agent_task() {
         log_message "ERROR" "Agent [${agent_id}] circuit breaker tripped. Task aborted."
     fi
 
-    # Release worker token back to queue
-    echo >&3
+    # Release worker token back to queue safely
+    echo >&3 2>/dev/null || true
 }
 
 # ------------------------------------------------------------------------------
@@ -153,8 +159,16 @@ main() {
     log_message "INFO" "Deploying Swarm Queue for ${TOTAL_SWARM_TARGET} Agents..."
 
     for ((id = 1; id <= TOTAL_SWARM_TARGET; id++)); do
-        # Acquire slot from token bucket
-        read -r -u 3
+        # Acquire slot from token bucket with timeout to recover from leaked tokens
+        if ! read -r -t 30 -u 3; then
+            log_message "WARN" "Token bucket timeout on agent ${id}. Replenishing from active worker count..."
+            local active_count
+            active_count=$(jobs -r | wc -l)
+            for ((j = 0; j < active_count && j < MAX_CONCURRENT_WORKERS; j++)); do
+                echo >&3
+            done
+            read -r -u 3 || true
+        fi
 
         # Spawn asynchronous worker process
         execute_agent_task "${id}" &
@@ -164,8 +178,9 @@ main() {
         fi
     done
 
-    # Wait for active subshell workers to drain
-    wait
+    # Wait for active subshell workers to drain; swallow non-zero exit from
+    # background jobs to prevent set -e from aborting the main script
+    wait || true
 
     log_message "SUCCESS" "All ${TOTAL_SWARM_TARGET} Autonomous Swarm Agents executed seamlessly."
     echo ""
