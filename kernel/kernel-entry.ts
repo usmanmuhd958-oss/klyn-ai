@@ -1,3 +1,5 @@
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * =============================================================================
  * KLYN AI OS — Kernel Entry Point
@@ -45,7 +47,7 @@
 if (process.env.NODE_ENV !== 'production') {
   try {
     require('dotenv').config({
-      path: require('path').resolve(__dirname, '..', '.env'),
+      path: require('path').resolve(import.meta.dirname, '..', '.env'),
     });
   } catch (_) {
     // dotenv not installed, or .env does not exist.
@@ -53,24 +55,16 @@ if (process.env.NODE_ENV !== 'production') {
   }
 }
 
-const path = require('path');
+import path from 'node:path';
 
-const { createLogger, generateCorrelationId } =
-  require('./src/observability/logger');
-const { getManifest } =
-  require('./src/observability/health_manifest');
-const { vault, TOKEN_SCOPE } =
-  require('./token-vault');
-const { Mailbox } =
-  require('./ipc-mailbox');
-const { buildManifest } =
-  require('./src/lifecycle/agent_parameter_manifest');
-const { createVaultInterface } =
-  require('./src/lifecycle/vault_interface');
-const { getEventBus, LIFECYCLE_EVENT } =
-  require('./src/lifecycle/lifecycle_event_bus');
-const { Orchestrator } =
-  require('./orchestrator');
+import { createLogger, generateCorrelationId } from './src/observability/logger.js';
+import { getManifest } from './src/observability/health_manifest.js';
+import { vault, TOKEN_SCOPE } from './token-vault.js';
+import { Mailbox } from './ipc-mailbox.js';
+import { buildManifest } from './src/lifecycle/agent_parameter_manifest.js';
+import { createVaultInterface } from './src/lifecycle/vault_interface.js';
+import { getEventBus, LIFECYCLE_EVENT } from './src/lifecycle/lifecycle_event_bus.js';
+import { Orchestrator } from './orchestrator.js';
 
 const log      = createLogger('KernelEntry');
 const manifest = getManifest();
@@ -192,7 +186,7 @@ async function boot() {
       agentRegistry:  AGENT_REGISTRY,
       kernelId:       KERNEL_ID,
       kernelVersion:  KERNEL_VERSION,
-      agentsDir:      path.resolve(__dirname, '..', 'agents'),
+      agentsDir:      path.resolve(import.meta.dirname, '..', 'agents'),
       spawnPolicy:    {}, // Use all defaults from DEFAULT_SPAWN_POLICY.
       ipcConfig:      {
         queueCapacity:    500,

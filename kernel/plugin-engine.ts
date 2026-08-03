@@ -1,3 +1,5 @@
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 // ============================================================
 // KLYN AI OS — Plugin Engine v1.0.0
 //
@@ -22,10 +24,10 @@
 
 'use strict';
 
-const fs               = require('fs');
-const path             = require('path');
-const { EventEmitter } = require('events');
-const { withRetry }    = require('./backoff');
+import fs from 'node:fs';
+import path from 'node:path';
+import { EventEmitter } from 'node:events';
+import { withRetry } from './backoff.js';
 
 // ─── PLUGIN STATES ───────────────────────────────────────────
 const PLUGIN_STATE = Object.freeze({
@@ -394,4 +396,4 @@ class PluginEngine extends EventEmitter {
     }
 }
 
-module.exports = { PluginEngine, PluginContext, PLUGIN_STATE };
+export { PluginEngine, PluginContext, PLUGIN_STATE };

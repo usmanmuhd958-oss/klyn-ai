@@ -29,12 +29,12 @@
 
 'use strict';
 
-const fs   = require('fs');
-const path = require('path');
+import fs from 'node:fs';
+import path from 'node:path';
 
-const { createLogger } = require('../observability/logger');
-const { getOfflineTaskRegistry } = require('./offline_task_registry');
-const { BashPipelineGenerator } = require('./bash_pipeline_generator');
+import { createLogger } from '../observability/logger.js';
+import { getOfflineTaskRegistry } from './offline_task_registry.js';
+import { BashPipelineGenerator } from './bash_pipeline_generator.js';
 
 const log      = createLogger('LocalCompiler');
 const registry = getOfflineTaskRegistry();
@@ -143,10 +143,7 @@ function getLocalCompiler() {
   return _compilerInstance;
 }
 
-module.exports = Object.freeze({
-  getLocalCompiler,
-  LocalCompiler,
-});
+export { getLocalCompiler, LocalCompiler };
 
 
 export {};

@@ -1,5 +1,5 @@
 #!/bin/bash
-PROJECT_ROOT="/data/data/com.termux/files/home/klyn-ai-os"
+PROJECT_ROOT="${PROJECT_ROOT:-${HOME}/klyn-ai-os}"
 SERVICES=(
   "node api/server.js:api"
   "node api/metrics.js:metrics"

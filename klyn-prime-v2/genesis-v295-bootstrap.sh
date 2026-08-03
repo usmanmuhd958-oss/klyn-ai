@@ -1,7 +1,4 @@
-
-#!/data/data/com.termux/files/usr/bin/bash
-
-set -Eeuo pipefail
+#!/usr/bin/env bash
 
 set -Eeuo pipefail
 
@@ -87,4 +84,3 @@ echo "
  $ROOT
 ====================================
 "
-

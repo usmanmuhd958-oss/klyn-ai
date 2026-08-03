@@ -2,7 +2,10 @@
 # KLYN-AI ENTERPRISE OS - Powered by Gemini 2.5 Pro
 cd ~/klyn-ai-os
 
-export GEMINI_API_KEY="AIzaSyA8pHwUTH0qvpFwDpqYXxVVqay1zDfjhwY" # <-- PUT YOUR GEMINI KEY HERE
+if [ -z "${GEMINI_API_KEY:-}" ]; then
+  echo "[GEMINI] ERROR: GEMINI_API_KEY is not set. Export it first (e.g. export GEMINI_API_KEY=your_key)." >&2
+  exit 1
+fi
 
 echo "[GHOST] KLYN-AI GEMINI 2.5 PRO ENTERPRISE RISING..."
 

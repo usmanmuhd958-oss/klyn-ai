@@ -1,3 +1,5 @@
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 // ============================================================
 // KLYN AI OS — Self-Healing Engine v1.0.0
 //
@@ -17,9 +19,9 @@
 
 'use strict';
 
-const fs               = require('fs');
-const path             = require('path');
-const { EventEmitter } = require('events');
+import fs from 'node:fs';
+import path from 'node:path';
+import { EventEmitter } from 'node:events';
 
 // ─── THRESHOLDS ──────────────────────────────────────────────
 const THRESHOLDS = Object.freeze({
@@ -335,4 +337,4 @@ class SelfHealingEngine extends EventEmitter {
     }
 }
 
-module.exports = { SelfHealingEngine, HEAL_ACTION, THRESHOLDS };
+export { SelfHealingEngine, HEAL_ACTION, THRESHOLDS };

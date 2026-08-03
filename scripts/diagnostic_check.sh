@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 set -u
 
 RED='\033[0;31m'
@@ -11,7 +11,7 @@ echo -e "${BLUE}================================================================
 echo -e "${BLUE}           KLYN AI OS - INTEGRITY & DIAGNOSTIC HEALTH CHECK        ${NC}"
 echo -e "${BLUE}===================================================================${NC}"
 
-readonly KLYN_ROOT="/data/data/com.termux/files/home/klyn-ai-os"
+readonly KLYN_ROOT="${KLYN_ROOT:-${HOME}/klyn-ai-os}"
 ERRORS=0
 
 check_file() {

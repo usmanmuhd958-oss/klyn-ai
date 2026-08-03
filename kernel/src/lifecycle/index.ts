@@ -2,7 +2,7 @@
  * =============================================================================
  * KLYN AI OS — Kernel Lifecycle Subsystem Index
  * File: kernel/src/lifecycle/index.js
- * Version: 1.0.0
+ * Version: 2.0.0
  * Phase: 3 — Kernel Lifecycle Isolation
  * =============================================================================
  *
@@ -13,7 +13,7 @@
  *   updates to every consumer import path.
  *
  * USAGE:
- *   const {
+ *   import {
  *     buildManifest,
  *     getEventBus,
  *     LIFECYCLE_EVENT,
@@ -21,32 +21,32 @@
  *     createKernelStateMachine,
  *     createAgentStateMachine,
  *     ShutdownCoordinator,
- *   } = require('./kernel/src/lifecycle');
+ *   } from './kernel/src/lifecycle/index.js';
  *
  * =============================================================================
  */
 
 'use strict';
 
-const {
+import {
   buildManifest,
   AgentParameterManifest,
   DEFAULT_SPAWN_POLICY,
-} = require('./agent_parameter_manifest');
+} from './agent_parameter_manifest.js';
 
-const {
+import {
   getEventBus,
   KlynLifecycleEventBus,
   LIFECYCLE_EVENT,
   _resetBusForTesting,
-} = require('./lifecycle_event_bus');
+} from './lifecycle_event_bus.js';
 
-const {
+import {
   createVaultInterface,
   ALLOWED_VAULT_OPERATIONS,
-} = require('./vault_interface');
+} from './vault_interface.js';
 
-const {
+import {
   KlynStateMachine,
   KERNEL_STATE,
   AGENT_STATE,
@@ -54,13 +54,13 @@ const {
   AGENT_TRANSITIONS,
   createKernelStateMachine,
   createAgentStateMachine,
-} = require('./kernel_state_machine');
+} from './kernel_state_machine.js';
 
-const {
+import {
   ShutdownCoordinator,
-} = require('./shutdown_coordinator');
+} from './shutdown_coordinator.js';
 
-module.exports = Object.freeze({
+export {
   // Manifest
   buildManifest,
   AgentParameterManifest,
@@ -87,4 +87,4 @@ module.exports = Object.freeze({
 
   // Shutdown Coordinator
   ShutdownCoordinator,
-});
+};

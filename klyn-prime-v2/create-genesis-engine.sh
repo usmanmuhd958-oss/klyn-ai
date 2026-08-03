@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 
 mkdir -p prime-core-system/genesis/{analysis,design,generation,validation}
 

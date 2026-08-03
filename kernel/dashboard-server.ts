@@ -13,8 +13,8 @@
 
 'use strict';
 
-const http   = require('http');
-const crypto = require('crypto');
+import http from 'node:http';
+import crypto from 'node:crypto';
 
 // ─── DASHBOARD HTML ──────────────────────────────────────────
 function buildDashboardHTML(apiToken) {
@@ -659,7 +659,7 @@ class DashboardServer {
     }
 }
 
-module.exports = { DashboardServer };
+export { DashboardServer };
 
 
 export {};

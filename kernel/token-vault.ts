@@ -1,5 +1,5 @@
 'use strict';
-const crypto = require('crypto');
+import crypto from 'node:crypto';
 const TOKEN_SCOPE = Object.freeze({
   AGENT_COMMUNICATION: 'AGENT_COMMUNICATION',
   KERNEL_ADMIN: 'KERNEL_ADMIN'
@@ -23,7 +23,7 @@ class TokenVault {
   }
 }
 const vault = new TokenVault();
-module.exports = { vault, TOKEN_SCOPE };
+export { vault, TOKEN_SCOPE };
 
 
 export {};

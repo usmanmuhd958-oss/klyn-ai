@@ -40,8 +40,8 @@
 
 'use strict';
 
-const { createLogger, generateCorrelationId } = require('../observability/logger');
-const { LIFECYCLE_EVENT, getEventBus }         = require('./lifecycle_event_bus');
+import { createLogger, generateCorrelationId } from '../observability/logger.js';
+import { LIFECYCLE_EVENT, getEventBus } from './lifecycle_event_bus.js';
 
 const log = createLogger('ShutdownCoordinator');
 
@@ -209,9 +209,7 @@ function _sleep(ms) {
 // EXPORTS
 // =============================================================================
 
-module.exports = Object.freeze({
-  ShutdownCoordinator,
-});
+export { ShutdownCoordinator };
 
 
 export {};

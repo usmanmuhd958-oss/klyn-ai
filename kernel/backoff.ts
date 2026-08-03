@@ -15,7 +15,7 @@
 
 'use strict';
 
-const { EventEmitter } = require('events');
+import { EventEmitter } from 'node:events';
 
 // ─── BACKOFF CALCULATOR ──────────────────────────────────────
 
@@ -495,29 +495,7 @@ async function withRetryAndCircuit(circuitName, fn, retryPolicy = {}, cbOptions 
 }
 
 // ─── EXPORTS ─────────────────────────────────────────────────
-module.exports = {
-    // Backoff primitives
-    computeBackoff,
-    sleep,
-    withRetry,
-
-    // Circuit breaker
-    CircuitBreaker,
-    CircuitBreakerRegistry,
-    CB_STATE,
-
-    // Global registry
-    registry,
-
-    // High-level wrappers
-    withCircuit,
-    withRetryAndCircuit,
-
-    // Error types
-    RetryExhaustedError,
-    RetryTimeoutError,
-    CircuitOpenError,
-};
+export { sleep, computeBackoff, withRetry, CircuitBreakerRegistry, CB_STATE, withRetryAndCircuit, RetryTimeoutError, CircuitOpenError, registry };
 
 
 export {};

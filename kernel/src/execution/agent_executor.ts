@@ -1,14 +1,14 @@
 /**
  * =============================================================================
  * KLYN AI OS — Agent Executor
- * File: kernel/src/execution/agent_executor.js
- * Version: 1.0.0
+ * File: kernel/src/execution/agent_executor.ts
+ * Version: 2.0.0
  * =============================================================================
  *
  * PURPOSE:
  *   Manages agent process lifecycle from the kernel's perspective. This is
  *   the bridge between the Bash orchestrator (agents/src/orchestrator.sh)
- *   and the Node.js kernel orchestrator (kernel/orchestrator.js).
+ *   and the Node.js kernel orchestrator.
  *
  * RESPONSIBILITIES:
  *   - Monitor agent processes spawned by Bash orchestrator
@@ -16,40 +16,46 @@
  *   - Detect and report agent health status
  *   - Interface with hot-swap manager for code updates
  *   - Maintain agent registry with metadata
+ *   - Execute agent tasks with timeouts (secure spawn)
  *
+ * v2.0.0: ESM conversion, env-overridable runtime paths (no hardcoded Termux
+ * paths), added executeAgent() for the secure API.
  * =============================================================================
  */
 
 'use strict';
 
-const fs   = require('fs');
-const path = require('path');
-const { exec } = require('child_process');
-const { promisify } = require('util');
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { exec, spawn } from 'node:child_process';
+import { promisify } from 'node:util';
 
 const execAsync = promisify(exec);
 
-const { createLogger, generateCorrelationId } = require('../observability/logger');
-const { getManifest } = require('../observability/health_manifest');
-const { getEventBus, LIFECYCLE_EVENT } = require('../lifecycle/lifecycle_event_bus');
+import { createLogger, generateCorrelationId } from '../observability/logger.js';
+import { getManifest } from '../observability/health_manifest.js';
+import { getEventBus, LIFECYCLE_EVENT } from '../lifecycle/lifecycle_event_bus.js';
 
 const log      = createLogger('AgentExecutor');
 const manifest = getManifest();
 const bus      = getEventBus();
 
 // =============================================================================
-// SECTION 1: CONFIGURATION
+// SECTION 1: CONFIGURATION (env-overridable, portable)
 // =============================================================================
 
-const EXECUTOR_CONFIG = Object.freeze({
+const RUNTIME_ROOT = process.env.KLYN_RUNTIME_DIR || path.join(os.homedir(), '.klyn');
+
+export const EXECUTOR_CONFIG = Object.freeze({
   /** Path to runtime directory */
-  RUNTIME_DIR: '/data/data/com.termux/files/home/klyn-ai-os/.runtime',
+  RUNTIME_DIR: process.env.KLYN_RUNTIME_DIR || path.join(RUNTIME_ROOT, '.runtime'),
 
   /** Path to Bash orchestrator PID directory */
-  PID_DIR: '/data/data/com.termux/files/home/klyn-ai-os/.runtime/pids',
+  PID_DIR: path.join(RUNTIME_ROOT, '.runtime', 'pids'),
 
   /** Path to agent heartbeat files */
-  HEARTBEAT_DIR: '/data/data/com.termux/files/home/klyn-ai-os/.runtime/heartbeats',
+  HEARTBEAT_DIR: path.join(RUNTIME_ROOT, '.runtime', 'heartbeats'),
 
   /** Heartbeat staleness threshold (ms) */
   HEARTBEAT_STALE_MS: 60_000,
@@ -65,11 +71,7 @@ const EXECUTOR_CONFIG = Object.freeze({
 // SECTION 2: AGENT METADATA REGISTRY
 // =============================================================================
 
-/**
- * Static registry of agent capabilities and metadata.
- * This is the source of truth for the Cognitive Router's capability matching.
- */
-const AGENT_METADATA = Object.freeze({
+export const AGENT_METADATA = Object.freeze({
   coder: {
     capabilities: [
       'code_generation',
@@ -135,13 +137,13 @@ const AGENT_METADATA = Object.freeze({
 // SECTION 3: AGENT EXECUTOR CLASS
 // =============================================================================
 
-class AgentExecutor {
+export class AgentExecutor {
   [key: string]: any;
 
   constructor() {
     /**
      * Live agent status cache. Key = agentId.
-     * @type {Map<string, AgentStatus>}
+     * @type {Map<string, object>}
      */
     this._agentStatus = new Map();
 
@@ -153,7 +155,7 @@ class AgentExecutor {
 
     manifest.register('AgentExecutor', {
       critical: false,
-      metadata: { version: '1.0.0' },
+      metadata: { version: '2.0.0' },
     });
 
     this._ensureDirectories();
@@ -171,11 +173,8 @@ class AgentExecutor {
 
   /**
    * Returns the current status of a specific agent.
-   *
-   * @param {string} agentId
-   * @returns {{ alive: boolean, pid: number|null, heartbeat: number|null, healthy: boolean }}
    */
-  getAgentStatus(agentId) {
+  getAgentStatus(agentId: string) {
     const cached = this._agentStatus.get(agentId);
     if (cached) {
       return { ...cached };
@@ -189,19 +188,14 @@ class AgentExecutor {
 
   /**
    * Returns the capabilities of a specific agent.
-   *
-   * @param {string} agentId
-   * @returns {string[]}
    */
-  getAgentCapabilities(agentId) {
+  getAgentCapabilities(agentId: string): string[] {
     const metadata = AGENT_METADATA[agentId];
     return metadata ? [...metadata.capabilities] : [];
   }
 
   /**
    * Returns metadata for all registered agents.
-   *
-   * @returns {object}
    */
   getAllAgentMetadata() {
     return { ...AGENT_METADATA };
@@ -209,12 +203,9 @@ class AgentExecutor {
 
   /**
    * Queries which agents have a specific capability.
-   *
-   * @param {string} capability
-   * @returns {string[]}  Array of agent IDs
    */
-  queryAgentsByCapability(capability) {
-    const matches = [];
+  queryAgentsByCapability(capability: string): string[] {
+    const matches: string[] = [];
     for (const [agentId, metadata] of Object.entries(AGENT_METADATA)) {
       if (metadata.capabilities.includes(capability)) {
         matches.push(agentId);
@@ -225,11 +216,9 @@ class AgentExecutor {
 
   /**
    * Returns a health summary of all agents.
-   *
-   * @returns {object}  { agentId → { alive, healthy, pid, lastHeartbeat } }
    */
   getHealthSummary() {
-    const summary = {};
+    const summary: Record<string, any> = {};
     for (const agentId of Object.keys(AGENT_METADATA)) {
       summary[agentId] = this.getAgentStatus(agentId);
     }
@@ -238,31 +227,24 @@ class AgentExecutor {
 
   /**
    * Triggers a manual health check for a specific agent.
-   *
-   * @param {string} agentId
-   * @returns {Promise<boolean>}  True if healthy
    */
-  async checkHealth(agentId) {
+  async checkHealth(agentId: string): Promise<boolean> {
     const status = this._checkAgentStatus(agentId);
     this._agentStatus.set(agentId, status);
     this._lastHealthCheck.set(agentId, Date.now());
 
     manifest.updateMetrics('AgentExecutor', {
-      [`${agentId}_healthy`]: (status as any).healthy,
-      [`${agentId}_pid`]:     (status as any).pid,
+      [`${agentId}_healthy`]: status.healthy,
+      [`${agentId}_pid`]:     status.pid,
     });
 
-    return (status as any).healthy;
+    return status.healthy;
   }
 
   /**
    * Requests a graceful restart of a Bash agent via the orchestrator.
-   *
-   * @param {string} agentId
-   * @param {string} [reason]
-   * @returns {Promise<void>}
    */
-  async requestRestart(agentId, reason = 'manual restart') {
+  async requestRestart(agentId: string, reason = 'manual restart'): Promise<void> {
     if (!EXECUTOR_CONFIG.BASH_AGENTS.includes(agentId)) {
       throw new Error(`Cannot restart: ${agentId} is not a Bash agent.`);
     }
@@ -283,26 +265,94 @@ class AgentExecutor {
       requestedAt: Date.now(),
     }));
 
-    bus.emit('agent:restart_requested', { agentId, reason }, generateCorrelationId());
+    bus.emit(LIFECYCLE_EVENT.AGENT_RESTART_REQUESTED, { agentId, reason }, generateCorrelationId());
 
     log.info('Restart signal written.', { agentId, signalFile });
+  }
+
+  /**
+   * Executes a task for a managed agent with a hard timeout.
+   * Uses spawn (no shell interpolation) to avoid injection.
+   */
+  executeAgent(agentId: string, task: string, timeoutMs = 30_000): Promise<{
+    success: boolean;
+    agent: string;
+    output: string;
+    error: string | null;
+    duration: number;
+  }> {
+    if (!EXECUTOR_CONFIG.BASH_AGENTS.includes(agentId)) {
+      throw new Error(`Cannot execute: ${agentId} is not a managed agent.`);
+    }
+    if (typeof task !== 'string' || task.trim().length === 0) {
+      throw new Error('Task must be a non-empty string.');
+    }
+
+    const startTime = Date.now();
+
+    return new Promise((resolve) => {
+      const child = spawn('bash', ['-c', task], {
+        cwd: os.homedir(),
+        env: { ...process.env, KLYN_AGENT_ID: agentId },
+      });
+
+      let stdout = '';
+      let stderr = '';
+      let settled = false;
+
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        child.kill('SIGKILL');
+        resolve({
+          success: false,
+          agent: agentId,
+          output: stdout,
+          error: `Task timed out after ${timeoutMs}ms`,
+          duration: Date.now() - startTime,
+        });
+      }, timeoutMs);
+
+      child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
+      child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8'); });
+
+      child.on('error', (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({
+          success: false,
+          agent: agentId,
+          output: stdout,
+          error: err.message,
+          duration: Date.now() - startTime,
+        });
+      });
+
+      child.on('close', (code) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({
+          success: code === 0,
+          agent: agentId,
+          output: stdout,
+          error: code === 0 ? null : (stderr || `Exited with code ${code}`),
+          duration: Date.now() - startTime,
+        });
+      });
+    });
   }
 
   // ---------------------------------------------------------------------------
   // PRIVATE — STATUS CHECKING
   // ---------------------------------------------------------------------------
 
-  /**
-   * Performs a live status check for an agent.
-   *
-   * @param {string} agentId
-   * @returns {{ alive: boolean, pid: number|null, heartbeat: number|null, healthy: boolean }}
-   */
-  _checkAgentStatus(agentId) {
+  _checkAgentStatus(agentId: string) {
     const status = {
       alive:     false,
-      pid:       null,
-      heartbeat: null,
+      pid:       null as number | null,
+      heartbeat: null as number | null,
       healthy:   false,
     };
 
@@ -314,14 +364,14 @@ class AgentExecutor {
         const pid    = parseInt(pidStr, 10);
 
         if (!isNaN(pid)) {
-          (status as any).pid = pid;
+          status.pid = pid;
 
           // Check if process is alive
           try {
             process.kill(pid, 0);  // Signal 0 = existence check
-            (status as any).alive = true;
+            status.alive = true;
           } catch (_) {
-            (status as any).alive = false;
+            status.alive = false;
           }
         }
       } catch (err) {
@@ -337,12 +387,12 @@ class AgentExecutor {
         const timestamp    = parseInt(timestampStr, 10);
 
         if (!isNaN(timestamp)) {
-          (status as any).heartbeat = timestamp;
+          status.heartbeat = timestamp;
 
           // Check if heartbeat is fresh
           const age = Date.now() - (timestamp * 1000);  // Convert to ms
           if (age < EXECUTOR_CONFIG.HEARTBEAT_STALE_MS) {
-            (status as any).healthy = true;
+            status.healthy = true;
           }
         }
       } catch (err) {
@@ -373,17 +423,17 @@ class AgentExecutor {
 
       // Emit events for status changes
       const wasHealthy = this._lastHealthCheck.get(`${agentId}_healthy`);
-      if (wasHealthy !== (status as any).healthy) {
-        if ((status as any).healthy) {
-          bus.emit('agent:recovered', { agentId }, generateCorrelationId());
+      if (wasHealthy !== status.healthy) {
+        if (status.healthy) {
+          bus.emit(LIFECYCLE_EVENT.AGENT_RECOVERED, { agentId }, generateCorrelationId());
           log.info('Agent recovered.', { agentId });
         } else {
-          bus.emit('agent:degraded', { agentId }, generateCorrelationId());
+          bus.emit(LIFECYCLE_EVENT.AGENT_DEGRADED, { agentId }, generateCorrelationId());
           log.warn('Agent degraded.', { agentId });
         }
       }
 
-      this._lastHealthCheck.set(`${agentId}_healthy`, (status as any).healthy);
+      this._lastHealthCheck.set(`${agentId}_healthy`, status.healthy);
     }
 
     // Update manifest
@@ -418,21 +468,13 @@ class AgentExecutor {
 // SECTION 4: SINGLETON EXPORT
 // =============================================================================
 
-let _executorInstance = null;
+let _executorInstance: AgentExecutor | null = null;
 
-function getAgentExecutor() {
+export function getAgentExecutor(): AgentExecutor {
   if (!_executorInstance) {
     _executorInstance = new AgentExecutor();
   }
   return _executorInstance;
 }
 
-module.exports = Object.freeze({
-  getAgentExecutor,
-  AgentExecutor,
-  AGENT_METADATA,
-  EXECUTOR_CONFIG,
-});
-
-
-export {};
+export { AgentExecutor as __AgentExecutorExport };

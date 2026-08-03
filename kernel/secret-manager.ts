@@ -1,3 +1,5 @@
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 // ============================================================
 // KLYN AI OS — Secret Manager v1.0.0
 //
@@ -13,10 +15,10 @@
 
 'use strict';
 
-const crypto = require('crypto');
-const fs     = require('fs');
-const path   = require('path');
-const os     = require('os');
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 
 // ─── CONSTANTS ───────────────────────────────────────────────
 const ALGORITHM    = 'aes-256-gcm';
@@ -304,7 +306,7 @@ class SecretManager {
     }
 }
 
-module.exports = { SecretManager };
+export { SecretManager };
 
 
 export {};

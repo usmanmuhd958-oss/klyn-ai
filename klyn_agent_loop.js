@@ -1,8 +1,8 @@
-// [KLYN-V4.7-SELF-HEALED-AST-NODE: Unexpected token 'export']
-const { initializeVault, storeMemory, recall } = require('./index.js');
-const path = require('path');
-const fs = require('fs');
-const { exec } = require('child_process');
+// KLYN agent loop: autonomous execution engine test (ESM)
+import { initializeVault, storeMemory, recall } from './index.js';
+import path from 'node:path';
+import fs from 'node:fs';
+import { exec } from 'node:child_process';
 
 class KlynAgentEngine {
   constructor(vaultPath) {
@@ -103,16 +103,14 @@ class KlynAgentEngine {
   }
 }
 
-const agent = new KlynAgentEngine(path.join(__dirname, 'vault_data'));
+const rootDir = import.meta.dirname;
+const agent = new KlynAgentEngine(path.join(rootDir, 'vault_data'));
 
 console.log("=== KLYN AI OS: AUTONOMOUS EXECUTION ENGINE TEST ===");
-agent.executeAndIndex(path.join(__dirname, 'test-vault.js'));
+agent.executeAndIndex(path.join(rootDir, 'test-vault.js'));
 
 setTimeout(() => {
   console.log("\n=== RECALLING EXECUTION MEMORY FROM KLYN VAULT ===");
   const logs = agent.searchExecutionLogs("SUCCESS test-vault.js", 2);
   console.dir(logs, { depth: null });
 }, 1500);
-
-// Self-healed by Klyn AI OS on 2026-07-28T14:23:22.562Z
-export const selfHealed = true;

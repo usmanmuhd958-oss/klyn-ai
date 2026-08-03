@@ -1,5 +1,5 @@
 #!/bin/bash
-PROJECT_ROOT="/data/data/com.termux/files/home/klyn-ai-os"
+PROJECT_ROOT="${PROJECT_ROOT:-${HOME}/klyn-ai-os}"
 while true; do
   echo "🧬 Running autonomous self-improvement cycle..."
   node "$PROJECT_ROOT/kernel/src/services/autonomous_improver.js"

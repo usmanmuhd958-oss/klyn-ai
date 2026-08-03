@@ -1,11 +1,11 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 # =============================================================================
 # KLYN AI OS — Dry Run Hotfix
 # =============================================================================
 
 set -euo pipefail
 
-readonly KLYN_ROOT="/data/data/com.termux/files/home/klyn-ai-os"
+readonly KLYN_ROOT="${KLYN_ROOT:-${HOME}/klyn-ai-os}"
 readonly SCRIPT_PATH="$KLYN_ROOT/tools/autonomous_dry_run.sh"
 readonly BACKUP_PATH="$KLYN_ROOT/tools/autonomous_dry_run.sh.backup-$(date +%s)"
 
@@ -67,6 +67,6 @@ log_info "Backup: $BACKUP_PATH"
 log_info "Patched: $SCRIPT_PATH"
 echo ""
 log_info "Run the fixed dry run with:"
-echo "  export KLYN_ROOT=/data/data/com.termux/files/home/klyn-ai-os"
+echo "  export KLYN_ROOT=$HOME/klyn-ai-os"
 echo "  bash tools/autonomous_dry_run.sh"
 echo ""

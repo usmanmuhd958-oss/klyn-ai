@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 # =============================================================================
 # KLYN AI OS — Enhanced Bash Orchestrator
 # File: agents/src/orchestrator.sh
@@ -24,7 +24,7 @@
 #     Unix socket communication with kernel/orchestrator.js
 #
 # TERMUX OPTIMIZATIONS:
-#   - Uses /data/data/com.termux paths exclusively
+#   - Portable paths (KLYN_ROOT resolved from $HOME, Termux-compatible)
 #   - Android-aware battery monitoring (termux-battery-status)
 #   - Minimal memory footprint (no external dependencies)
 #   - Graceful degradation on resource constraints
@@ -38,8 +38,9 @@ IFS=$'\n\t'
 # SECTION 1: ENVIRONMENT & CONFIGURATION
 # -----------------------------------------------------------------------------
 
-# Termux-specific paths
-readonly KLYN_ROOT="/data/data/com.termux/files/home/klyn-ai-os"
+# Portable root — overridable via KLYN_ROOT, defaults to $HOME/klyn-ai-os
+# (On Termux, $HOME resolves to the app's private home dir; path stays portable)
+readonly KLYN_ROOT="${KLYN_ROOT:-${HOME}/klyn-ai-os}"
 readonly AGENTS_DIR="$KLYN_ROOT/agents"
 readonly KERNEL_DIR="$KLYN_ROOT/kernel"
 readonly RUNTIME_DIR="$KLYN_ROOT/.runtime"

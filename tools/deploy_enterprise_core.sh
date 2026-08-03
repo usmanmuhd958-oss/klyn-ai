@@ -5,7 +5,7 @@
 set -euo pipefail
 
 # Hardcoded correct path (avoids the BASH_SOURCE / PROJECT_ROOT issue)
-readonly KLYN_ROOT="/data/data/com.termux/files/home/klyn-ai-os"
+readonly KLYN_ROOT="${KLYN_ROOT:-${HOME}/klyn-ai-os}"
 
 readonly COLOR_RESET='\033[0m'
 readonly COLOR_BOLD='\033[1m'

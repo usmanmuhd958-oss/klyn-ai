@@ -15,9 +15,9 @@
 
 'use strict';
 
-const fs   = require('fs');
-const path = require('path');
-const os   = require('os');
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 
 // ─── LEVEL DEFINITIONS ───────────────────────────────────────
 const LEVELS = Object.freeze({
@@ -413,7 +413,7 @@ function createLogger(options: any = {}) {
     return new Logger(options);
 }
 
-module.exports = { createLogger, Logger, LEVELS, LEVEL_NAMES };
+export { createLogger, Logger, LEVELS, LEVEL_NAMES };
 
 
 export {};

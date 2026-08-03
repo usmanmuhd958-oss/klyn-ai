@@ -1,9 +1,9 @@
-// [KLYN-V4.7-SELF-HEALED-AST-NODE: Unexpected token 'export']
-const fs = require('fs');
-const path = require('path');
-const http = require('http');
+// KLYN daemon: zero-prompt auto-healing watcher that reports to the gateway (ESM)
+import fs from 'node:fs';
+import path from 'node:path';
+import http from 'node:http';
 
-const WATCH_DIR = __dirname;
+const WATCH_DIR = import.meta.dirname;
 let isProcessing = false;
 
 console.log("[KLYN DAEMON v3.3] Zero-Prompt Active Auto-Healing Active...");
@@ -55,6 +55,3 @@ fs.watch(WATCH_DIR, (eventType, filename) => {
   req.write(postData);
   req.end();
 });
-
-// Self-healed by Klyn AI OS on 2026-07-28T14:23:22.567Z
-export const selfHealed = true;

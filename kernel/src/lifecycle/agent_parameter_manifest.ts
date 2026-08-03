@@ -42,7 +42,7 @@
 
 'use strict';
 
-const { createLogger } = require('../observability/logger');
+import { createLogger } from '../observability/logger.js';
 
 const log = createLogger('AgentParameterManifest');
 
@@ -374,8 +374,4 @@ function buildManifest(options) {
 // SECTION 6: EXPORTS
 // =============================================================================
 
-module.exports = Object.freeze({
-  buildManifest,
-  AgentParameterManifest,
-  DEFAULT_SPAWN_POLICY,
-});
+export { buildManifest, AgentParameterManifest, DEFAULT_SPAWN_POLICY };

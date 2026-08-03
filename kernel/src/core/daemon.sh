@@ -1,5 +1,4 @@
 #!/bin/bash
-#!/data/data/com.termux/files/usr/bin/bash
 set -euo pipefail
 
 BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"

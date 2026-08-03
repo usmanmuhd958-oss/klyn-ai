@@ -1,15 +1,17 @@
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { pathToFileURL } from 'node:url';
+
 const fsPromises = fs.promises;
 
-const AUDIT_DIR = path.join(__dirname, '..', '..', 'runtime', 'audit_logs');
+const AUDIT_DIR = process.env.KLYN_AUDIT_DIR || path.join(import.meta.dirname, '..', '..', 'runtime', 'audit_logs');
 const CHAIN_FILE = path.join(AUDIT_DIR, 'chain.jsonl');
 
-let lastHashCache = null;
-let chainCache = [];
+let lastHashCache: string | null = null;
+let chainCache: any[] = [];
 
-async function initAudit() {
+export async function initAudit() {
   try {
     await fsPromises.mkdir(AUDIT_DIR, { recursive: true });
     if (!fs.existsSync(CHAIN_FILE)) {
@@ -34,7 +36,7 @@ async function getLastHash() {
   }
 }
 
-async function logEvent(action, user, details = {}) {
+export async function logEvent(action: string, user: string, details: Record<string, any> = {}) {
   await initAudit();
   
   // Sanitize inputs: truncate and escape JSON
@@ -42,7 +44,7 @@ async function logEvent(action, user, details = {}) {
     action: String(action).slice(0, 100),
     user: String(user).slice(0, 100),
     details: (() => {
-      const d = {};
+      const d: Record<string, string> = {};
       for (const [k, v] of Object.entries(details)) {
         d[String(k).slice(0, 50)] = String(v).slice(0, 500);
       }
@@ -51,7 +53,7 @@ async function logEvent(action, user, details = {}) {
   };
 
   const prevHash = lastHashCache || await getLastHash();
-  const event = {
+  const event: Record<string, any> = {
     timestamp: new Date().toISOString(),
     action: sanitized.action,
     user: sanitized.user,
@@ -60,7 +62,7 @@ async function logEvent(action, user, details = {}) {
   };
   
   const hash = crypto.createHash('sha256').update(JSON.stringify(event)).digest('hex');
-  (event as any).hash = hash;
+  event.hash = hash;
   lastHashCache = hash;
 
   try {
@@ -72,7 +74,7 @@ async function logEvent(action, user, details = {}) {
   return event;
 }
 
-async function verifyChain() {
+export async function verifyChain() {
   try {
     const content = await fsPromises.readFile(CHAIN_FILE, 'utf8');
     const lines = content.trim().split('\n').filter(Boolean);
@@ -80,18 +82,18 @@ async function verifyChain() {
     
     for (const line of lines) {
       const event = JSON.parse(line);
-      if ((event as any).prevHash !== prevHash) return false;
+      if (event.prevHash !== prevHash) return false;
       
       const computedHash = crypto.createHash('sha256').update(JSON.stringify({
-        timestamp: (event as any).timestamp,
-        action: (event as any).action,
-        user: (event as any).user,
-        details: (event as any).details,
-        prevHash: (event as any).prevHash
+        timestamp: event.timestamp,
+        action: event.action,
+        user: event.user,
+        details: event.details,
+        prevHash: event.prevHash
       })).digest('hex');
       
-      if (computedHash !== (event as any).hash) return false;
-      prevHash = (event as any).hash;
+      if (computedHash !== event.hash) return false;
+      prevHash = event.hash;
     }
     return true;
   } catch (err) {
@@ -100,7 +102,7 @@ async function verifyChain() {
   }
 }
 
-async function getRecentEvents(limit = 50) {
+export async function getRecentEvents(limit = 50) {
   try {
     const content = await fsPromises.readFile(CHAIN_FILE, 'utf8');
     const lines = content.trim().split('\n').filter(Boolean);
@@ -111,8 +113,9 @@ async function getRecentEvents(limit = 50) {
   }
 }
 
-// CLI
-if (require.main === module) {
+// CLI (ESM main check)
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMain) {
   const cmd = process.argv[2];
   if (cmd === 'verify') {
     (async () => {
@@ -128,8 +131,3 @@ if (require.main === module) {
     console.log('Usage: node audit_logger.js [verify|log] ...');
   }
 }
-
-module.exports = { logEvent, verifyChain, initAudit, getRecentEvents };
-
-
-export {};

@@ -20,7 +20,7 @@
 
 'use strict';
 
-const { createLogger } = require('../observability/logger');
+import { createLogger } from '../observability/logger.js';
 
 const log = createLogger('BashPipelineGenerator');
 
@@ -74,7 +74,7 @@ class BashPipelineGenerator {
    * @returns {string}
    */
   _buildHeader(taskType) {
-    return `#!/data/data/com.termux/files/usr/bin/bash
+    return `#!/usr/bin/env bash
 # =============================================================================
 # KLYN AI OS — Auto-Generated Script
 # Task Type: ${taskType}
@@ -84,9 +84,11 @@ class BashPipelineGenerator {
 set -euo pipefail  # Exit on error, undefined vars, pipe failures
 IFS=$'\\n\\t'      # Safe internal field separator
 
-# Termux-specific paths
-export PATH="/data/data/com.termux/files/usr/bin:$PATH"
-export TMPDIR="/data/data/com.termux/files/usr/tmp"
+# Portable environment (keeps the Termux layout when running there)
+if [ -d "$HOME/../usr/bin" ] && [ -x "$HOME/../usr/bin/bash" ]; then
+  export PATH="$HOME/../usr/bin:$PATH"
+  export TMPDIR="$HOME/../usr/tmp"
+fi
 
 # Logging function
 log() {
@@ -141,6 +143,4 @@ exit 0
   }
 }
 
-module.exports = Object.freeze({
-  BashPipelineGenerator,
-});
+export { BashPipelineGenerator };

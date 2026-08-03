@@ -1,71 +1,15 @@
-<<<<<<< HEAD
-// [KLYN-V4.7-SELF-HEALED-AST-NODE: Cannot use import statement outside a module]
+// KLYN AI OS - Local Gateway (HTTP API server)
+// NOTE: This file previously contained unresolved git merge-conflict markers that
+// prevented it from parsing. The conflict was resolved to the working server
+// implementation and converted to ESM to match package.json ("type": "module").
 import http from 'node:http';
 import path from 'node:path';
 import fs from 'node:fs';
-import { execSync } from 'node:child_process';
+import vm from 'node:vm';
+import { fileURLToPath } from 'node:url';
+import { initializeVault, storeMemory, recall } from './index.js';
 
-export class KlynApexV13 {
-  constructor(workDir = process.cwd()) {
-    this.workDir = workDir;
-    this.memoryPool = new Float32Array(1024 * 1024);
-    this.nodes = 8;
-  }
-
-  async executeSwarmTask(intent) {
-    const startTime = process.hrtime.bigint();
-    const txId = `v130_apex_${Date.now()}`;
-    const targetFile = path.join(this.workDir, 'apex_enterprise_core.js');
-
-    const enterpriseCode = `// KLYN AI OS v13.0 ELITE ENTERPRISE CORE
-// INTENT: ${intent}
-// SWARM STATUS: 8/8 NODES ACTIVE (PARALLEL EXECUTION)
-// LATENCY TARGET: SUB-500 MICROSECONDS
-
-export const APEX_MATRIX = {
-  engine: "KLYN-V13.0-APEX",
-  leapFactor: "1000_YEARS_AHEAD_OF_CURSOR_AND_ANTHROPIC",
-  executionState: "ZERO_COPY_RAM_NATIVE",
-  nodesActive: 8
-};
-
-export class ApexSwarmWorker {
-  static dispatchParallel(payload) {
-    return Array.from({ length: 8 }).map((_, id) => ({
-      agentId: \`agent_0\${id + 1}\`,
-      status: "EXECUTED_ZERO_COPY",
-      timestamp: process.hrtime.bigint().toString()
-    }));
-  }
-}
-export default ApexSwarmWorker;
-`;
-
-    fs.writeFileSync(targetFile, enterpriseCode, 'utf8');
-    const endTime = process.hrtime.bigint();
-    const micros = (Number(endTime - startTime) / 1000).toFixed(2);
-
-    try {
-      execSync(`git add . && git commit -m "feat(klyn-v130): apex 8-node swarm dispatch for [${intent}] [TX: ${txId}]"`, {
-        cwd: this.workDir,
-        stdio: 'ignore'
-      });
-    } catch (e) {}
-
-    return {
-      status: "DOMINANCE_VERIFIED",
-      transactionId: txId,
-      executionMicros: micros,
-      cursorTearDown: "1000 YEARS BEHIND"
-    };
-  }
-}
-=======
-const http = require('http');
-const path = require('path');
-const fs = require('fs');
-const vm = require('vm');
-const { initializeVault, storeMemory, recall } = require('./index.js');
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 class KlynServerEngine {
   constructor(workDir) {
@@ -339,10 +283,10 @@ function startServer(port) {
     }
   });
 
-  server.listen(port, () => {
+  // Bind to 0.0.0.0 and honor the PORT injected by the host environment
+  server.listen(port, '0.0.0.0', () => {
     console.log(`[KLYN SERVER] Local Gateway running on http://localhost:${port}`);
   });
 }
 
-startServer(7860);
->>>>>>> 03d7bf7 (feat(kernel): sync full Klyn OS workspace and vault modules)
+startServer(Number(process.env.PORT) || 7860);

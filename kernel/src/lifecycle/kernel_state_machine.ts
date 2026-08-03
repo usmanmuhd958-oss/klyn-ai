@@ -27,7 +27,7 @@
 
 'use strict';
 
-const { createLogger } = require('../observability/logger');
+import { createLogger } from '../observability/logger.js';
 
 const log = createLogger('KernelStateMachine');
 
@@ -383,15 +383,7 @@ function createAgentStateMachine(agentId) {
 // SECTION 5: EXPORTS
 // =============================================================================
 
-module.exports = Object.freeze({
-  KlynStateMachine,
-  KERNEL_STATE,
-  AGENT_STATE,
-  KERNEL_TRANSITIONS,
-  AGENT_TRANSITIONS,
-  createKernelStateMachine,
-  createAgentStateMachine,
-});
+export { KlynStateMachine, KERNEL_STATE, AGENT_STATE, KERNEL_TRANSITIONS, AGENT_TRANSITIONS, createKernelStateMachine, createAgentStateMachine };
 
 
 export {};

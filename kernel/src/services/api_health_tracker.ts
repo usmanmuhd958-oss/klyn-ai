@@ -14,7 +14,7 @@
 
 'use strict';
 
-const { createLogger } = require('../observability/logger');
+import { createLogger } from '../observability/logger.js';
 
 const log = createLogger('APIHealthTracker');
 
@@ -145,10 +145,7 @@ function getAPIHealthTracker() {
   return _trackerInstance;
 }
 
-module.exports = Object.freeze({
-  getAPIHealthTracker,
-  APIHealthTracker,
-});
+export { getAPIHealthTracker, APIHealthTracker };
 
 
 export {};

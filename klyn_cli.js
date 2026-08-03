@@ -1,5 +1,5 @@
-// [KLYN-AST-GUARD] Verified & Protected by Klyn OS Kernel
 #!/usr/bin/env node
+// [KLYN-AST-GUARD] Verified & Protected by Klyn OS Kernel
 
 import path from 'node:path';
 import fs from 'node:fs';
@@ -13,6 +13,37 @@ const isInternalWorker = args.includes('--worker');
 
 const pidFile = path.join(workDir, '.klyn_daemon.pid');
 const logFile = path.join(workDir, '.klyn_daemon.log');
+
+// Read the PID recorded in the pid file, or null if absent/invalid.
+function readDaemonPid() {
+  if (!fs.existsSync(pidFile)) return null;
+  const pid = parseInt(fs.readFileSync(pidFile, 'utf8'), 10);
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+
+// Returns true ONLY if the PID is alive AND is actually a KLYN daemon worker
+// (not just any process that happened to reuse the PID).
+function isDaemonAlive(pid) {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0); // throws ESRCH if the process does not exist
+  } catch {
+    return false;
+  }
+  try {
+    const cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8');
+    return cmdline.includes('klyn_cli.js') && cmdline.includes('watch');
+  } catch {
+    return false;
+  }
+}
+
+// Remove a stale pid file (dead daemon or PID reused by an unrelated process).
+function removeStalePidFile() {
+  try {
+    fs.unlinkSync(pidFile);
+  } catch { /* already gone */ }
+}
 
 class KlynV52HardenedDaemonEngine {
   constructor(rootDir) {
@@ -92,10 +123,14 @@ class KlynV52HardenedDaemonEngine {
 }
 
 if (command === 'watch' && isDaemon) {
-  if (fs.existsSync(pidFile)) {
-    const pid = fs.readFileSync(pidFile, 'utf8');
-    console.log(`[KLYN-V5.2.1-DAEMON] Daemon is already running (PID: ${pid}).`);
+  const existingPid = readDaemonPid();
+  if (existingPid && isDaemonAlive(existingPid)) {
+    console.log(`[KLYN-V5.2.1-DAEMON] Daemon is already running (PID: ${existingPid}).`);
     process.exit(0);
+  }
+  if (existingPid) {
+    console.log(`[KLYN-V5.2.1-DAEMON] Stale pid file (PID ${existingPid} is not a running KLYN daemon). Removing and starting fresh.`);
+    removeStalePidFile();
   }
   const child = spawn(process.execPath, [process.argv[1], 'watch', '--worker'], {
     detached: true,
@@ -114,22 +149,29 @@ if (command === 'watch' && isDaemon) {
   const daemon = new KlynV52HardenedDaemonEngine(workDir);
   daemon.start();
 } else if (command === 'stop') {
-  if (fs.existsSync(pidFile)) {
-    const pid = parseInt(fs.readFileSync(pidFile, 'utf8'), 10);
-    try {
-      process.kill(pid);
-      console.log(`[KLYN-V5.2.1-DAEMON] Daemon process (${pid}) stopped successfully.`);
-    } catch(e) {
-      console.log(`[KLYN-V5.2.1-DAEMON] Process ${pid} was not found.`);
+  const pid = readDaemonPid();
+  if (pid) {
+    if (isDaemonAlive(pid)) {
+      try {
+        process.kill(pid);
+        console.log(`[KLYN-V5.2.1-DAEMON] Daemon process (${pid}) stopped successfully.`);
+      } catch (e) {
+        console.log(`[KLYN-V5.2.1-DAEMON] Failed to stop process ${pid}: ${e.message}`);
+      }
+    } else {
+      console.log(`[KLYN-V5.2.1-DAEMON] PID ${pid} is not a running KLYN daemon (stale pid file). Not killing it.`);
     }
-    fs.unlinkSync(pidFile);
+    removeStalePidFile();
   } else {
     console.log("[KLYN-V5.2.1-DAEMON] No active daemon running.");
   }
 } else if (command === 'status') {
-  if (fs.existsSync(pidFile)) {
-    const pid = fs.readFileSync(pidFile, 'utf8');
+  const pid = readDaemonPid();
+  if (pid && isDaemonAlive(pid)) {
     console.log(`[KLYN-V5.2.1-DAEMON] Status: ONLINE (PID: ${pid})`);
+  } else if (pid) {
+    console.log(`[KLYN-V5.2.1-DAEMON] Status: OFFLINE (stale pid file for PID ${pid} removed)`);
+    removeStalePidFile();
   } else {
     console.log("[KLYN-V5.2.1-DAEMON] Status: OFFLINE");
   }

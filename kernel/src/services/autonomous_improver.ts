@@ -1,8 +1,9 @@
-const { execSync } = require('child_process');
-const fs = require('fs');
-const path = require('path');
+import { execSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+import fs from 'node:fs';
+import path from 'node:path';
 
-const PROJECT_ROOT = '/data/data/com.termux/files/home/klyn-ai-os';
+const PROJECT_ROOT = (process.env.KLYN_PROJECT_ROOT || path.join(process.env.HOME || '', 'klyn-ai-os'));
 const IMPROVEMENT_LOG = path.join(PROJECT_ROOT, 'runtime', 'logs', 'autonomous_improver.log');
 
 function log(msg) {
@@ -84,12 +85,12 @@ function runImprovementCycle() {
 }
 
 // Run immediately if called directly
-if (require.main === module) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   runImprovementCycle();
 }
 
 // Export for scheduled use
-module.exports = { runImprovementCycle };
+export { runImprovementCycle };
 
 
 export {};

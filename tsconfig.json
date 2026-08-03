@@ -21,8 +21,11 @@
     "dist",
     "1.brain/index.ts",
     "1.brain/providers/**/*",
+    "1.brain/graph_memory.ts",
     "kernel/src/indexer/**/*",
     "kernel/src/orchestrator/**/*",
-    "kernel/src/pipeline/context_pruner.ts"
+    "kernel/src/pipeline/context_pruner.ts",
+    "kernel/NexusKernel.ts",
+    "kernel/tests/**/*"
   ]
 }

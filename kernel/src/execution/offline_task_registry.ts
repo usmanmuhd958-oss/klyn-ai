@@ -14,7 +14,7 @@
 
 'use strict';
 
-const { createLogger } = require('../observability/logger');
+import { createLogger } from '../observability/logger.js';
 
 const log = createLogger('OfflineTaskRegistry');
 
@@ -166,7 +166,7 @@ function generatedFunction(param1, param2) {
   return null;
 }
 
-module.exports = { generatedFunction };
+export { generatedFunction };
 EOF
     ;;
 
@@ -186,7 +186,7 @@ class GeneratedClass {
   // TODO: Add methods here
 }
 
-module.exports = { GeneratedClass };
+export { GeneratedClass };
 EOF
     ;;
 
@@ -258,10 +258,7 @@ function getOfflineTaskRegistry() {
   return _registryInstance;
 }
 
-module.exports = Object.freeze({
-  getOfflineTaskRegistry,
-  OfflineTaskRegistry,
-});
+export { getOfflineTaskRegistry, OfflineTaskRegistry };
 
 
 export {};

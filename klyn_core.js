@@ -1,9 +1,9 @@
-// [KLYN-V4.7-SELF-HEALED-AST-NODE: Unexpected token 'export']
-const { initializeVault, storeMemory, recall } = require('./index.js');
-const path = require('path');
-const fs = require('fs');
-const vm = require('vm');
-const { exec } = require('child_process');
+// KLYN core: indexing + watch agent over the working directory (ESM)
+import { initializeVault, storeMemory, recall } from './index.js';
+import path from 'node:path';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import { exec } from 'node:child_process';
 
 class KlynCoreOS {
   constructor(workDir) {
@@ -167,8 +167,5 @@ class KlynCoreOS {
   }
 }
 
-const klynOS = new KlynCoreOS(__dirname);
+const klynOS = new KlynCoreOS(import.meta.dirname);
 klynOS.startActiveOS();
-
-// Self-healed by Klyn AI OS on 2026-07-28T14:23:22.565Z
-export const selfHealed = true;

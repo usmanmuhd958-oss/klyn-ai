@@ -1,3 +1,5 @@
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 // ============================================================
 // KLYN AI OS — Persistent Task Queue Engine v2.0.0
 //
@@ -32,10 +34,10 @@
 
 'use strict';
 
-const fs               = require('fs');
-const path             = require('path');
-const crypto           = require('crypto');
-const { EventEmitter } = require('events');
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { EventEmitter } from 'node:events';
 
 // ─── PULL BACKOFF FROM KERNEL — SAFE FALLBACK ─────────────────
 let computeBackoff;
@@ -840,10 +842,4 @@ class TaskQueue extends EventEmitter {
 }
 
 // ─── EXPORTS ─────────────────────────────────────────────────
-module.exports = {
-    TaskQueue,
-    TASK_PRIORITY,
-    TASK_STATE,
-    PRIORITY_NAMES,
-    createTask,
-};
+export { TaskQueue, TASK_PRIORITY, TASK_STATE, PRIORITY_NAMES, createTask };

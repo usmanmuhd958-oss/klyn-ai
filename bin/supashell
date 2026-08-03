@@ -1,5 +1,5 @@
 #!/bin/bash
-PROJECT_ROOT="/data/data/com.termux/files/home/klyn-ai-os"
+PROJECT_ROOT="${PROJECT_ROOT:-${HOME}/klyn-ai-os}"
 cd "$PROJECT_ROOT"
 
 echo "👑 Klyn AI OS v25 – Enterprise Supashell"

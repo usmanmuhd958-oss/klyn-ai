@@ -1,7 +1,9 @@
-const { createClient } = require('@supabase/supabase-js');
-const dotenv = require('dotenv');
-const path = require('path');
-dotenv.config({ path: path.join(__dirname, '..', '..', 'config', 'supabase.env') });
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+import { createClient } from '@supabase/supabase-js';
+import dotenv from 'dotenv';
+import path from 'node:path';
+dotenv.config({ path: path.join(import.meta.dirname, '..', '..', 'config', 'supabase.env') });
 
 let supabase;
 try {
@@ -16,7 +18,7 @@ function publish(channel, payload) {
     supabase.from('events').insert({ type: channel, data: payload }).then();
   } else {
     const fs = require('fs');
-    const p = path.join(__dirname, '..', '..', 'runtime', 'events', `${channel}.jsonl`);
+    const p = path.join(import.meta.dirname, '..', '..', 'runtime', 'events', `${channel}.jsonl`);
     fs.appendFileSync(p, JSON.stringify({ ts: new Date().toISOString(), data: payload }) + '\n');
   }
 }
@@ -30,7 +32,7 @@ function subscribe(channel, handler) {
   } else {
     // Local file watcher fallback
     const fs = require('fs');
-    const p = path.join(__dirname, '..', '..', 'runtime', 'events', `${channel}.jsonl`);
+    const p = path.join(import.meta.dirname, '..', '..', 'runtime', 'events', `${channel}.jsonl`);
     fs.watchFile(p, () => {
       const lines = fs.readFileSync(p, 'utf8').trim().split('\n');
       const last = JSON.parse(lines[lines.length-1]);
@@ -39,7 +41,7 @@ function subscribe(channel, handler) {
   }
 }
 
-module.exports = { publish, subscribe };
+export { publish, subscribe };
 
 
 export {};

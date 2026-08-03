@@ -21,11 +21,11 @@
 
 'use strict';
 
-const fs               = require('fs');
-const path             = require('path');
-const crypto           = require('crypto');
-const { EventEmitter } = require('events');
-const { withRetry, registry: cbRegistry } = require('./backoff');
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { EventEmitter } from 'node:events';
+import { withRetry, registry as cbRegistry } from './backoff.js';
 
 // ─── CONSTANTS ───────────────────────────────────────────────
 const WF_STATE = Object.freeze({
@@ -530,7 +530,7 @@ class WorkflowEngine extends EventEmitter {
     }
 }
 
-module.exports = { WorkflowEngine, WorkflowInstance, WF_STATE, STEP_STATE };
+export { WorkflowEngine, WorkflowInstance, WF_STATE, STEP_STATE };
 
 
 export {};

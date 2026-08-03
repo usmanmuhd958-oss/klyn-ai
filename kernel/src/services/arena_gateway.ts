@@ -1,3 +1,5 @@
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 'use strict';
 
 /**
@@ -13,12 +15,11 @@
  *   4. Log usage and return response
  */
 
-const { validateClient } = require('./subscription_manager');
-const { rateLimiter }  = require('./rate_limiter');
-const { bestEffortCall } = require('./llm_provider');
+import { validateClient } from './subscription_manager.js';
+import { bestEffortCall } from './llm_provider.js';
 
-// In‑memory rate limiter: 100 requests per 60s window per client
-const clientRateLimiter = rateLimiter({ windowMs: 60000, maxRequests: 100 });
+// Per‑client sliding window: 100 requests per 60s (flat‑fee plan cap)
+const rateWindow = new Map<string, number[]>();
 
 /**
  * Handle an arena request.
@@ -34,19 +35,15 @@ async function arenaRequest(clientId, prompt, preferredModel = null) {
     throw new Error(`Subscription invalid: ${validation.reason}`);
   }
 
-  // 2. Apply rate limiter (returns an Express‑style middleware; we use it directly)
-  // For simplicity we call the rate limiter function manually
-  // In production, this would be middleware on the API endpoint.
+  // 2. Apply rate limiting (per client, sliding 60s window)
   const rateLimitKey = `client:${clientId}`;
   const now = Date.now();
-  if (!clientRateLimiter._clients) clientRateLimiter._clients = new Map();
-  const timestamps = clientRateLimiter._clients.get(rateLimitKey) || [];
-  const recent = timestamps.filter(t => now - t < 60000);
+  const recent = (rateWindow.get(rateLimitKey) || []).filter(t => now - t < 60000);
   if (recent.length >= 100) {
     throw new Error('Rate limit exceeded (100 requests/min)');
   }
   recent.push(now);
-  clientRateLimiter._clients.set(rateLimitKey, recent);
+  rateWindow.set(rateLimitKey, recent);
 
   // 3. Route to the best model
   const modelNames = validation.plan === 'pro'
@@ -84,7 +81,7 @@ async function arenaRequest(clientId, prompt, preferredModel = null) {
   // 4. Log usage (append to a simple JSON lines file)
   const fs = require('fs');
   const path = require('path');
-  const usageLog = path.join(__dirname, '..', '..', 'runtime', 'logs', 'usage.jsonl');
+  const usageLog = path.join(import.meta.dirname, '..', '..', 'runtime', 'logs', 'usage.jsonl');
   const logEntry = JSON.stringify({
     ts: new Date().toISOString(),
     clientId,
@@ -96,7 +93,7 @@ async function arenaRequest(clientId, prompt, preferredModel = null) {
   return { result, model: usedModel };
 }
 
-module.exports = { arenaRequest };
+export { arenaRequest };
 
 
 export {};

@@ -1,6 +1,6 @@
-const fs = require('fs');
-const path = require('path');
-const http = require('http');
+import fs from 'node:fs';
+import path from 'node:path';
+import http from 'node:http';
 
 const projectRoot = process.env.PROJECT_ROOT || process.cwd();
 const runtimeDir = path.join(projectRoot, 'runtime');
@@ -53,21 +53,20 @@ function testAPI() {
   });
 }
 
-function testStateEngine() {
+async function testStateEngine() {
   try {
-    // Use a simple inline test – never fails the CI if the module can’t be loaded
-    const { setState, getState } = require('./kernel/src/services/state_engine.js');
-    setState('ci_test', { ok: true }).then(() => {
-      return getState('ci_test');
-    }).then(val => {
+    // Use a simple inline test – never fails the CI if the module can't be loaded
+    const { setState, getState } = await import('../kernel/src/services/state_engine.js');
+    try {
+      await setState('ci_test', { ok: true });
+      const val = await getState('ci_test');
       check('State engine', val && val.ok === true);
-      finish();
-    }).catch(() => {
+    } catch {
       // Fallback: treat as passing if the module exists
       check('State engine', true);
-      finish();
-    });
-  } catch(e) {
+    }
+    finish();
+  } catch (e) {
     check('State engine', true);  // CI doesn't have all deps, don't fail
     finish();
   }

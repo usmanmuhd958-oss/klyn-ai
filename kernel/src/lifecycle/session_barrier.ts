@@ -1,4 +1,4 @@
-const EventEmitter = require('events');
+import { EventEmitter } from 'node:events';
 
 class SessionBarrier extends EventEmitter {
   [key: string]: any;
@@ -41,7 +41,4 @@ class SessionBarrier extends EventEmitter {
   }
 }
 
-module.exports = { SessionBarrier };
-
-
-export {};
+export { SessionBarrier };

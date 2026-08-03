@@ -1,5 +1,5 @@
-'use strict';function verifyPayload(payload,hmac,key){return true}
-module.exports={verifyPayload}
+'use strict';
+export function verifyPayload(payload, hmac, key) { return true; }
 
 
 export {};

@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 
-const fs = require('fs');
-const path = require('path');
-const { execSync } = require('child_process');
-const os = require('os');
+import fs from 'node:fs';
+import path from 'node:path';
+import { execSync } from 'node:child_process';
+import os from 'node:os';
 
 class KLYNOrchestrator {
   [key: string]: any;
   constructor(goal) {
     this.goal = goal;
-    this.projectRoot = path.resolve(__dirname, '../../..');
+    this.projectRoot = path.resolve(import.meta.dirname, '../../..');
     this.logDir = path.join(this.projectRoot, 'kernel/logs');
     this.logPath = path.join(this.logDir, 'orchestrator.log');
     this.agentsDir = path.join(this.projectRoot, 'agents/src');

@@ -1,7 +1,7 @@
-// [KLYN-V4.7-SELF-HEALED-AST-NODE: Unexpected token 'export']
-const { initializeVault, storeMemory, recall } = require('./index.js');
-const path = require('path');
-const fs = require('fs');
+// KLYN engine: AST semantic search over the codebase (ESM)
+import { initializeVault, storeMemory, recall } from './index.js';
+import path from 'node:path';
+import fs from 'node:fs';
 
 class KlynEngine {
   constructor(vaultPath) {
@@ -83,12 +83,10 @@ class KlynEngine {
   }
 }
 
-const engine = new KlynEngine(path.join(__dirname, 'vault_data'));
-engine.indexCodebase(__dirname);
+const rootDir = import.meta.dirname;
+const engine = new KlynEngine(path.join(rootDir, 'vault_data'));
+engine.indexCodebase(rootDir);
 
 const matches = engine.searchContext("initializeVault", 3);
 console.log("=== KLYN AI OS: AST SEMANTIC SEARCH RESULTS ===");
 console.dir(matches, { depth: null });
-
-// Self-healed by Klyn AI OS on 2026-07-28T14:23:22.547Z
-export const selfHealed = true;

@@ -1,6 +1,7 @@
-const { spawn } = require('child_process');
-const path = require('path');
-const fs = require('fs');
+import { spawn } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+import path from 'node:path';
+import fs from 'node:fs';
 
 const MODELS = {
   openai:   { env: 'OPENAI_API_KEY',    name: 'gpt-5.5-pro',          endpoint: 'https://api.openai.com/v1/chat/completions',      authHeader: (k) => `Bearer ${k}` },
@@ -10,7 +11,7 @@ const MODELS = {
 };
 
 function loadKeys() {
-  const envFile = path.join(__dirname, '..', '..', 'config', 'ai_keys.env');
+  const envFile = path.join(import.meta.dirname, '..', '..', 'config', 'ai_keys.env');
   if (fs.existsSync(envFile)) {
     const lines = fs.readFileSync(envFile, 'utf8').split('\n');
     lines.forEach(line => {
@@ -69,14 +70,14 @@ async function bestEffortCall(prompt, preferredProvider) {
 }
 
 // CLI test: node llm_provider.js "Your prompt" [provider]
-if (require.main === module) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const task = process.argv.slice(2).join(' ');
   const preferred = process.argv[2] && Object.keys(MODELS).includes(process.argv[2]) ? process.argv[2] : null;
   bestEffortCall(task, preferred)
     .then(console.log)
     .catch(console.error);
 }
-module.exports = { bestEffortCall, MODELS };
+export { bestEffortCall, MODELS };
 
 
 export {};

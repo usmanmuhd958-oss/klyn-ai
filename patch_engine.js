@@ -1,8 +1,8 @@
-// [KLYN-V4.7-SELF-HEALED-AST-NODE: Unexpected token 'export']
-const { initializeVault, storeMemory, recall } = require('./index.js');
-const path = require('path');
-const fs = require('fs');
-const vm = require('vm');
+// KLYN patch engine: verified-patch synthesizer demo (ESM)
+import { initializeVault, storeMemory, recall } from './index.js';
+import path from 'node:path';
+import fs from 'node:fs';
+import vm from 'node:vm';
 
 class KlynEngine {
   constructor(vaultPath) {
@@ -118,22 +118,20 @@ class KlynPatchSynthesizer {
   }
 }
 
-const engine = new KlynEngine(path.join(__dirname, 'vault_data'));
-engine.indexCodebase(__dirname);
+const rootDir = import.meta.dirname;
+const engine = new KlynEngine(path.join(rootDir, 'vault_data'));
+engine.indexCodebase(rootDir);
 
 const patcher = new KlynPatchSynthesizer(engine);
 
 console.log("=== KLYN AI OS: TESTING BROKEN PATCH PREVENTER ===");
-const brokenPatchResult = patcher.applyVerifiedPatch(path.join(__dirname, 'test-vault.js'), (code) => {
+const brokenPatchResult = patcher.applyVerifiedPatch(path.join(rootDir, 'test-vault.js'), (code) => {
   return code + "\nconst brokenSyntax = ;";
 });
 console.log(brokenPatchResult);
 
 console.log("\n=== KLYN AI OS: TESTING VALID AST PATCH ===");
-const validPatchResult = patcher.applyVerifiedPatch(path.join(__dirname, 'test-vault.js'), (code) => {
+const validPatchResult = patcher.applyVerifiedPatch(path.join(rootDir, 'test-vault.js'), (code) => {
   return code + "\n// Klyn OS Auto-Verification Complete";
 });
 console.log(validPatchResult);
-
-// Self-healed by Klyn AI OS on 2026-07-28T14:23:22.582Z
-export const selfHealed = true;

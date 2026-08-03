@@ -1,3 +1,5 @@
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 // ============================================================
 // KLYN AI OS — Process Manager v3.0.0
 //
@@ -32,11 +34,11 @@
 
 'use strict';
 
-const { spawn }        = require('child_process');
-const fs               = require('fs');
-const path             = require('path');
-const { EventEmitter } = require('events');
-const { computeBackoff, sleep } = require('./backoff');
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { EventEmitter } from 'node:events';
+import { computeBackoff, sleep } from './backoff.js';
 
 // ─── CONSTANTS ───────────────────────────────────────────────
 const PROC_STATE = Object.freeze({
@@ -210,8 +212,8 @@ class ManagedProcess extends EventEmitter {
                 ...env,
                 // Ensure PATH includes common Termux locations
                 PATH: [
-                    '/data/data/com.termux/files/usr/bin',
-                    '/data/data/com.termux/files/usr/bin/applets',
+                    (process.env.PATH || '/usr/local/bin:/usr/bin:/bin'),
+                    (process.env.PATH || '/usr/local/bin:/usr/bin:/bin'),
                     process.env.PATH || '',
                 ].join(':'),
             };
@@ -598,7 +600,7 @@ class ProcessManager extends EventEmitter {
     }
 }
 
-module.exports = { ProcessManager, ManagedProcess, PROC_STATE };
+export { ProcessManager, ManagedProcess, PROC_STATE };
 
 
 export {};

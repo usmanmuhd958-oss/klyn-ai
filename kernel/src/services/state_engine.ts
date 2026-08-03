@@ -1,13 +1,15 @@
-const fs = require('fs');
-const path = require('path');
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+import fs from 'node:fs';
+import path from 'node:path';
 
-const DATA_FILE = path.join(__dirname, '..', '..', 'runtime', 'state.json');
+const DATA_FILE = path.join(import.meta.dirname, '..', '..', 'runtime', 'state.json');
 
 // Try to load Supabase, but fall back to local JSON if anything fails
 let supabase = null;
 try {
   const dotenv = require('dotenv');
-  dotenv.config({ path: path.join(__dirname, '..', '..', 'config', 'supabase.env') });
+  dotenv.config({ path: path.join(import.meta.dirname, '..', '..', 'config', 'supabase.env') });
   if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
     const { createClient } = require('@supabase/supabase-js');
     supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
@@ -50,7 +52,7 @@ async function getState(key) {
   }
 }
 
-module.exports = { setState, getState };
+export { setState, getState };
 
 
 export {};

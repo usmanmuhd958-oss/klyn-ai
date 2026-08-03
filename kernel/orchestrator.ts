@@ -1,30 +1,35 @@
 #!/usr/bin/env node
-'use strict';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 // ---------------------------------------------------------------------------
-// 1. Load environment variables FIRST
+// 1. Load environment variables FIRST (optional dependency)
 // ---------------------------------------------------------------------------
-require('dotenv').config();
+try {
+  require('dotenv').config();
+} catch {
+  // dotenv is optional — proceed without it.
+}
 
 // ---------------------------------------------------------------------------
 // 2. Imports
 // ---------------------------------------------------------------------------
-const { fork } = require('child_process');
-const path = require('path');
-const fs = require('fs');
-const WebSocket = require('ws');
+import { fork } from 'node:child_process';
+import path from 'node:path';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 // ---------------------------------------------------------------------------
 // 3. Simple structured logger (no external deps)
 // ---------------------------------------------------------------------------
-const LOG_LEVELS = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3, FATAL: 4 };
-const CURRENT_LEVEL = LOG_LEVELS[process.env.LOG_LEVEL?.toUpperCase()] ?? LOG_LEVELS.INFO;
+const LOG_LEVELS: Record<string, number> = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3, FATAL: 4 };
+const CURRENT_LEVEL = LOG_LEVELS[process.env.LOG_LEVEL?.toUpperCase() ?? ''] ?? LOG_LEVELS.INFO;
 
-const COLORS = {
+const COLORS: Record<string, string> = {
   green: '\x1b[32m', yellow: '\x1b[33m', red: '\x1b[31m', cyan: '\x1b[36m', reset: '\x1b[0m',
 };
 
-function log(level, message, meta) {
+function log(level: string, message: string, meta?: any): void {
   if (LOG_LEVELS[level] < CURRENT_LEVEL) return;
   const color = level === 'INFO' ? COLORS.green : level === 'WARN' ? COLORS.yellow : level === 'ERROR' || level === 'FATAL' ? COLORS.red : COLORS.cyan;
   const timestamp = new Date().toISOString();
@@ -33,32 +38,37 @@ function log(level, message, meta) {
   if (level === 'FATAL') process.exit(1);
 }
 
-// ---------------------------------------------------------------------------
-// 4. Validate critical environment variables
-// ---------------------------------------------------------------------------
-if (!process.env.WS_PORT) {
-  // @ts-ignore
-  log('FATAL', 'WS_PORT environment variable is not set. Please define it in .env or export it before starting.');
-}
-
-const WS_PORT = parseInt(process.env.WS_PORT, 10);
-if (isNaN(WS_PORT) || WS_PORT < 1024 || WS_PORT > 65535) {
-  // @ts-ignore
-  log('FATAL', `WS_PORT must be a valid port number (1024–65535). Got: "${process.env.WS_PORT}"`);
-}
-
 // Optional: where to write the runtime port (for index.js to read)
-const RUNTIME_PORT_FILE = path.join(__dirname, '..', '.runtime-port.json');
+const RUNTIME_PORT_FILE = path.join(import.meta.dirname, '..', '.runtime-port.json');
 
 // ---------------------------------------------------------------------------
-// 5. Create WebSocket server with robust error handling + connection listener
+// 4. Resolve + validate the WS port (must be 1024–65535)
 // ---------------------------------------------------------------------------
-function createWSServer(port) {
+function resolveWsPort(): number {
+  const raw = process.env.WS_PORT;
+  const port = parseInt(raw ?? '', 10);
+  if (!raw || isNaN(port) || port < 1024 || port > 65535) {
+    log('FATAL', `WS_PORT must be a valid port number (1024–65535). Got: "${raw}"`);
+  }
+  return port;
+}
+
+// ---------------------------------------------------------------------------
+// 5. Create WebSocket server (ws is an optional dependency, loaded lazily so
+//    importing this module never crashes when ws is not installed)
+// ---------------------------------------------------------------------------
+function createWSServer(port: number): Promise<any> {
+  let WebSocket: any;
+  try {
+    WebSocket = require('ws');
+  } catch {
+    return Promise.reject(new Error('Optional dependency "ws" is not installed. Run `npm install ws` to enable the IPC WebSocket server.'));
+  }
+
   return new Promise((resolve, reject) => {
     const wss = new WebSocket.Server({ port });
 
-    // Synchronous error during construction? Unlikely but safe.
-    wss.on('error', (err) => {
+    wss.on('error', (err: any) => {
       if (err.code === 'EADDRINUSE') {
         reject(new Error(`Port ${port} is already in use. Please free it or set another WS_PORT.`));
       } else {
@@ -67,22 +77,16 @@ function createWSServer(port) {
     });
 
     wss.on('listening', () => {
-      // @ts-ignore
       log('INFO', `Core IPC WebSocket server bound to port ${port}`);
-      // Write the active port so index.js can discover it
       writeRuntimePort(port);
       resolve(wss);
     });
 
-    // Log every new IPC connection (e.g., from index.js)
-    wss.on('connection', (ws) => {
-      // @ts-ignore
-      log('INFO', `New IPC connection established`);
+    wss.on('connection', (ws: any) => {
+      log('INFO', 'New IPC connection established');
       ws.send(JSON.stringify({ event: 'orchestrator:connected', timestamp: new Date().toISOString() }));
-      // @ts-ignore
       ws.on('close', () => log('INFO', 'IPC connection closed'));
-      // @ts-ignore
-      ws.on('error', (err) => log('ERROR', `IPC connection error: ${err.message}`));
+      ws.on('error', (err: any) => log('ERROR', `IPC connection error: ${err.message}`));
     });
   });
 }
@@ -90,35 +94,31 @@ function createWSServer(port) {
 // ---------------------------------------------------------------------------
 // 6. Write active port to runtime file (so index.js can discover it)
 // ---------------------------------------------------------------------------
-function writeRuntimePort(port) {
+function writeRuntimePort(port: number): void {
   try {
     fs.writeFileSync(RUNTIME_PORT_FILE, JSON.stringify({ activeWsPort: port, updatedAt: new Date().toISOString() }));
-    // @ts-ignore
     log('INFO', `Runtime port file updated → ${RUNTIME_PORT_FILE}`);
-  } catch (err) {
-    // @ts-ignore
+  } catch (err: any) {
     log('ERROR', `Failed to write runtime port file: ${err.message}`);
   }
 }
 
 // ---------------------------------------------------------------------------
-// 7. Spawn index.js – output is NOT swallowed; it goes directly to Termux
+// 7. Spawn index.js – output goes straight to the terminal
 // ---------------------------------------------------------------------------
-function startApplication() {
-  const appScript = path.join(__dirname, '..', 'index.js');
+function startApplication(): void {
+  const appScript = path.join(import.meta.dirname, '..', 'index.js');
   if (!fs.existsSync(appScript)) {
-    // @ts-ignore
     log('WARN', `index.js not found at ${appScript}. Orchestrator running without app.`);
     return;
   }
-  // @ts-ignore
+  const WS_PORT = resolveWsPort();
   log('INFO', `Launching application (index.js) with WS port ${WS_PORT}…`);
   const child = fork(appScript, [], {
-    stdio: 'inherit',           // <-- FIX: all output visible in Termux
+    stdio: 'inherit',
     env: { ...process.env, WS_PORT: String(WS_PORT) },
   });
   child.on('exit', (code) => {
-    // @ts-ignore
     log('INFO', `Application exited with code ${code}`);
   });
 }
@@ -126,50 +126,75 @@ function startApplication() {
 // ---------------------------------------------------------------------------
 // 8. Graceful shutdown
 // ---------------------------------------------------------------------------
-function gracefulShutdown(signal, wss) {
-  // @ts-ignore
+function gracefulShutdown(signal: string, wss: any): void {
   log('INFO', `Received ${signal}. Shutting down…`);
-  wss.clients.forEach(client => client.close(1001, 'Server shutting down'));
+  wss.clients.forEach((client: any) => client.close(1001, 'Server shutting down'));
   wss.close(() => {
-    // @ts-ignore
     log('INFO', 'WebSocket server closed');
     process.exit(0);
   });
   setTimeout(() => {
-    // @ts-ignore
     log('ERROR', 'Forced shutdown after timeout');
     process.exit(1);
   }, 5000);
 }
 
 // ---------------------------------------------------------------------------
-// 9. Main entry point
+// 9. Orchestrator class — the API consumed by kernel-entry.ts
 // ---------------------------------------------------------------------------
-(async function main() {
-  // @ts-ignore
-  log('INFO', 'Klyn AI OS Orchestrator starting…');
-  try {
-    const wss = await createWSServer(WS_PORT);
+export class Orchestrator {
+  private readonly _manifest: any;
+  private _wss: any = null;
 
-    // Graceful shutdown hooks
+  constructor(manifest: any) {
+    this._manifest = manifest;
+  }
+
+  async start(): Promise<{ port: number }> {
+    const port = resolveWsPort();
+    log('INFO', 'Klyn AI OS Orchestrator starting…');
+    const wss = await createWSServer(port);
+    this._wss = wss;
+
     process.on('SIGINT', () => gracefulShutdown('SIGINT', wss));
     process.on('SIGTERM', () => gracefulShutdown('SIGTERM', wss));
 
-    // Optionally launch the main application
     startApplication();
 
-    // Keep the process alive and manage memory
     setInterval(() => {
       if (global.gc) {
         const mem = process.memoryUsage();
         if (mem.heapUsed > 150 * 1024 * 1024) {
-          // @ts-ignore
-          log('WARN', `Heap ${Math.round(mem.heapUsed/1024/1024)}MB > 150MB → forcing GC`);
+          log('WARN', `Heap ${Math.round(mem.heapUsed / 1024 / 1024)}MB > 150MB → forcing GC`);
           global.gc();
         }
       }
     }, 30000);
-  } catch (err) {
+
+    return { port };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 10. Standalone entry point (only when executed directly)
+// ---------------------------------------------------------------------------
+async function main(): Promise<void> {
+  log('INFO', 'Klyn AI OS Orchestrator (standalone) starting…');
+  try {
+    const port = resolveWsPort();
+    const wss = await createWSServer(port);
+
+    process.on('SIGINT', () => gracefulShutdown('SIGINT', wss));
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM', wss));
+
+    startApplication();
+  } catch (err: any) {
     log('FATAL', `Failed to start orchestrator: ${err.message}`, { stack: err.stack });
   }
-})();
+}
+
+const __filename = fileURLToPath(import.meta.url);
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(__filename);
+if (isMain) {
+  main();
+}

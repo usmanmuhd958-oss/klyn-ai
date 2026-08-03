@@ -21,8 +21,8 @@
 
 'use strict';
 
-const http   = require('http');
-const crypto = require('crypto');
+import http from 'node:http';
+import crypto from 'node:crypto';
 
 // ─── RATE LIMITER ────────────────────────────────────────────
 class RateLimiter {
@@ -241,7 +241,7 @@ class HealthApiServer {
     }
 }
 
-module.exports = { HealthApiServer };
+export { HealthApiServer };
 
 
 export {};

@@ -35,7 +35,7 @@
 
 'use strict';
 
-const { createLogger } = require('../observability/logger');
+import { createLogger } from '../observability/logger.js';
 
 const log = createLogger('VaultInterface');
 
@@ -148,10 +148,7 @@ function createVaultInterface(vaultSingleton) {
 // SECTION 3: EXPORTS
 // =============================================================================
 
-module.exports = Object.freeze({
-  createVaultInterface,
-  ALLOWED_VAULT_OPERATIONS,
-});
+export { createVaultInterface, ALLOWED_VAULT_OPERATIONS };
 
 
 export {};

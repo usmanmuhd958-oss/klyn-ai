@@ -2,11 +2,11 @@
   "name": "klyn-ai-os",
   "version": "3.1.0",
   "environment": "production",
-  "baseDir": "/data/data/com.termux/files/home/klyn-ai-os",
+  "baseDir": "${HOME}/klyn-ai-os",
 
   "log": {
     "level": "info",
-    "dir": "/data/data/com.termux/files/home/klyn-ai-os/runtime/logs",
+    "dir": "${HOME}/klyn-ai-os/runtime/logs",
     "maxFileSize": 52428800,
     "maxFiles": 10
   },
@@ -80,7 +80,7 @@
       "memoryLimitMb":   128,
       "env": {
         "AGENT_ROLE":        "bug-hunter",
-        "KLYN_PROJECT_ROOT": "/data/data/com.termux/files/home/klyn-ai-os"
+        "KLYN_PROJECT_ROOT": "${HOME}/klyn-ai-os"
       }
     }
   ]

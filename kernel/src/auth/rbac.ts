@@ -1,13 +1,19 @@
-const fs = require('fs');
-const path = require('path');
+import fs from 'node:fs';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+
 const fsPromises = fs.promises;
 
-const ROLES_FILE = path.join(__dirname, '..', '..', 'runtime', 'rbac', 'roles.json');
-const USERS_FILE = path.join(__dirname, '..', '..', 'runtime', 'rbac', 'users.json');
+const ROLES_FILE = process.env.KLYN_RBAC_DIR
+  ? path.join(process.env.KLYN_RBAC_DIR, 'roles.json')
+  : path.join(import.meta.dirname, '..', '..', 'runtime', 'rbac', 'roles.json');
+const USERS_FILE = process.env.KLYN_RBAC_DIR
+  ? path.join(process.env.KLYN_RBAC_DIR, 'users.json')
+  : path.join(import.meta.dirname, '..', '..', 'runtime', 'rbac', 'users.json');
 
 // In-memory cache with TTL (5 minutes)
-let roleCache = null;
-let userCache = null;
+let roleCache: Record<string, string[]> | null = null;
+let userCache: Record<string, any> | null = null;
 let cacheTimestamp = 0;
 const CACHE_TTL = 5 * 60 * 1000;
 
@@ -18,7 +24,7 @@ const DEFAULT_ROLES = {
   agent: ['agent:run']
 };
 
-async function initRBAC() {
+export async function initRBAC() {
   try {
     const dir = path.dirname(ROLES_FILE);
     await fsPromises.mkdir(dir, { recursive: true });
@@ -35,7 +41,7 @@ async function initRBAC() {
   }
 }
 
-async function invalidateCache() {
+export async function invalidateCache() {
   cacheTimestamp = 0;
 }
 
@@ -58,37 +64,40 @@ async function ensureCached() {
   }
 }
 
-async function getUserRole(username) {
+async function getUserRole(username: string) {
   await ensureCached();
-  return userCache[username]?.role || null;
+  return userCache?.[username]?.role || null;
 }
 
-async function hasPermission(username, action) {
+export async function hasPermission(username: string, action: string) {
   const role = await getUserRole(username);
   if (!role) return false;
   await ensureCached();
-  const permissions = roleCache[role] || [];
+  const permissions = roleCache?.[role] || [];
   return permissions.includes('*') || permissions.includes(action);
 }
 
-async function addUser(username, role) {
+export async function addUser(username: string, role: string) {
   await initRBAC();
   await ensureCached();
+  if (!userCache) userCache = {};
   userCache[username] = { role, createdAt: new Date().toISOString() };
   await fsPromises.writeFile(USERS_FILE, JSON.stringify(userCache, null, 2), 'utf8');
   await invalidateCache();
 }
 
-async function addRole(name, permissions) {
+export async function addRole(name: string, permissions: string[]) {
   await initRBAC();
   await ensureCached();
+  if (!roleCache) roleCache = {};
   roleCache[name] = permissions;
   await fsPromises.writeFile(ROLES_FILE, JSON.stringify(roleCache, null, 2), 'utf8');
   await invalidateCache();
 }
 
-// CLI support (synchronous fallback for setup scripts)
-if (require.main === module) {
+// CLI support (ESM main check)
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMain) {
   const cmd = process.argv[2];
   if (cmd === 'check') {
     (async () => {
@@ -111,7 +120,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { initRBAC, hasPermission, addUser, addRole, invalidateCache };
-
-
-export {};
+export { initRBAC as __rbacInit, hasPermission as __rbacHasPermission, addUser as __rbacAddUser };

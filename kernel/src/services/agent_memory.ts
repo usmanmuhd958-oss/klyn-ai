@@ -1,7 +1,8 @@
-const fs = require('fs');
-const path = require('path');
+import fs from 'node:fs';
+import { pathToFileURL } from 'node:url';
+import path from 'node:path';
 
-const DATA_FILE = path.join(__dirname, '..', '..', 'runtime', 'agent_memory.json');
+const DATA_FILE = path.join(import.meta.dirname, '..', '..', 'runtime', 'agent_memory.json');
 
 function readData() {
     try { return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); } catch(e) {
@@ -48,7 +49,7 @@ function learnFact(key, value, confidence = 0.8) {
 }
 
 // CLI
-if (require.main === module) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
     const cmd = process.argv[2];
     if (cmd === 'best') console.log(getBestModel());
     else if (cmd === 'recall') console.log(JSON.stringify(recallSimilar(process.argv[3] || '')));
@@ -59,7 +60,7 @@ if (require.main === module) {
         console.log(JSON.stringify(out));
     }
 }
-module.exports = { recordTask, recallSimilar, getBestModel, learnFact };
+export { recordTask, recallSimilar, getBestModel, learnFact };
 
 
 export {};

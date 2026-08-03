@@ -19,13 +19,13 @@
 
 'use strict';
 
-const { exec } = require('child_process');
-const { promisify } = require('util');
-const fs = require('fs');
+import { exec } from 'node:child_process';
+import { promisify } from 'node:util';
+import fs from 'node:fs';
 
 const execAsync = promisify(exec);
 
-const { createLogger } = require('../observability/logger');
+import { createLogger } from '../observability/logger.js';
 
 const log = createLogger('NetworkQualityMonitor');
 
@@ -137,10 +137,7 @@ function getNetworkQualityMonitor() {
   return _monitorInstance;
 }
 
-module.exports = Object.freeze({
-  getNetworkQualityMonitor,
-  NetworkQualityMonitor,
-});
+export { getNetworkQualityMonitor, NetworkQualityMonitor };
 
 
 export {};

@@ -17,8 +17,8 @@
 
 'use strict';
 
-const fs   = require('fs');
-const path = require('path');
+import fs from 'node:fs';
+import path from 'node:path';
 
 // ─── METRIC TYPES ────────────────────────────────────────────
 const METRIC_TYPE = Object.freeze({
@@ -262,7 +262,7 @@ class MetricsStore {
     }
 }
 
-module.exports = { MetricsStore, METRIC_TYPE, aggregate };
+export { MetricsStore, METRIC_TYPE, aggregate };
 
 
 export {};

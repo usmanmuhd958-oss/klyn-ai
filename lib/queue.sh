@@ -1,5 +1,5 @@
 #!/bin/bash
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 
 fetch_jobs() {
   curl -fsS \

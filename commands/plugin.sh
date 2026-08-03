@@ -1,5 +1,4 @@
 #!/bin/bash
-#!/data/data/com.termux/files/usr/bin/bash
 set -Eeuo pipefail
 
 action="${1:-}"

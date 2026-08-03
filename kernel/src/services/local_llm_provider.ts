@@ -1,7 +1,10 @@
-const { spawn } = require('child_process');
-const path = require('path');
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+import { spawn } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+import path from 'node:path';
 
-const PROJECT_ROOT = path.join(__dirname, '..', '..');
+const PROJECT_ROOT = path.join(import.meta.dirname, '..', '..');
 const LLAMA_PATH = path.join(PROJECT_ROOT, 'llama.cpp', 'main');
 const MODEL_PATH = path.join(PROJECT_ROOT, 'llama.cpp', 'models', 'tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf');
 
@@ -27,13 +30,13 @@ async function callLocalLLM(prompt) {
   });
 }
 
-if (require.main === module) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const task = process.argv.slice(2).join(' ');
   callLocalLLM(`You are the coder agent. Task: ${task}. Provide a complete solution.`)
     .then(console.log)
     .catch(console.error);
 }
-module.exports = { callLocalLLM };
+export { callLocalLLM };
 
 
 export {};

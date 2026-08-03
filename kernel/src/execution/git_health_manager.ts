@@ -28,17 +28,17 @@
 
 'use strict';
 
-const fs   = require('fs');
-const path = require('path');
-const { exec } = require('child_process');
-const { promisify } = require('util');
+import fs from 'node:fs';
+import path from 'node:path';
+import { exec } from 'node:child_process';
+import { promisify } from 'node:util';
 
 const execAsync = promisify(exec);
 
-const { createLogger, generateCorrelationId } = require('../observability/logger');
-const { getManifest, SYSTEM_HEALTH } = require('../observability/health_manifest');
-const { getEventBus, LIFECYCLE_EVENT } = require('../lifecycle/lifecycle_event_bus');
-const { getAgentExecutor } = require('./agent_executor');
+import { createLogger, generateCorrelationId } from '../observability/logger.js';
+import { getManifest, SYSTEM_HEALTH } from '../observability/health_manifest.js';
+import { getEventBus, LIFECYCLE_EVENT } from '../lifecycle/lifecycle_event_bus.js';
+import { getAgentExecutor } from './agent_executor.js';
 
 const log      = createLogger('GitHealthManager');
 const manifest = getManifest();
@@ -50,10 +50,10 @@ const bus      = getEventBus();
 
 const GIT_CONFIG = Object.freeze({
   /** KLYN root directory */
-  KLYN_ROOT: '/data/data/com.termux/files/home/klyn-ai-os',
+  KLYN_ROOT: (process.env.KLYN_PROJECT_ROOT || path.join(process.env.HOME || '', 'klyn-ai-os')),
 
   /** Runtime directory */
-  RUNTIME_DIR: '/data/data/com.termux/files/home/klyn-ai-os/.runtime',
+  RUNTIME_DIR: path.join(process.env.KLYN_PROJECT_ROOT || path.join(process.env.HOME || '', 'klyn-ai-os'), '.runtime'),
 
   /** Feature branch name */
   FEATURE_BRANCH: 'feature/enterprise-os-core',
@@ -362,11 +362,7 @@ function getGitHealthManager() {
   return _managerInstance;
 }
 
-module.exports = Object.freeze({
-  getGitHealthManager,
-  GitHealthManager,
-  GIT_CONFIG,
-});
+export { getGitHealthManager, GitHealthManager, GIT_CONFIG };
 
 
 export {};

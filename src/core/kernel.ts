@@ -12,6 +12,8 @@ import { EventEmitter } from 'events';
 import { createCipheriv, createDecipheriv, randomBytes, pbkdf2Sync } from 'crypto';
 import { performance } from 'perf_hooks';
 import { cpus } from 'os';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 // ============================================================================
 // ERROR HIERARCHY

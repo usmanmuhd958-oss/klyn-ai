@@ -1,8 +1,9 @@
-const { spawn } = require('child_process');
-const path = require('path');
-const fs = require('fs');
+import { spawn } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+import path from 'node:path';
+import fs from 'node:fs';
 
-const PROJECT_ROOT = '/data/data/com.termux/files/home/klyn-ai-os';
+const PROJECT_ROOT = (process.env.KLYN_PROJECT_ROOT || path.join(process.env.HOME || '', 'klyn-ai-os'));
 const LLAMA_PATH = path.join(PROJECT_ROOT, 'llama.cpp', 'build', 'bin', 'llama-cli');
 const MODEL_PATH = path.join(PROJECT_ROOT, 'llama.cpp', 'models', 'deepseek-coder-6.7b-instruct.Q4_K_M.gguf');
 
@@ -30,13 +31,13 @@ async function callDeepSeekCoder(prompt) {
   });
 }
 
-if (require.main === module) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const task = process.argv.slice(2).join(' ');
   callDeepSeekCoder(`You are the coder agent. Task: ${task}. Provide a complete solution.`)
     .then(console.log)
     .catch(console.error);
 }
-module.exports = { callDeepSeekCoder };
+export { callDeepSeekCoder };
 
 
 export {};

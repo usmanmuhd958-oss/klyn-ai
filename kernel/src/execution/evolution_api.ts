@@ -19,9 +19,9 @@
 
 'use strict';
 
-const Protocol = require('../../../shared/protocol');
-const { getEvolutionEngine } = require('./evolution_engine');
-const { createLogger } = require('../observability/logger');
+import Protocol from '../../../shared/protocol.js';
+import { getEvolutionEngine } from './evolution_engine.js';
+import { createLogger } from '../observability/logger.js';
 
 const log    = createLogger('EvolutionAPI');
 const engine = getEvolutionEngine();
@@ -131,10 +131,7 @@ async function handleEvolutionRollback(message, agentRecord, sendResponse) {
   }
 }
 
-module.exports = Object.freeze({
-  handleEvolutionProposal,
-  handleEvolutionRollback,
-});
+export { handleEvolutionProposal, handleEvolutionRollback };
 
 
 export {};

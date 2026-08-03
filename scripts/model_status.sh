@@ -1,4 +1,5 @@
 #!/bin/bash
+KLYN_ROOT="${KLYN_ROOT:-${HOME}/klyn-ai-os}"
 echo "╔══════════════════════════════════════════════╗"
 echo "║  👑 KLYN AI OS – ALL AI MODELS STATUS        ║"
 echo "╚══════════════════════════════════════════════╝"
@@ -20,7 +21,7 @@ echo "2. 🧩 Offline Template Intelligence"
 # 3. Cloud models (GPT-5.5 Pro, Opus 4.8, Gemini, DeepSeek R1)
 echo ""
 echo "3. ☁️  Cloud AI Models (API keys required)"
-[ -f /data/data/com.termux/files/home/klyn-ai-os/config/ai_keys.env ] && echo "   Config file: ✅ Found" || echo "   Config file: ❌ Missing"
+[ -f "$KLYN_ROOT/config/ai_keys.env" ] && echo "   Config file: ✅ Found" || echo "   Config file: ❌ Missing"
 
 declare -A models
 models[OPENAI_API_KEY]="GPT‑5.5 Pro (OpenAI)"
@@ -29,7 +30,7 @@ models[GEMINI_API_KEY]="Gemini 2.5/3.5 Pro (Google)"
 models[DEEPSEEK_API_KEY]="DeepSeek R1 (Cloud)"
 
 for key in "${!models[@]}"; do
-    if [ -f /data/data/com.termux/files/home/klyn-ai-os/config/ai_keys.env ] && grep -q "^${key}=sk-" /data/data/com.termux/files/home/klyn-ai-os/config/ai_keys.env 2>/dev/null || grep -q "^${key}=AIza" /data/data/com.termux/files/home/klyn-ai-os/config/ai_keys.env 2>/dev/null; then
+    if [ -f "$KLYN_ROOT/config/ai_keys.env" ] && grep -q "^${key}=sk-" "$KLYN_ROOT/config/ai_keys.env" 2>/dev/null || grep -q "^${key}=AIza" "$KLYN_ROOT/config/ai_keys.env" 2>/dev/null; then
         echo "   ✅ ${models[$key]} – key set"
     else
         echo "   ⏳ ${models[$key]} – key not configured"
@@ -55,4 +56,4 @@ done
 echo ""
 echo "💯 Model audit complete."
 echo ""
-echo "ℹ️  To activate cloud models, add your real API keys to /data/data/com.termux/files/home/klyn-ai-os/config/ai_keys.env"
+echo "ℹ️  To activate cloud models, add your real API keys to $KLYN_ROOT/config/ai_keys.env"

@@ -12,7 +12,10 @@ const MESSAGE_TYPES = {
   HEARTBEAT: 'HEARTBEAT',
   HEARTBEAT_ACK: 'HEARTBEAT_ACK',
   ERROR: 'ERROR',
-  FATAL_ERROR: 'FATAL_ERROR'
+  FATAL_ERROR: 'FATAL_ERROR',
+  EVOLUTION_PROPOSE: 'EVOLUTION_PROPOSE',
+  EVOLUTION_ROLLBACK: 'EVOLUTION_ROLLBACK',
+  EVOLUTION_RESULT: 'EVOLUTION_RESULT'
 };
 
 const AGENT_STATES = {
@@ -138,7 +141,8 @@ const MessageFactory = {
   }
 };
 
-module.exports = { MESSAGE_TYPES, AGENT_STATES, TIMEOUTS, RETRY_CONFIG, Message, MessageFactory };
+export { MESSAGE_TYPES, AGENT_STATES, TIMEOUTS, RETRY_CONFIG, Message, MessageFactory };
 
-
-export {};
+// Default export preserves the `import Protocol from '...'` consumer style;
+// `MSG` aliases MESSAGE_TYPES for message-type lookups (Protocol.MSG.X).
+export default { MESSAGE_TYPES, AGENT_STATES, TIMEOUTS, RETRY_CONFIG, Message, MessageFactory, MSG: MESSAGE_TYPES };

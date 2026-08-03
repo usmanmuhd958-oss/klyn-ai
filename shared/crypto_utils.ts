@@ -1,8 +1,8 @@
 'use strict';
 
-const crypto = require('crypto');
-const fs = require('fs');
-const path = require('path');
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const CRYPTO_CONFIG = {
   ALGORITHM: 'aes-256-gcm',
@@ -136,7 +136,7 @@ async function initializeCrypto(keystorePath = null) {
   return new CryptoService(keyManager);
 }
 
-module.exports = { CryptoService, KeyManager, initializeCrypto, CRYPTO_CONFIG };
+export { CryptoService, KeyManager, initializeCrypto, CRYPTO_CONFIG };
 
-
-export {};
+// Default export preserves the CJS `require(...)` consumer shape after the ESM conversion.
+export default { CryptoService, KeyManager, initializeCrypto, CRYPTO_CONFIG };

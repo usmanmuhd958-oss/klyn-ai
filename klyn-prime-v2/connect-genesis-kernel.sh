@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 
 mkdir -p prime-core-system/genesis/kernel
 
@@ -51,4 +51,3 @@ TS
 
 
 echo "[KLYN PRIME] Genesis Kernel Bridge Activated"
-

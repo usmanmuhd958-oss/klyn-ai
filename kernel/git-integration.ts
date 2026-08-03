@@ -12,9 +12,9 @@
 
 'use strict';
 
-const { spawn }  = require('child_process');
-const fs         = require('fs');
-const path       = require('path');
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 
 // ─── GIT RUNNER ──────────────────────────────────────────────
 function git(args, cwd, timeoutMs = 15_000) {
@@ -303,7 +303,7 @@ Timestamp: ${new Date().toISOString()}
     }
 }
 
-module.exports = { GitIntegration };
+export { GitIntegration };
 
 
 export {};

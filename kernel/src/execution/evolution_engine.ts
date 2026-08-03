@@ -1,9 +1,11 @@
 'use strict';
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-const { exec } = require('child_process');
-const ROOT = '/data/data/com.termux/files/home/klyn-ai-os';
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { exec } from 'node:child_process';
+
+const ROOT = process.env.KLYN_PROJECT_ROOT
+  || (process.env.HOME ? path.join(process.env.HOME, 'klyn-ai-os') : path.resolve(import.meta.dirname, '..', '..', '..'));
 const LOG = path.join(ROOT, 'runtime', 'logs', 'evolution.log');
 function log(msg) { fs.appendFileSync(LOG, `[${new Date().toISOString()}] ${msg}\n`); }
 class EvolutionEngine {
@@ -28,8 +30,8 @@ class EvolutionEngine {
   }
   getHistory() { return this.history; }
 }
-new EvolutionEngine();
-setInterval(() => {}, 3600000);
-
-
-export {};
+let _engineInstance = null;
+export function getEvolutionEngine() {
+  if (!_engineInstance) _engineInstance = new EvolutionEngine();
+  return _engineInstance;
+}

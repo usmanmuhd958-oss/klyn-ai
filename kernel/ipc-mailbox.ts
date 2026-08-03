@@ -20,10 +20,10 @@
 
 'use strict';
 
-const fs            = require('fs');
-const path          = require('path');
-const crypto        = require('crypto');
-const { EventEmitter } = require('events');
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { EventEmitter } from 'node:events';
 
 // ─── CONSTANTS ───────────────────────────────────────────────
 const PRIORITY = Object.freeze({
@@ -169,7 +169,7 @@ class Mailbox extends EventEmitter {
     #persistStream;
     #stats;
 
-    constructor(name, options = {}) {
+    constructor(name = 'default', options = {}) {
         super();
         this.setMaxListeners(500);
 
@@ -674,13 +674,4 @@ class MailboxRouter extends EventEmitter {
 }
 
 // ─── EXPORTS ─────────────────────────────────────────────────
-module.exports = {
-    MailboxRouter,
-    Mailbox,
-    PriorityQueue,
-    createMessage,
-    PRIORITY,
-    MESSAGE_STATUS,
-    DEFAULT_TTL_MS,
-    REPLY_TIMEOUT_MS,
-};
+export { MailboxRouter, Mailbox, PriorityQueue, createMessage, PRIORITY, MESSAGE_STATUS, DEFAULT_TTL_MS, REPLY_TIMEOUT_MS };

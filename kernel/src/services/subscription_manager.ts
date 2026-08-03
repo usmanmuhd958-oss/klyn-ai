@@ -13,10 +13,10 @@
  * sudden battery loss on mobile.
  */
 
-const fs   = require('fs');
-const path = require('path');
+import fs from 'node:fs';
+import path from 'node:path';
 
-const STORE_PATH = path.join(__dirname, '..', '..', 'runtime', 'clients.json');
+const STORE_PATH = path.join(import.meta.dirname, '..', '..', 'runtime', 'clients.json');
 
 /**
  * Safely read the client store (returns empty object on failure).
@@ -99,7 +99,7 @@ function removeClient(clientId) {
   writeStore(store);
 }
 
-module.exports = { validateClient, upsertClient, removeClient };
+export { validateClient, upsertClient, removeClient };
 
 
 export {};

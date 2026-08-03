@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 
 cat > prime-core-system/genesis/GenesisEngine.ts <<'TS'
 import { CapabilityDiscovery } from "./analysis/CapabilityDiscovery";
@@ -107,4 +107,3 @@ TS
 
 
 echo "[KLYN PRIME] Genesis Core Activated"
-

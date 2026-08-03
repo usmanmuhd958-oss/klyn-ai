@@ -1,5 +1,4 @@
 #!/bin/bash
-#!/data/data/com.termux/files/usr/bin/bash
 
 cat << 'TXT'
 Klyn AI OS CLI

@@ -1,9 +1,10 @@
-const http = require('http');
+import http from 'node:http';
+import os from 'node:os';
+
 const PORT = 9090;
 const server = http.createServer((req, res) => {
   if (req.url === '/metrics') {
     // Simple example metrics
-    const os = require('os');
     let metrics = '# HELP klyn_os_info Klyn OS metrics\n';
     metrics += '# TYPE klyn_os_info gauge\n';
     metrics += `klyn_os_info{version="v15"} 1\n`;
