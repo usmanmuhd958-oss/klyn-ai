@@ -1,3 +1,4 @@
+import dotenv from 'dotenv';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
@@ -46,8 +47,8 @@ const require = createRequire(import.meta.url);
 // ---------------------------------------------------------------------------
 if (process.env.NODE_ENV !== 'production') {
   try {
-    require('dotenv').config({
-      path: require('path').resolve(import.meta.dirname, '..', '.env'),
+    dotenv.config({
+      path: path.resolve(import.meta.dirname, '..', '.env'),
     });
   } catch (_) {
     // dotenv not installed, or .env does not exist.

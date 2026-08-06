@@ -1,17 +1,18 @@
+import { createClient } from '@supabase/supabase-js';
+import dotenv from 'dotenv';
 import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
 import fs from 'node:fs';
 import path from 'node:path';
+
+const require = createRequire(import.meta.url);
 
 const DATA_FILE = path.join(import.meta.dirname, '..', '..', 'runtime', 'state.json');
 
 // Try to load Supabase, but fall back to local JSON if anything fails
 let supabase = null;
 try {
-  const dotenv = require('dotenv');
   dotenv.config({ path: path.join(import.meta.dirname, '..', '..', 'config', 'supabase.env') });
   if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
-    const { createClient } = require('@supabase/supabase-js');
     supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
   }
 } catch(e) {}

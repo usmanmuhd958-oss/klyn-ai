@@ -1,3 +1,5 @@
+import os from 'node:os';
+
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 // ============================================================
@@ -123,7 +125,7 @@ class SelfHealingEngine extends EventEmitter {
         this.#running      = false;
         this.#timer        = null;
         this.#record       = new HealingRecord();
-        this.#cpuCount     = require('os').cpus().length || 1;
+        this.#cpuCount     = os.cpus().length || 1;
     }
 
     // ── START / STOP ──────────────────────────────────────────
@@ -283,7 +285,7 @@ class SelfHealingEngine extends EventEmitter {
 
     // ── SYSTEM LOAD HEALING ───────────────────────────────────
     async #healSystemLoad() {
-        const [load1] = require('os').loadavg();
+        const [load1] = os.loadavg();
         const normalisedLoad = load1 / this.#cpuCount;
 
         if (normalisedLoad >= THRESHOLDS.LOAD_ALERT) {

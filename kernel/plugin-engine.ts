@@ -217,7 +217,7 @@ class PluginEngine extends EventEmitter {
             }
 
             // Load module (use require — synchronous, no dynamic import needed)
-            const mod = require(indexPath);
+            const mod = await import(indexPath);
             validateManifest(mod, pluginDir);
 
             (record as any).name    = mod.name;

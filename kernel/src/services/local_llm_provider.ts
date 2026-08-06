@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 import { spawn } from 'node:child_process';
@@ -9,7 +11,7 @@ const LLAMA_PATH = path.join(PROJECT_ROOT, 'llama.cpp', 'main');
 const MODEL_PATH = path.join(PROJECT_ROOT, 'llama.cpp', 'models', 'tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf');
 
 async function callLocalLLM(prompt) {
-  if (!require('fs').existsSync(MODEL_PATH)) {
+  if (!fs.existsSync(MODEL_PATH)) {
     throw new Error(`Model not found at ${MODEL_PATH}. Please download it first.`);
   }
   return new Promise((resolve, reject) => {

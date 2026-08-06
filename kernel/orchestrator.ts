@@ -1,12 +1,19 @@
 #!/usr/bin/env node
+import dotenv from "dotenv";
 import { createRequire } from 'node:module';
+import { fork } from 'node:child_process';
+import path from 'node:path';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+
 const require = createRequire(import.meta.url);
 
 // ---------------------------------------------------------------------------
 // 1. Load environment variables FIRST (optional dependency)
 // ---------------------------------------------------------------------------
 try {
-  require('dotenv').config();
+  dotenv.config();
 } catch {
   // dotenv is optional — proceed without it.
 }
@@ -14,10 +21,6 @@ try {
 // ---------------------------------------------------------------------------
 // 2. Imports
 // ---------------------------------------------------------------------------
-import { fork } from 'node:child_process';
-import path from 'node:path';
-import fs from 'node:fs';
-import { fileURLToPath } from 'node:url';
 
 // ---------------------------------------------------------------------------
 // 3. Simple structured logger (no external deps)
@@ -60,7 +63,6 @@ function resolveWsPort(): number {
 function createWSServer(port: number): Promise<any> {
   let WebSocket: any;
   try {
-    WebSocket = require('ws');
   } catch {
     return Promise.reject(new Error('Optional dependency "ws" is not installed. Run `npm install ws` to enable the IPC WebSocket server.'));
   }

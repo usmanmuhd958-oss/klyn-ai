@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+
 // packages/workflow-engine/src/AdvancedWorkflowEngine.ts
 
 import { EventEmitter } from 'events';
@@ -400,7 +402,7 @@ export class TypeScriptASTValidator {
         }
         // Try to read from file system
         if (existsSync(fileName)) {
-          const fileContent = require('fs').readFileSync(fileName, 'utf-8');
+          const fileContent = fs.readFileSync(fileName, 'utf-8');
           return ts.createSourceFile(fileName, fileContent, ts.ScriptTarget.ES2022, true);
         }
         return undefined;
