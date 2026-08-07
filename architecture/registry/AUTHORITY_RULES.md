@@ -1,24 +1,59 @@
-# KLYN Authority Rules
+# KLYN Module Authority Rules
 
-## Active Production Code
 
-packages/
-kernel/
-platform/
-services/
+## Rule 1 — Runtime
 
-## Research Code
+All agent execution must use:
 
-klyn-prime/
-klyn-prime-v2/
-genesis/
+packages/agent-runtime
 
-## Backup / History
 
-archive-history/
-2.vault/
+Forbidden:
 
-## Rule
+kernel/src/execution
+archive-history
+2.vault
 
-No new production feature may be added outside canonical modules.
-Research modules must graduate into canonical modules through review.
+
+---
+
+## Rule 2 — Workflow
+
+All workflows must use:
+
+packages/workflow-engine
+
+
+Forbidden:
+
+kernel/workflow.ts
+
+
+---
+
+## Rule 3 — Memory
+
+All memory operations must use:
+
+intelligence/memory
+
+
+Forbidden:
+
+core/memory.ts
+
+
+---
+
+## Rule 4 — Gateway
+
+All model routing must use:
+
+packages/ai-gateway
+
+
+---
+
+## Rule 5 — No Duplicate Brain
+
+Only one implementation of each core intelligence module is allowed.

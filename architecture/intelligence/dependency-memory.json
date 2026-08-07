@@ -1,0 +1,13 @@
+{
+  "repository":"klyn-ai-os",
+  "last_scan":"",
+  "nodes":0,
+  "edges":0,
+  "critical_modules":[
+    "AgentRuntime",
+    "AgentExecutor",
+    "AIEngine",
+    "WorkflowEngine",
+    "MemoryEngine"
+  ]
+}

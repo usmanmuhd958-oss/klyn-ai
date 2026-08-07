@@ -1,56 +1,16 @@
 # KLYN Canonical Modules
 
-## Runtime Layer
+AgentRuntime:
+packages/agent-runtime/src/runtime/AgentRuntime.ts
 
-packages/agent-runtime
+AgentExecutor:
+packages/agent-runtime/src/executor/AgentExecutor.ts
 
-Owner:
-Agent lifecycle execution
+AIEngine:
+packages/ai-gateway/src/gateway/AIEngine.ts
 
+WorkflowEngine:
+packages/workflow-engine/src/WorkflowEngine.ts
 
-## AI Layer
-
-packages/ai-gateway
-
-Owner:
-Model routing and AI providers
-
-
-## Orchestration Layer
-
-packages/ai-orchestrator
-
-Owner:
-System coordination
-
-
-## Workflow Layer
-
-packages/workflow-engine
-
-Owner:
-Task DAG and workflow execution
-
-
-## Kernel Layer
-
-kernel/
-
-Owner:
-Low-level primitives
-
-
-## Intelligence Layer
-
-intelligence/
-
-Owner:
-Reasoning, memory, learning
-
-
-## Research Layer
-
-klyn-prime/
-
-Owner:
-Experimental future architectures
+MemoryEngine:
+intelligence/memory/MemoryEngine.ts
