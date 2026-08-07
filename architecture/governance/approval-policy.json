@@ -1,0 +1,17 @@
+{
+ "rules":{
+   "critical":{
+     "require_backup":true,
+     "require_validation":true,
+     "require_review":true
+   },
+
+   "high":{
+     "require_validation":true
+   },
+
+   "normal":{
+     "automatic":true
+   }
+ }
+}
