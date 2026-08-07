@@ -7,3 +7,15 @@ node_modules/
 dist/
 build/
 .DS_Store
+
+# Klyn AI OS local runtime state and caches
+.klyn_config/
+.klyn_runtime/
+.klyn_state/
+*.db
+*.sock
+
+# Comprehensive compilation targets
+target/
+0.kernel/target/
+1.orchestrator/target/
