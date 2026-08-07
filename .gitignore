@@ -1,25 +1,9 @@
+native/klyn_daemon
+native/klyn_client
+/tmp/klyn_vector_store.db
+/tmp/klyn_ipc.sock
 node_modules/
-runtime/
-*.log
-*.db
-*.lock
-*.pid
-.DS_Store
-config/ai_keys.env
-config/ai_keys.env
-llama.cpp/
-runtime/
-.env.template
-create_remaining_sonnet_files.sh
 .env
-.env
-target/
-
-# KLYN local runtime/state
-.klyn_config/
-.klyn_runtime/
-.klyn_state/
-
-# Local archives and generated builds
-archive/
 dist/
+build/
+.DS_Store
