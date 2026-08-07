@@ -19,3 +19,9 @@ build/
 target/
 0.kernel/target/
 1.orchestrator/target/
+
+# Historical archives
+archive-history/
+
+# Migration backups
+.migration-backup/
