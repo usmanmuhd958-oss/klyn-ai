@@ -2,10 +2,12 @@
  * =============================================================================
  * KLYN AI OS — Unified Memory Architecture (Layer 3)
  * File: 3.memory/unified_memory.ts
- * Version: 2.0.0
+ * Version: 3.0.0
  *
  * A real, dependency-free unified memory substrate:
  *   - In-memory Map store with TTL support and LRU eviction.
+ *   - O(1) LRU eviction via a doubly-linked recency list + Map (no O(N)
+ *     scan over entries when the store is at capacity).
  *   - Tag-based indexing for cross-realm lookups.
  *   - Optional JSON file persistence (append-only journal + snapshot load).
  *   - Working memory, short-term cache, and long-term archive semantics.
@@ -51,6 +53,12 @@ export interface MemoryStats {
   status: string;
 }
 
+interface LRUNode {
+  key: string;
+  prev: LRUNode | null;
+  next: LRUNode | null;
+}
+
 const DEFAULT_MAX_ENTRIES = 10_000;
 const DEFAULT_PERSIST_INTERVAL = 30_000;
 const TAG_KEY_SEPARATOR = '\u0000';
@@ -65,6 +73,11 @@ export class UnifiedMemory {
   private persistIntervalMs: number;
   private persistTimer: ReturnType<typeof setInterval> | null = null;
   private stats = { hits: 0, misses: 0, evictions: 0, expires: 0 };
+
+  // O(1) LRU: doubly-linked recency list (head = least recently used).
+  private lruHead: LRUNode | null = null;
+  private lruTail: LRUNode | null = null;
+  private lruMap = new Map<string, LRUNode>();
 
   constructor(options: UnifiedMemoryOptions = {}) {
     this.maxEntries = options.maxEntries ?? DEFAULT_MAX_ENTRIES;
@@ -116,6 +129,7 @@ export class UnifiedMemory {
     }
 
     this.entries.set(key, entry);
+    this.touchLru(key); // stored/updated keys are the most recently used
   }
 
   /** Retrieve a value, honouring TTL. Returns null on miss or expiry. */
@@ -135,6 +149,7 @@ export class UnifiedMemory {
 
     entry.accessCount++;
     entry.updatedAt = Date.now();
+    this.touchLru(key); // a read makes this the most recently used entry
     this.stats.hits++;
     return entry.value;
   }
@@ -203,6 +218,7 @@ export class UnifiedMemory {
       for (const entry of entries) {
         if (Date.now() - entry.createdAt > (entry.ttlMs ?? Number.MAX_SAFE_INTEGER)) continue;
         this.entries.set(entry.key, entry);
+        this.appendLru(entry.key);
         for (const tag of entry.tags) {
           if (!this.tagIndex.has(tag)) this.tagIndex.set(tag, new Set());
           this.tagIndex.get(tag)!.add(entry.key);
@@ -243,6 +259,9 @@ export class UnifiedMemory {
   public async clear(): Promise<void> {
     this.entries.clear();
     this.tagIndex.clear();
+    this.lruHead = null;
+    this.lruTail = null;
+    this.lruMap.clear();
   }
 
   public dispose(): void {
@@ -263,26 +282,48 @@ export class UnifiedMemory {
       this.tagIndex.get(tag)?.delete(key);
     }
     this.entries.delete(key);
+    this.unlinkLru(key);
     if (countStat) {
-      // Counted as a delete, not a miss.
       void countStat;
     }
     return true;
   }
 
+  /** O(1) eviction: drop the least recently used entry (list head). */
   private evictLRU(): void {
-    let lruKey: string | null = null;
-    let lruAccess = Number.MAX_SAFE_INTEGER;
-    for (const [key, entry] of this.entries) {
-      if (entry.accessCount < lruAccess) {
-        lruAccess = entry.accessCount;
-        lruKey = key;
-      }
+    const lru = this.lruHead;
+    if (lru === null) return;
+    this.deleteSync(lru.key, false);
+    this.stats.evictions++;
+  }
+
+  /** Move `key` to the tail of the recency list (most recently used). */
+  private touchLru(key: string): void {
+    this.unlinkLru(key);
+    this.appendLru(key);
+  }
+
+  private unlinkLru(key: string): void {
+    const node = this.lruMap.get(key);
+    if (!node) return;
+    if (node.prev) node.prev.next = node.next;
+    if (node.next) node.next.prev = node.prev;
+    if (this.lruHead === node) this.lruHead = node.next;
+    if (this.lruTail === node) this.lruTail = node.prev;
+    node.prev = null;
+    node.next = null;
+    this.lruMap.delete(key);
+  }
+
+  private appendLru(key: string): void {
+    const node: LRUNode = { key, prev: this.lruTail, next: null };
+    if (this.lruTail) {
+      this.lruTail.next = node;
+    } else {
+      this.lruHead = node;
     }
-    if (lruKey !== null) {
-      this.deleteSync(lruKey, false);
-      this.stats.evictions++;
-    }
+    this.lruTail = node;
+    this.lruMap.set(key, node);
   }
 }
 

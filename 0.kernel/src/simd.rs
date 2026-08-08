@@ -66,3 +66,43 @@ impl VectorIndex {
         }
     }
 }
+
+/// Dot product of two f32 slices, NEON-accelerated on aarch64.
+#[inline(always)]
+pub fn dot_f32(a: &[f32], b: &[f32]) -> f32 {
+    let n = a.len().min(b.len());
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        let mut acc = vdupq_n_f32(0.0f32);
+        let mut i = 0;
+        while i + 4 <= n {
+            let va = vld1q_f32(a.as_ptr().add(i));
+            let vb = vld1q_f32(b.as_ptr().add(i));
+            acc = vfmaq_f32(acc, va, vb);
+            i += 4;
+        }
+        let mut s = vaddvq_f32(acc);
+        while i < n {
+            s += a[i] * b[i];
+            i += 1;
+        }
+        s
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        a.iter().zip(b.iter()).take(n).map(|(x, y)| x * y).sum()
+    }
+}
+
+/// Batch dot products: `query` (dims) against a row-major matrix (rows * dims).
+pub fn dot_batch_f32(query: &[f32], matrix: &[f32], dims: usize) -> Vec<f32> {
+    if dims == 0 || matrix.len() < dims {
+        return Vec::new();
+    }
+    let rows = matrix.len() / dims;
+    let mut out = Vec::with_capacity(rows);
+    for r in 0..rows {
+        out.push(dot_f32(&matrix[r * dims..(r + 1) * dims], query));
+    }
+    out
+}
