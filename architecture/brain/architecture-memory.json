@@ -1,0 +1,32 @@
+{
+  "system": "KLYN AI OS",
+  "version": "5.0",
+  "canonical_modules": {
+    "AgentRuntime": {
+      "owner": "agent-runtime",
+      "stability": "core"
+    },
+    "AgentExecutor": {
+      "owner": "agent-runtime",
+      "stability": "core"
+    },
+    "AIEngine": {
+      "owner": "ai-gateway",
+      "stability": "core"
+    },
+    "WorkflowEngine": {
+      "owner": "workflow-engine",
+      "stability": "core"
+    },
+    "MemoryEngine": {
+      "owner": "intelligence",
+      "stability": "core"
+    }
+  },
+  "rules": [
+    "No duplicate canonical modules",
+    "No imports from archive-history",
+    "No imports from 2.vault",
+    "All core modules require ownership"
+  ]
+}

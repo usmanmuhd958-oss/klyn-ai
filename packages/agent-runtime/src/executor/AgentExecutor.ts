@@ -1,4 +1,4 @@
-import { AgentType, AgentTask } from "../types/agent.types";
+import { AgentType, AgentTask } from "../types/agent.types.js";
 
 export interface AgentResult {
   agent: AgentType;

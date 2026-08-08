@@ -1,21 +1,14 @@
+native/klyn_daemon
+native/klyn_client
+/tmp/klyn_vector_store.db
+/tmp/klyn_ipc.sock
 node_modules/
-runtime/
-*.log
-*.db
-*.lock
-*.pid
+.env
+dist/
+build/
 .DS_Store
-config/ai_keys.env
-config/ai_keys.env
-llama.cpp/
-runtime/
-.env.template
-create_remaining_sonnet_files.sh
-.env
-.env
-target/
 
-# KLYN local runtime/state
+# Klyn AI OS local runtime state and caches
 .klyn_config/
 .klyn_runtime/
 .klyn_state/
@@ -25,7 +18,16 @@ target/
 .klyn-test-buggy.ts
 *.bak
 *.tmp
+*.db
+*.sock
 
-# Local archives and generated builds
-archive/
-dist/
+# Comprehensive compilation targets
+target/
+0.kernel/target/
+1.orchestrator/target/
+
+# Historical archives
+archive-history/
+
+# Migration backups
+.migration-backup/

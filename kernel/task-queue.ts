@@ -42,7 +42,7 @@ import { EventEmitter } from 'node:events';
 // ─── PULL BACKOFF FROM KERNEL — SAFE FALLBACK ─────────────────
 let computeBackoff;
 try {
-    computeBackoff = require('./backoff').computeBackoff;
+    const { computeBackoff } = await import('./backoff.js');
 } catch (_) {
     // Inline fallback so task-queue works standalone
     computeBackoff = (attempt, baseMs = 500, maxMs = 60_000) => {

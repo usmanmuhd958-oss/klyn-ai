@@ -1,23 +1,30 @@
 export type AgentType =
+  | "planner"
+  | "executor"
   | "research"
-  | "coder"
   | "reviewer"
   | "security"
   | "deployment"
   | "docs"
-  | "reasoning"
-  | "execution"
-  | "planner"
-  | "worker";
+  | "coder"
+  | "system";
 
 export interface AgentTask {
-  id: string;
-  type: AgentType;
+  id?: string;
+  type?: AgentType;
+  input?: string;
+  context?: Record<string, unknown>;
+}
 
-  // ✅ FIX: unified input model
-  input: string;
+export interface AgentContext {
+  id?: string;
+  name?: string;
+  input?: string;
+  metadata?: Record<string, unknown>;
+}
 
-  payload?: any;
-
-  priority: number;
+export interface AgentResult {
+  success: boolean;
+  output?: unknown;
+  error?: string;
 }

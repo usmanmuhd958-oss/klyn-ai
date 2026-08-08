@@ -1,4 +1,10 @@
+import { execSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 import { createRequire } from 'node:module';
+import { validateClient } from './subscription_manager.js';
+import { bestEffortCall } from './llm_provider.js';
+
 const require = createRequire(import.meta.url);
 'use strict';
 
@@ -15,8 +21,6 @@ const require = createRequire(import.meta.url);
  *   4. Log usage and return response
  */
 
-import { validateClient } from './subscription_manager.js';
-import { bestEffortCall } from './llm_provider.js';
 
 // Per‑client sliding window: 100 requests per 60s (flat‑fee plan cap)
 const rateWindow = new Map<string, number[]>();
@@ -73,14 +77,11 @@ async function arenaRequest(clientId, prompt, preferredModel = null) {
     if (!result) throw new Error('All models failed');
   } catch (e) {
     // Absolute last resort: local offline template
-    const { execSync } = require('child_process');
     result = execSync(`bash agents/src/local_intelligence.sh "${prompt}"`).toString();
     usedModel = 'local-offline';
   }
 
   // 4. Log usage (append to a simple JSON lines file)
-  const fs = require('fs');
-  const path = require('path');
   const usageLog = path.join(import.meta.dirname, '..', '..', 'runtime', 'logs', 'usage.jsonl');
   const logEntry = JSON.stringify({
     ts: new Date().toISOString(),

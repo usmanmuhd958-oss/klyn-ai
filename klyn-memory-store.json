@@ -1,0 +1,12 @@
+[
+  {
+    "type": "execution",
+    "workflowId": "memory-test",
+    "agent": "research",
+    "result": {
+      "success": true,
+      "output": "memory validation"
+    },
+    "timestamp": 1786171732793
+  }
+]

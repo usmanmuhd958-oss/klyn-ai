@@ -1,0 +1,19 @@
+{
+  "modules": {
+    "AgentRuntime": {
+      "authority": "packages/agent-runtime/src/runtime/AgentRuntime.ts"
+    },
+    "AgentExecutor": {
+      "authority": "packages/agent-runtime/src/executor/AgentExecutor.ts"
+    },
+    "AIEngine": {
+      "authority": "packages/ai-gateway/src/gateway/AIEngine.ts"
+    },
+    "WorkflowEngine": {
+      "authority": "packages/workflow-engine/src/WorkflowEngine.ts"
+    },
+    "MemoryEngine": {
+      "authority": "intelligence/memory/MemoryEngine.ts"
+    }
+  }
+}

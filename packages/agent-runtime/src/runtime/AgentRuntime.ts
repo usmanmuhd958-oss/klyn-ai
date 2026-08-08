@@ -1,6 +1,6 @@
-import { AgentExecutor } from "../executor/AgentExecutor";
-import { SupabaseAgentMemory } from "../memory/SupabaseAgentMemory";
-import { AgentTask, AgentType } from "../types/agent.types";
+import { AgentExecutor } from "../executor/AgentExecutor.js";
+import { SupabaseAgentMemory } from "../memory/SupabaseAgentMemory.js";
+import { AgentTask, AgentType } from "../types/agent.types.js";
 
 export class AgentRuntime {
   [key: string]: any;

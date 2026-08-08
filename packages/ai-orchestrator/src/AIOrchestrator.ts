@@ -1,6 +1,6 @@
-import { AgentRuntime } from "../../agent-runtime/src/runtime/AgentRuntime";
-import { WorkflowEngine } from "../../workflow-engine/src/WorkflowEngine";
-import { AgentTask } from "../../agent-runtime/src/types/agent.types";
+import { AgentRuntime } from "../../agent-runtime/src/runtime/AgentRuntime.js";
+import { WorkflowEngine } from "../../workflow-engine/src/WorkflowEngine.js";
+import { AgentTask } from "../../agent-runtime/src/types/agent.types.js";
 
 export type ExecutionMode = "runtime" | "workflow";
 

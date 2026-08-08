@@ -14,7 +14,9 @@
     "src/**/*",
     "kernel/**/*",
     "1.brain/**/*",
-    "benchmark/**/*"
+    "benchmark/**/*",
+    "packages/**/*.ts",
+    "packages/evolution-controller/src/**/*.ts"
   ],
   "exclude": [
     "node_modules",
