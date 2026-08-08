@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * KLYN AI OS — 2.body — Transactional Multi-File Patcher (Phase 6)
+ * KLYN AI OS — 2.body — Transactional Multi-File Patcher (Phase 6 / Phase 9)
  * File: 2.body/transactional_patcher.ts
  *
  * A virtual overlay engine: every FileOperation is validated and applied
@@ -14,6 +14,12 @@
  *   patcher.apply(tx, opA); patcher.apply(tx, opB); ...   // overlay only
  *   patcher.commit(tx)      // one disk flush phase
  *   // or: patcher.rollback(tx)  // pure in-memory inverse replay
+ *
+ * Phase 9 — swarm consensus:
+ *   Each agent works on a PRIVATE fork (`fork(txId)` → own overlay). The
+ *   only serialization point is the coordinator's epoch merge/commit:
+ *   `merge(sourceTxIds, targetTxId)` folds approved forks into one epoch
+ *   transaction, then `commit(epochTx)` flushes atomically — no locks.
  * =============================================================================
  */
 import { readFile, writeFile, mkdir, unlink, rename } from 'node:fs/promises';
@@ -150,9 +156,11 @@ export class VirtualOverlay {
   }
 }
 
-/** Transactional patcher: begin/apply/commit/rollback over a VirtualOverlay. */
+/** Transactional patcher: begin/apply/commit/rollback over per-tx overlays. */
 export class TransactionalPatcher {
-  private overlay = new VirtualOverlay();
+  /** Per-transaction overlays: concurrent agents own private forks, so the
+   *  only serialization point is the single epoch merge/commit (Phase 9). */
+  private overlays = new Map<string, VirtualOverlay>();
   private txs = new Map<string, Transaction>();
   private committedCount = 0;
 
@@ -160,6 +168,7 @@ export class TransactionalPatcher {
   begin(): string {
     const id = randomUUID();
     this.txs.set(id, { id, operations: [], status: 'open', createdAt: Date.now() });
+    this.overlays.set(id, new VirtualOverlay());
     return id;
   }
 
@@ -168,7 +177,7 @@ export class TransactionalPatcher {
     const tx = this.txs.get(txId);
     if (!tx) throw new Error(`Unknown transaction: ${txId}`);
     if (tx.status !== 'open') throw new Error(`Transaction ${txId} is ${tx.status}`);
-    await this.overlay.apply(op);
+    await this.overlayFor(txId).apply(op);
     tx.operations.push(op);
   }
 
@@ -192,7 +201,7 @@ export class TransactionalPatcher {
     const errors: string[] = [];
 
     try {
-      for (const snap of this.overlay.snapshot(paths)) {
+      for (const snap of this.overlayFor(txId).snapshot(paths)) {
         if (snap.deleted) {
           await unlink(snap.path).catch(() => undefined);
           filesWritten.push(snap.path);
@@ -203,7 +212,7 @@ export class TransactionalPatcher {
       }
       tx.status = 'committed';
       this.committedCount++;
-      this.overlay.release(paths);
+      this.overlays.delete(txId);
       this.txs.delete(txId);
       return { success: true, txId, status: 'committed', filesWritten, errors };
     } catch (error) {
@@ -211,7 +220,7 @@ export class TransactionalPatcher {
       // Best-effort inverse replay over the overlay (no disk writes).
       for (const op of [...ops].reverse().map((o) => this.inverseOf(o))) {
         try {
-          await this.overlay.apply(op);
+          await this.overlayFor(txId).apply(op);
         } catch {
           // ignore — restoring the overlay is best-effort after a flush failure
         }
@@ -234,7 +243,7 @@ export class TransactionalPatcher {
     const inverse = tx.operations.map((op) => this.inverseOf(op)).reverse();
     for (const op of inverse) {
       try {
-        await this.overlay.apply(op);
+        await this.overlayFor(txId).apply(op);
       } catch (error) {
         return {
           success: false,
@@ -247,6 +256,7 @@ export class TransactionalPatcher {
     }
     tx.status = 'rolled_back';
     this.txs.delete(txId);
+    this.overlays.delete(txId);
     return { success: true, txId, status: 'rolled_back', filesWritten: [], errors: [] };
   }
 
@@ -256,7 +266,59 @@ export class TransactionalPatcher {
     if (tx && tx.status === 'open') {
       tx.status = 'aborted';
       this.txs.delete(txId);
+      this.overlays.delete(txId);
     }
+  }
+
+  /**
+   * Phase 9: clone an open transaction into a private fork with its own
+   * overlay. Concurrent agents each mutate their fork — no shared mutable
+   * state, so there is zero lock contention; only the epoch merge touches
+   * the shared coordinator transaction.
+   */
+  async fork(txId: string): Promise<string> {
+    const base = this.txs.get(txId);
+    if (!base) throw new Error(`Unknown transaction: ${txId}`);
+    if (base.status !== 'open') throw new Error(`Transaction ${txId} is ${base.status}`);
+    const id = randomUUID();
+    const tx: Transaction = { id, operations: [...base.operations], status: 'open', createdAt: Date.now() };
+    this.txs.set(id, tx);
+    const overlay = new VirtualOverlay();
+    this.overlays.set(id, overlay);
+    // Seed the fork with the base transaction's projection (replay ops).
+    for (const op of base.operations) {
+      await overlay.apply(op);
+    }
+    return id;
+  }
+
+  /**
+   * Phase 9: merge the operations of approved forks into a target epoch
+   * transaction. Identical operations across forks are applied once;
+   * conflicting ops (overlay drift) are reported, never half-applied.
+   */
+  async merge(sourceTxIds: string[], targetTxId: string): Promise<{ merged: number; conflicts: string[] }> {
+    const target = this.txs.get(targetTxId);
+    if (!target || target.status !== 'open') throw new Error(`Target ${targetTxId} is not open`);
+    const conflicts: string[] = [];
+    const seen = new Set<string>();
+    let merged = 0;
+    for (const sourceId of sourceTxIds) {
+      const source = this.txs.get(sourceId);
+      if (!source || source.status !== 'open') continue;
+      for (const op of source.operations) {
+        const key = `${op.type}:${op.path}:${'oldContent' in op ? (op.oldContent ?? '').length : (op.content ?? '').length}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        try {
+          await this.apply(targetTxId, op);
+          merged++;
+        } catch (error) {
+          conflicts.push(error instanceof Error ? error.message : String(error));
+        }
+      }
+    }
+    return { merged, conflicts };
   }
 
   get activeCount(): number {
@@ -287,6 +349,16 @@ export class TransactionalPatcher {
   // -------------------------------------------------------------------------
   // INTERNAL
   // -------------------------------------------------------------------------
+
+  /** Overlay for a transaction; created lazily for legacy call paths. */
+  private overlayFor(txId: string): VirtualOverlay {
+    let overlay = this.overlays.get(txId);
+    if (!overlay) {
+      overlay = new VirtualOverlay();
+      this.overlays.set(txId, overlay);
+    }
+    return overlay;
+  }
 
   private inverseOf(op: FileOperation): FileOperation {
     switch (op.type) {

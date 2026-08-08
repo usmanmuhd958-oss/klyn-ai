@@ -1,5 +1,6 @@
 // 1.brain/patch_planner.ts
 import { createHash } from 'node:crypto';
+import { join, isAbsolute } from 'node:path';
 import type { FileOperation, UnifiedDiff } from './patch_generator.js';
 import { PatchGenerator } from './patch_generator.js';
 import type { RouteDecision, QueryIntent } from './cognitive_router.js';
@@ -10,6 +11,12 @@ import type { RouteDecision, QueryIntent } from './cognitive_router.js';
  * A PatchPlan is an atomic, ordered set of FileOperations plus their inverse
  * operations, so a TransactionalPatcher (2.body) can commit the plan to disk
  * in one flush or roll it back at zero cost (pure in-memory inverse edits).
+ *
+ * Phase 8: speculative execution mode. Every plan carries a deterministic
+ * `planHash` (content hash of the normalized operations), and `execPlan()`
+ * additionally projects the post-plan file contents so a SpeculativeExecutor
+ * (2.body/execution) can pre-compile the would-be state with zero side
+ * effects on the working tree.
  *
  * Planning is LLM-driven when an adapter is supplied (returns a JSON op list);
  * otherwise a deterministic rule-based plan is built from the RouteDecision —
@@ -33,6 +40,18 @@ export interface PatchPlan {
   files: string[];
   source: 'llm' | 'rule';
   createdAt: number;
+  /** Phase 8: deterministic sha256 over normalized ops — the speculative
+   *  verdict-cache key. Identical ops ⇒ identical hash across runs. */
+  planHash: string;
+}
+
+/**
+ * Phase 8: an atomic plan plus the projected post-plan file contents
+ * (absolute path → content; a path missing from the map is deleted).
+ * This is the exact input a sandboxed executor compiles.
+ */
+export interface ExecPlan extends PatchPlan {
+  projected: Map<string, string>;
 }
 
 export interface PlanOptions {
@@ -79,6 +98,57 @@ export class PatchPlanner {
   }
 
   /**
+   * Phase 8: speculative execution mode — plan plus projected post-plan
+   * file contents, ready for sandboxed pre-compilation.
+   */
+  async execPlan(route: RouteDecision, query: string, options: PlanOptions = {}): Promise<ExecPlan> {
+    const plan = await this.plan(route, query, options);
+    return { ...plan, projected: PatchPlanner.project(plan, process.cwd()) };
+  }
+
+  /** Phase 8 convenience: explicit ops → ExecPlan (baseDir = repo root). */
+  async execPlanFromOperations(
+    operations: FileOperation[],
+    query: string,
+    baseDir: string,
+    intentType: QueryIntent['type'] = 'modify'
+  ): Promise<ExecPlan> {
+    const plan = this.planFromOperations(operations, query, intentType);
+    return { ...plan, projected: PatchPlanner.project(plan, baseDir) };
+  }
+
+  /**
+   * Project the POST-plan file contents (absolute paths) from a plan's ops:
+   * every op for a path is folded in sequence, so a single modify yields its
+   * newContent, a create yields its content, and a final delete removes the
+   * file from the projection.
+   */
+  static project(plan: PatchPlan, baseDir: string): Map<string, string> {
+    const byPath = new Map<string, FileOperation[]>();
+    for (const op of plan.operations) {
+      const list = byPath.get(op.path) ?? [];
+      list.push(op);
+      byPath.set(op.path, list);
+    }
+    const out = new Map<string, string>();
+    for (const [p, ops] of byPath) {
+      const abs = isAbsolute(p) ? p : join(baseDir, p);
+      const first = ops[0];
+      if (first.type === 'delete') continue; // deleted files are absent
+      let content = first.type === 'create' ? first.content : first.newContent;
+      for (const op of ops.slice(1)) {
+        if (op.type === 'modify') content = op.newContent;
+        else if (op.type === 'delete') {
+          content = '';
+          break;
+        }
+      }
+      if (content !== '') out.set(abs, content);
+    }
+    return out;
+  }
+
+  /**
    * The inverse of a single operation — replaying inverses in reverse order
    * restores the exact pre-plan file state (zero-cost: pure string swaps).
    */
@@ -101,6 +171,12 @@ export class PatchPlanner {
     const ops = this.orderOperations(operations);
     const inverse = ops.map((op) => PatchPlanner.inverse(op)).reverse();
     const files = Array.from(new Set(ops.map((op) => op.path))).sort();
+    const planHash = createHash('sha256')
+      .update(JSON.stringify(ops.map((o) => {
+        const op = o as FileOperation & { oldContent?: string; newContent?: string; content?: string };
+        return [op.type, op.path, op.oldContent ?? '', op.newContent ?? '', op.content ?? ''];
+      })))
+      .digest('hex');
     return {
       id: createHash('sha256').update(`${query}|${files.join(',')}|${Date.now()}`).digest('hex').slice(0, 16),
       query,
@@ -110,6 +186,7 @@ export class PatchPlanner {
       files,
       source,
       createdAt: Date.now(),
+      planHash,
     };
   }
 

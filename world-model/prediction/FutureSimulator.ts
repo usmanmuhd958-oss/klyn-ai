@@ -2,7 +2,7 @@
  * =============================================================================
  * KLYN AI OS — World Model / Prediction — FutureSimulator
  * File: world-model/prediction/FutureSimulator.ts
- * Version: 2.0.0
+ * Version: 2.1.0
  *
  * A deterministic, dependency-free forecasting engine used by the Genesis V670
  * FutureRuntimeSimulator. Provides:
@@ -14,6 +14,9 @@
  *   - PREDICTIVE LOOP (Phase 7): ingest change events, learn co-occurrence
  *     windows, and emit ranked pre-warm signals so the healer / context
  *     engine can pre-load the files most likely to be touched next.
+ *   - PRE-WARM SINK (Phase 8): every emitted signal is routed directly into
+ *     a speculative executor so candidate plans are pre-compiled before the
+ *     edit lands (setPrewarmSink / routePrewarm in 2.body/execution).
  * =============================================================================
  */
 
@@ -151,6 +154,8 @@ export class FutureSimulator {
   private preWarmCbs = new Set<(signal: PreWarmSignal) => void>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private emittedSignals = 0;
+  // Phase 8: direct pre-warm routing into the speculative executor.
+  private prewarmSink: ((signal: PreWarmSignal) => void) | null = null;
 
   constructor(history: SamplePoint[] | number[] = []) {
     for (const item of history) {
@@ -324,6 +329,12 @@ export class FutureSimulator {
     return () => this.preWarmCbs.delete(cb);
   }
 
+  /** Phase 8: route every emitted pre-warm signal directly to a consumer
+   *  (e.g. a SpeculativeExecutor). Pass null to unroute. */
+  public setPrewarmSink(sink: ((signal: PreWarmSignal) => void) | null): void {
+    this.prewarmSink = sink
+  }
+
   /** Start the background predictive loop: emit top signals every interval. */
   public start(intervalMs: number = DEFAULT_INTERVAL_MS, windowMs: number = DEFAULT_WINDOW_MS): void {
     if (this.timer) return;
@@ -335,6 +346,13 @@ export class FutureSimulator {
             cb(signal);
           } catch {
             // subscriber errors must not kill the loop
+          }
+        }
+        if (this.prewarmSink) {
+          try {
+            this.prewarmSink(signal)
+          } catch {
+            // sink errors must not kill the loop
           }
         }
       }
