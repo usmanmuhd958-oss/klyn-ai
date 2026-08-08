@@ -32,7 +32,7 @@ export interface HealingResult {
   timeTaken?: number
 }
 
-interface ErrorContext {
+export interface ErrorContext {
   filePath: string
   errorMessage: string
   errorType: 'syntax' | 'type' | 'logic' | 'runtime'
@@ -53,6 +53,33 @@ interface MemoryEntry {
   successRate: number
 }
 
+export interface HealerConfig {
+  rootDir?: string
+  watchGlobs?: string[]
+  ignored?: string[]
+  disableAutoStart?: boolean
+  stabilityThresholdMs?: number
+  pollIntervalMs?: number
+}
+
+export interface HealingSession {
+  id: string
+  filePath: string
+  status: 'pending' | 'healing' | 'healed' | 'failed'
+  startedAt: number
+  finishedAt?: number
+  result?: HealingResult
+}
+
+export interface HealingAttempt {
+  errorHash: string
+  filePath: string
+  model: string
+  success: boolean
+  timeTaken: number
+  timestamp: number
+}
+
 // ========== MAIN HEALER CLASS ==========
 
 class Healer {
@@ -63,6 +90,8 @@ class Healer {
   private isHealing: Map<string, boolean> = new Map()
   private errorQueue: ErrorContext[] = []
   private processingQueue = false
+  private sessions: Map<string, HealingSession> = new Map()
+  private attempts: HealingAttempt[] = []
 
   constructor() {
     this.brainRouter = new BrainRouter()
@@ -74,18 +103,21 @@ class Healer {
    * Start chokidar watcher for all .ts/.js files
    * Intercepts runtime errors and auto-triggers healing
    */
-  public startWatcher(rootDir: string = process.cwd()): void {
+  public startWatcher(rootDir: string = process.cwd(), config: HealerConfig = {}): void {
     if (this.watcher) {
       console.log('🔍 Watcher already running')
       return
     }
 
-    this.watcher = chokidar.watch(['**/*.ts', '**/*.js'], {
-      ignored: ['**/node_modules/**', '**/dist/**', '**/.git/**', '**/*.test.*'],
+    this.watcher = chokidar.watch(config.watchGlobs ?? ['**/*.ts', '**/*.js'], {
+      ignored: config.ignored ?? ['**/node_modules/**', '**/dist/**', '**/.git/**', '**/*.test.*'],
       persistent: true,
       cwd: rootDir,
       ignoreInitial: true,
-      awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 100 }
+      awaitWriteFinish: {
+        stabilityThreshold: config.stabilityThresholdMs ?? 300,
+        pollInterval: config.pollIntervalMs ?? 100
+      }
     })
 
     console.log('🔍 Auto-healer watching for errors... (zero-prompt mode)')
@@ -229,13 +261,32 @@ class Healer {
       }
 
       this.isHealing.set(context.filePath, true)
-      
+
+      const sessionId = this.hashError(context)
+      this.sessions.set(sessionId, {
+        id: sessionId,
+        filePath: context.filePath,
+        status: 'healing',
+        startedAt: Date.now()
+      })
+
       try {
         console.log(`\n🔧 Auto-healing: ${context.filePath}`)
         console.log(`   Error: ${context.errorMessage}`)
-        await this.healFile(context)
+        const result = await this.healFile(context)
+        const session = this.sessions.get(sessionId)
+        if (session) {
+          session.status = result.success ? 'healed' : 'failed'
+          session.finishedAt = Date.now()
+          session.result = result
+        }
       } catch (error) {
         console.error(`❌ Heal failed: ${error}`)
+        const session = this.sessions.get(sessionId)
+        if (session) {
+          session.status = 'failed'
+          session.finishedAt = Date.now()
+        }
       } finally {
         this.isHealing.set(context.filePath, false)
       }
@@ -256,21 +307,16 @@ class Healer {
     try {
       // STEP 1: Memory Layer - Check for cached fix (50x faster)
       console.log('💾 Checking memory for similar fixes...')
-      // @ts-ignore
       const memoryFix = await findSimilarError(errorHash, context.errorMessage)
-      
-      // @ts-ignore
+
       if (memoryFix && memoryFix.successRate > 0.9) {
-        // @ts-ignore
         console.log(`💡 Found cached fix (${(memoryFix.successRate * 100).toFixed(0)}% success rate)`)
-        // @ts-ignore
         const result = await this.applyPatch(context.filePath, memoryFix.fix)
-        
+
         if (result.success) {
           await this.verifyAndTest(context.filePath)
           const timeTaken = Date.now() - startTime
-          
-          // @ts-ignore
+
           await this.updateMemory(errorHash, context, memoryFix.fix, 'memory', true, timeTaken)
           
           console.log(`✅ Healed in ${timeTaken}ms using cached fix`)
@@ -768,7 +814,6 @@ Self-critique: What went wrong? Provide corrected code only:`
     success: boolean,
     timeTaken: number
   ): Promise<void> {
-    // @ts-ignore
     await saveMemory({
       errorHash,
       errorMessage: context.errorMessage,
@@ -780,6 +825,16 @@ Self-critique: What went wrong? Provide corrected code only:`
       timestamp: Date.now(),
       successRate: success ? 1.0 : 0.0
     })
+
+    this.attempts.push({ errorHash, filePath: context.filePath, model, success, timeTaken, timestamp: Date.now() })
+    if (this.attempts.length > 512) {
+      this.attempts = this.attempts.slice(-512)
+    }
+  }
+
+  /** Recent healing attempts (bounded meta-learning surface). */
+  public getRecentAttempts(limit = 20): HealingAttempt[] {
+    return this.attempts.slice(-limit)
   }
 
   /**
@@ -868,7 +923,7 @@ if (process.env.NODE_ENV !== 'test' && !process.env.DISABLE_AUTO_HEAL) {
   console.log('💡 Tip: Set DISABLE_AUTO_HEAL=1 to disable auto-healing')
 }
 
-export { Healer };
+export { Healer, Healer as ZeroPromptHealer };
 
 (Healer.prototype as any).executeAndHeal = executeAndHeal;
 

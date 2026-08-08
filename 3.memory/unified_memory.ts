@@ -33,6 +33,9 @@ export interface MemoryEntry {
 export interface UnifiedMemoryOptions {
   /** Maximum entries before LRU eviction kicks in. Default 10_000. */
   maxEntries?: number;
+  /** Called with the evicted key after an LRU eviction (e.g. to drop the
+   *  matching vector-index row in a higher layer). */
+  onEvict?: (key: string) => void;
   /** Optional directory for JSON persistence. Disabled when omitted. */
   persistDir?: string;
   /** Snapshot interval in ms when persistence is enabled. Default 30_000. */
@@ -72,6 +75,7 @@ export class UnifiedMemory {
   private persistDir: string | null;
   private persistIntervalMs: number;
   private persistTimer: ReturnType<typeof setInterval> | null = null;
+  private onEvict: ((key: string) => void) | undefined;
   private stats = { hits: 0, misses: 0, evictions: 0, expires: 0 };
 
   // O(1) LRU: doubly-linked recency list (head = least recently used).
@@ -83,6 +87,7 @@ export class UnifiedMemory {
     this.maxEntries = options.maxEntries ?? DEFAULT_MAX_ENTRIES;
     this.persistDir = options.persistDir ?? null;
     this.persistIntervalMs = options.persistIntervalMs ?? DEFAULT_PERSIST_INTERVAL;
+    this.onEvict = options.onEvict;
 
     if (this.persistDir) {
       this.persistTimer = setInterval(() => {
@@ -167,6 +172,11 @@ export class UnifiedMemory {
       return false;
     }
     return true;
+  }
+
+  /** Number of live entries (O(1)). */
+  public get size(): number {
+    return this.entries.size;
   }
 
   /** List keys matching all of the given tags. */
@@ -295,6 +305,7 @@ export class UnifiedMemory {
     if (lru === null) return;
     this.deleteSync(lru.key, false);
     this.stats.evictions++;
+    this.onEvict?.(lru.key);
   }
 
   /** Move `key` to the tail of the recency list (most recently used). */

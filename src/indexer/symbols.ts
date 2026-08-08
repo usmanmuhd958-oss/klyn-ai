@@ -129,7 +129,10 @@ export function analyzeFile(content: string, filePath: string): FileSymbols {
         if (clean.includes('{')) {
           pending.opened = true;
           pending.openDepth = preDepth;
-        } else if (clean.includes(';') && postDepth <= pending.openDepth) {
+        } else if (
+          (clean.includes(';') || clean.includes('}')) &&
+          postDepth <= pending.openDepth
+        ) {
           closeChunk(pending, i);
         }
       } else if (postDepth <= pending.openDepth) {
@@ -163,12 +166,17 @@ export function analyzeFile(content: string, filePath: string): FileSymbols {
       if (m && !currentClass) {
         const name = m[1] ?? m[2];
         const kind = classifyDecl(clean);
+        // A declaration whose opening brace sits on its own line (the
+        // overwhelmingly common style) must be marked opened immediately;
+        // otherwise the next top-level line would close the chunk and absorb
+        // the following declaration.
+        const opensInline = clean.includes('{');
         pending = {
           name,
           kind,
           startLine: i,
-          opened: false,
-          openDepth: 0,
+          opened: opensInline,
+          openDepth: preDepth,
           bodyLines: [i],
         };
         if (kind === 'class') {

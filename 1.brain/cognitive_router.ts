@@ -24,6 +24,18 @@ export interface RouteDecision {
   estimatedComplexity: number;
 }
 
+/**
+ * Phase 5: reverse symbol->file lookup surface. Implemented by the IndexStore
+ * (src/indexer/index-store.ts) so context assembly resolves the files that
+ * declare a query's symbols without walking the whole DAG.
+ */
+export interface SymbolLookup {
+  /** Repo-relative file paths that declare a symbol with this name. */
+  getSymbolLocations(symbol: string): string[];
+  /** Batch variant; the router prefers this when present. */
+  querySymbolLocations?(symbols: string[]): Map<string, string[]>;
+}
+
 export class CognitiveRouter {
   private static readonly MAX_CONTEXT_TOKENS = 100000;
   private static readonly KEYWORDS = {
@@ -35,10 +47,29 @@ export class CognitiveRouter {
     analyze: ['analyze', 'explain', 'why', 'how', 'impact', 'dependencies'],
   };
 
+  private rootPath: string;
+  /** Memoized path -> file node index (rebuilt lazily per DAG identity). */
+  private fileIndex: Map<string, DAGNode> | null = null;
+  private fileIndexFor: DAGNode | null = null;
+  private allFilesCache: DAGNode[] | null = null;
+  private allFilesFor: DAGNode | null = null;
+
   constructor(
     private dagRoot: DAGNode,
-    private depGraph?: ASTDependencyGraph
-  ) {}
+    private depGraph?: ASTDependencyGraph,
+    private symbolIndex?: SymbolLookup,
+    rootPath?: string
+  ) {
+    this.rootPath = (rootPath || dagRoot.path).replace(/\/+$/, '');
+  }
+
+  /** Drop memoized caches; call after the DAG tree or graph changes. */
+  invalidateFileIndex(): void {
+    this.fileIndex = null;
+    this.fileIndexFor = null;
+    this.allFilesCache = null;
+    this.allFilesFor = null;
+  }
 
   route(query: string): RouteDecision {
     const intent = this.classifyIntent(query);
@@ -97,9 +128,15 @@ export class CognitiveRouter {
     const dependencies = new Map<string, string[]>();
     const symbols = new Map<string, string[]>();
 
-    const allFiles = this.collectAllFiles(this.dagRoot);
+    // Phase 5: resolve the candidate set through the symbol index + explicit
+    // file references instead of scoring every file in the repository.
+    let candidates = this.resolveCandidates(intent);
+    if (candidates.length === 0) {
+      // Symbol-less queries (or no index attached) keep the full-DAG fallback.
+      candidates = this.getAllFiles();
+    }
 
-    for (const file of allFiles) {
+    for (const file of candidates) {
       const score = this.scoreFileRelevance(file, query, intent);
 
       if (score > 0.1) {
@@ -143,6 +180,93 @@ export class CognitiveRouter {
       symbols,
       totalTokens,
     };
+  }
+
+  /**
+   * Phase 5: candidate set = explicit file references ∪ symbol-declaring
+   * files (via the reverse symbol index). O(candidates), never O(whole repo).
+   */
+  private resolveCandidates(intent: QueryIntent): DAGNode[] {
+    if (!this.symbolIndex && intent.targetFiles.length === 0) return [];
+    const index = this.getFileIndex();
+    const paths = new Set<string>();
+
+    // 1) explicit file references in the query.
+    for (const target of intent.targetFiles) {
+      const nodePath = this.toNodePath(target);
+      if (index.has(nodePath)) {
+        paths.add(nodePath);
+        continue;
+      }
+      for (const p of index.keys()) {
+        if (
+          p === nodePath ||
+          p.endsWith(`/${nodePath}`) ||
+          (nodePath.includes('.') && p.includes(nodePath)) ||
+          (nodePath.startsWith('/') && nodePath.endsWith(`/${p}`))
+        ) {
+          paths.add(p);
+        }
+      }
+    }
+
+    // 2) symbols mentioned in the query -> declaring files (reverse index).
+    if (this.symbolIndex && intent.symbols.length > 0) {
+      const batch = this.symbolIndex.querySymbolLocations
+        ? this.symbolIndex.querySymbolLocations(intent.symbols)
+        : null;
+      if (batch) {
+        for (const files of batch.values()) {
+          for (const rel of files) {
+            const nodePath = this.toNodePath(rel);
+            if (index.has(nodePath)) paths.add(nodePath);
+          }
+        }
+      } else {
+        for (const symbol of intent.symbols) {
+          for (const rel of this.symbolIndex.getSymbolLocations(symbol)) {
+            const nodePath = this.toNodePath(rel);
+            if (index.has(nodePath)) paths.add(nodePath);
+          }
+        }
+      }
+    }
+
+    const out: DAGNode[] = [];
+    for (const p of paths) {
+      const node = index.get(p);
+      if (node) out.push(node);
+    }
+    return out;
+  }
+
+  /**
+   * Convert a symbol-location / query path into the DAG's path convention:
+   * repo-relative DAG keys stay relative; absolute DAG keys get the root
+   * prefix so the lookup always lands on the index.
+   */
+  private toNodePath(p: string): string {
+    if (p.startsWith('/')) return p;
+    const index = this.getFileIndex();
+    if (index.size === 0) return p;
+    const firstKey = index.keys().next().value as string;
+    return firstKey.startsWith('/') ? `${this.rootPath}/${p}` : p;
+  }
+
+  private getFileIndex(): Map<string, DAGNode> {
+    if (this.fileIndex && this.fileIndexFor === this.dagRoot) return this.fileIndex;
+    const index = new Map<string, DAGNode>();
+    for (const file of this.getAllFiles()) index.set(file.path, file);
+    this.fileIndex = index;
+    this.fileIndexFor = this.dagRoot;
+    return index;
+  }
+
+  private getAllFiles(): DAGNode[] {
+    if (this.allFilesCache && this.allFilesFor === this.dagRoot) return this.allFilesCache;
+    this.allFilesCache = this.collectAllFiles(this.dagRoot);
+    this.allFilesFor = this.dagRoot;
+    return this.allFilesCache;
   }
 
   private scoreFileRelevance(file: DAGNode, query: string, intent: QueryIntent): number {
@@ -228,7 +352,7 @@ export class CognitiveRouter {
   private extractFileReferences(query: string): string[] {
     const files: string[] = [];
     const patterns = [
-      /([a-zA-Z0-9_\-\/]+\.[a-zA-Z]{2,4})/g,
+      /([a-zA-Z0-9_\-/]+\.[a-zA-Z]{2,4})/g,
       /`([^`]+)`/g,
       /'([^']+\.[a-zA-Z]{2,4})'/g,
       /"([^"]+\.[a-zA-Z]{2,4})"/g,

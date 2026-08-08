@@ -2,14 +2,20 @@
  * =============================================================================
  * KLYN AI OS — Brain Layer — Working Memory
  * File: 1.brain/memory.ts
- * Version: 1.0.0
+ * Version: 1.1.0
  *
  * Short-term working memory for the brain: key/value recall with recency
  * scoring, plus similarity lookup through the vector store.
+ *
+ * Phase 5: the slot store is now backed by 3.memory/unified_memory.ts, whose
+ * O(1) doubly-linked-list LRU eviction replaces the previous O(N) evictOldest
+ * scan. The evicted key is forwarded to the vector index through onEvict so
+ * the arena never keeps orphaned rows. Public API unchanged.
  * =============================================================================
  */
 
 import { VectorStore } from './vector_store.js';
+import { UnifiedMemory } from '../3.memory/unified_memory.js';
 
 export interface MemoryOptions {
   maxSlots?: number;
@@ -24,10 +30,7 @@ export interface MemorySnapshot {
 
 export class Memory {
   [key: string]: any;
-  private slots = new Map<
-    string,
-    { value: unknown; lastAccessed: number; accessCount: number }
-  >();
+  private store: UnifiedMemory;
   private maxSlots: number;
   private vectorIndex: VectorStore | null;
   private vectorDimensions: number;
@@ -36,15 +39,16 @@ export class Memory {
     this.maxSlots = options.maxSlots ?? 256;
     this.enableVectorIndex = options.enableVectorIndex ?? true;
     this.vectorDimensions = options.vectorDimensions ?? 128;
+    this.store = new UnifiedMemory({
+      maxEntries: this.maxSlots,
+      onEvict: (key) => this.vectorIndex?.remove(key),
+    });
     this.vectorIndex = this.enableVectorIndex ? new VectorStore() : null;
   }
 
-  /** Save a value into working memory. */
+  /** Save a value into working memory (LRU evicts at capacity). */
   public async save(key: string, value: unknown): Promise<void> {
-    if (this.slots.size >= this.maxSlots && !this.slots.has(key)) {
-      this.evictOldest();
-    }
-    this.slots.set(key, { value, lastAccessed: Date.now(), accessCount: 0 });
+    await this.store.store(key, value, { tags: ['working-memory'] });
 
     if (this.vectorIndex) {
       const embedding = VectorStore.hashEmbed(`${key}:${JSON.stringify(value)}`, this.vectorDimensions);
@@ -54,21 +58,18 @@ export class Memory {
 
   /** Get a value, updating recency. */
   public async get(key: string): Promise<unknown> {
-    const slot = this.slots.get(key);
-    if (!slot) return null;
-    slot.lastAccessed = Date.now();
-    slot.accessCount++;
-    return slot.value;
+    const value = await this.store.retrieve(key);
+    return value ?? null;
   }
 
   /** Check existence without touching recency. */
   public has(key: string): boolean {
-    return this.slots.has(key);
+    return this.store.has(key);
   }
 
   /** Delete a slot. */
   public async forget(key: string): Promise<boolean> {
-    const removed = this.slots.delete(key);
+    const removed = await this.store.delete(key);
     if (this.vectorIndex) {
       this.vectorIndex.remove(key);
     }
@@ -83,45 +84,39 @@ export class Memory {
     if (!this.vectorIndex) return [];
     const embedding = VectorStore.hashEmbed(query, this.vectorDimensions);
     const hits = this.vectorIndex.search(embedding, topK);
-    return hits
-      .filter((hit) => this.slots.has(hit.record.id))
-      .map((hit) => ({ key: hit.record.id, score: Number(hit.score.toFixed(4)) }));
+    const out: Array<{ key: string; score: number }> = [];
+    for (const hit of hits) {
+      if (!this.store.has(hit.record.id)) continue;
+      out.push({ key: hit.record.id, score: Number(hit.score.toFixed(4)) });
+    }
+    return out;
   }
 
   /** Snapshot of working memory state. */
-  public snapshot(): MemorySnapshot {
-    const slots = Array.from(this.slots.entries()).map(([key, slot]) => ({
-      key,
-      value: slot.value,
-      lastAccessed: slot.lastAccessed,
-      accessCount: slot.accessCount,
-    }));
+  public async snapshot(): Promise<MemorySnapshot> {
+    const keys = await this.store.searchByTags(['working-memory']);
+    const slots: Array<{ key: string; value: unknown; lastAccessed: number; accessCount: number }> = [];
+    for (const key of keys) {
+      const entry = this.store.getEntry(key);
+      if (!entry) continue;
+      slots.push({
+        key,
+        value: entry.value,
+        lastAccessed: entry.updatedAt,
+        accessCount: entry.accessCount,
+      });
+    }
     slots.sort((a, b) => b.lastAccessed - a.lastAccessed);
     return { slots, vectorIndexCount: this.vectorIndex?.count ?? 0 };
   }
 
   public get size(): number {
-    return this.slots.size;
+    return this.store.size;
   }
 
   public async clear(): Promise<void> {
-    this.slots.clear();
+    await this.store.clear();
     this.vectorIndex?.clear();
-  }
-
-  private evictOldest(): void {
-    let oldestKey: string | null = null;
-    let oldest = Number.MAX_SAFE_INTEGER;
-    for (const [key, slot] of this.slots) {
-      if (slot.lastAccessed < oldest) {
-        oldest = slot.lastAccessed;
-        oldestKey = key;
-      }
-    }
-    if (oldestKey !== null) {
-      this.slots.delete(oldestKey);
-      this.vectorIndex?.remove(oldestKey);
-    }
   }
 }
 

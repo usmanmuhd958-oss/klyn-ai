@@ -67,6 +67,8 @@ export class IndexStore {
   private symbolsByFile = new Map<string, Map<string, SymbolRecord>>();
   private chunksByFile = new Map<string, ChunkSnapshot[]>();
   private inverted = new Map<string, Set<string>>();
+  /** Phase 5: symbol name -> repo-relative files declaring it (reverse map). */
+  private symbolToFiles = new Map<string, Set<string>>();
   /** target file -> set of files that import from it (reverse edges). */
   private reverseImports = new Map<string, Set<string>>();
   /** file -> import edges, for rebuilding edges on change. */
@@ -137,6 +139,22 @@ export class IndexStore {
     return out;
   }
 
+  /** Files (repo-relative) that declare a symbol with the given name. */
+  getSymbolLocations(symbol: string): string[] {
+    const files = this.symbolToFiles.get(symbol);
+    return files ? Array.from(files).sort() : [];
+  }
+
+  /** Batch symbol -> declaring-files lookup (used by CognitiveRouter). */
+  querySymbolLocations(symbols: string[]): Map<string, string[]> {
+    const out = new Map<string, string[]>();
+    for (const symbol of symbols) {
+      const files = this.symbolToFiles.get(symbol);
+      if (files && files.size > 0) out.set(symbol, Array.from(files).sort());
+    }
+    return out;
+  }
+
   /** Files that (transitively) import from `path`. */
   getAffectedFiles(path: string): string[] {
     const affected = new Set<string>();
@@ -188,6 +206,7 @@ export class IndexStore {
     this.symbolsByFile.clear();
     this.chunksByFile.clear();
     this.inverted.clear();
+    this.symbolToFiles.clear();
     this.reverseImports.clear();
     this.importsByFile.clear();
     this.analysisCache.clear();
@@ -230,14 +249,25 @@ export class IndexStore {
           upsertSeen.add(s.id);
           upsert.push(s);
         }
-        const byName = this.inverted.get(s.name) ?? new Set<string>();
-        byName.add(s.id);
-        this.inverted.set(s.name, byName);
       }
     }
 
     this.symbolsByFile.set(rel, symbols);
     this.chunksByFile.set(rel, parsed.chunks.map((c) => ({ id: c.id, hash: c.hash, symbols: c.symbols })));
+
+    // Maintain the reverse indexes for EVERY symbol this file currently
+    // declares (kept + new). dropFile() above removed the stale entries, so
+    // re-adding all of them here keeps `inverted` and `symbolToFiles`
+    // consistent for modified files without re-scanning anything else.
+    for (const s of symbols.values()) {
+      const byName = this.inverted.get(s.name) ?? new Set<string>();
+      byName.add(s.id);
+      this.inverted.set(s.name, byName);
+
+      const byFile = this.symbolToFiles.get(s.name) ?? new Set<string>();
+      byFile.add(rel);
+      this.symbolToFiles.set(s.name, byFile);
+    }
 
     // --- reverse import edges ---------------------------------------------
     this.importsByFile.set(rel, parsed.imports.map((i) => ({ symbol: i.symbol, source: i.source })));
@@ -284,6 +314,9 @@ export class IndexStore {
         const byName = this.inverted.get(s.name);
         byName?.delete(s.id);
         if (byName && byName.size === 0) this.inverted.delete(s.name);
+        const byFile = this.symbolToFiles.get(s.name);
+        byFile?.delete(rel);
+        if (byFile && byFile.size === 0) this.symbolToFiles.delete(s.name);
       }
     }
     this.symbolsByFile.delete(rel);

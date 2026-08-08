@@ -1,6 +1,7 @@
 // kernel/src/ast/dependency_graph.ts
 import type { DAGNode } from '../pipeline/repo_ingest.js';
 import { join, dirname, resolve, extname, sep } from 'node:path';
+import { createHash } from 'node:crypto';
 
 export interface SymbolImport {
   symbol: string;
@@ -33,6 +34,15 @@ export interface FileNode {
 export interface CircularChain {
   files: string[];
   symbols: string[];
+}
+
+export interface GraphDelta {
+  /** Absolute paths of newly created files. */
+  added: string[];
+  /** Absolute paths of files whose content changed. */
+  modified: string[];
+  /** Absolute paths of deleted files. */
+  removed: string[];
 }
 
 export class ASTDependencyGraph {
@@ -68,6 +78,100 @@ export class ASTDependencyGraph {
     
     this.resolveAllDependencies();
     this.buildSymbolMaps();
+  }
+
+  /**
+   * Phase 5: apply an incremental IndexDelta to the graph in place. Only the
+   * touched files (plus their dependents) are re-parsed and re-linked — no
+   * full-tree rebuild. `load` supplies the current content for a path.
+   *
+   * @returns the sorted list of paths whose edges were re-resolved.
+   */
+  async applyDelta(
+    delta: GraphDelta,
+    load: (path: string) => string | Promise<string>
+  ): Promise<string[]> {
+    const affected = new Set<string>();
+
+    // 1) removals: unlink both directions, then drop the node.
+    for (const path of delta.removed) {
+      const node = this.nodes.get(path);
+      if (!node) continue;
+      for (const dep of node.directDependencies) {
+        this.nodes.get(dep)?.directDependents.delete(path);
+        affected.add(dep);
+      }
+      for (const dep of node.directDependents) affected.add(dep);
+      this.nodes.delete(path);
+      affected.add(path);
+    }
+
+    // 2) upserts: re-parse only the changed files.
+    for (const path of delta.added.concat(delta.modified)) {
+      const content = await load(path);
+      const language = detectLanguage(path);
+      const imports = this.parseImports(content, language);
+      const exports = this.parseExports(content, language);
+
+      const prev = this.nodes.get(path);
+      if (prev) {
+        for (const dep of prev.directDependencies) {
+          this.nodes.get(dep)?.directDependents.delete(path);
+          affected.add(dep);
+        }
+        for (const dep of prev.directDependents) affected.add(dep);
+      }
+
+      this.nodes.set(path, {
+        path,
+        hash: hashContent(content),
+        language,
+        imports,
+        exports,
+        directDependencies: new Set(),
+        directDependents: new Set(),
+        symbolMap: new Map(),
+      });
+      affected.add(path);
+    }
+
+    // 3) re-resolve edges for every touched file and its dependents.
+    const resolveSet = new Set<string>(affected);
+    for (const path of affected) {
+      const node = this.nodes.get(path);
+      if (node) for (const dep of node.directDependents) resolveSet.add(dep);
+    }
+    for (const path of resolveSet) this.rebuildEdgesFor(path);
+
+    return Array.from(affected).sort();
+  }
+
+  /** Re-derive one file's dependency edges + symbol map from its imports. */
+  private rebuildEdgesFor(path: string): void {
+    const node = this.nodes.get(path);
+    if (!node) return;
+
+    for (const dep of node.directDependencies) {
+      this.nodes.get(dep)?.directDependents.delete(path);
+    }
+    node.directDependencies.clear();
+
+    const fileDir = dirname(path);
+    const allPaths = this.getAllPaths();
+    const symbolMap = new Map<string, string[]>();
+
+    for (const imp of node.imports) {
+      const resolved = this.pathResolver.resolve(imp.source, fileDir, allPaths);
+      if (!resolved) continue;
+      if (this.nodes.has(resolved)) {
+        node.directDependencies.add(resolved);
+        this.nodes.get(resolved)!.directDependents.add(path);
+      }
+      const symbols = symbolMap.get(resolved) ?? [];
+      symbols.push(imp.isNamespace ? '*' : imp.symbol);
+      symbolMap.set(resolved, symbols);
+    }
+    node.symbolMap = symbolMap;
   }
 
   getDirectDependencies(filePath: string): string[] {
@@ -601,6 +705,18 @@ export class ASTDependencyGraph {
   }
 }
 
+function detectLanguage(path: string): string {
+  const ext = extname(path).toLowerCase();
+  if (ext === '.ts' || ext === '.tsx') return 'typescript';
+  if (ext === '.js' || ext === '.jsx' || ext === '.mjs' || ext === '.cjs') return 'javascript';
+  if (ext === '.json') return 'json';
+  return '';
+}
+
+function hashContent(content: string): string {
+  return createHash('sha256').update(content).digest('hex');
+}
+
 class PathResolver {
   private static readonly EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json'];
   
@@ -632,23 +748,30 @@ class PathResolver {
   
   private generateCandidates(basePath: string): string[] {
     const candidates: string[] = [];
-    
+
     const normalizedBase = this.normalizePath(basePath);
-    
+
     const ext = extname(normalizedBase);
     if (ext) {
+      // Specifier carries an extension: keep it as-is, then the sibling-swap
+      // family so NodeNext `.js` specifiers resolve to `.ts`/`.tsx`/...
+      // sources (the repo's own import convention).
+      const stem = normalizedBase.slice(0, -ext.length);
       candidates.push(normalizedBase);
+      for (const extension of PathResolver.EXTENSIONS) {
+        if (extension !== ext) candidates.push(stem + extension);
+      }
       return candidates;
     }
-    
+
     for (const extension of PathResolver.EXTENSIONS) {
       candidates.push(normalizedBase + extension);
     }
-    
+
     for (const extension of PathResolver.EXTENSIONS) {
       candidates.push(this.joinPaths(normalizedBase, 'index' + extension));
     }
-    
+
     return candidates;
   }
   
@@ -658,9 +781,10 @@ class PathResolver {
   }
   
   private normalizePath(path: string): string {
+    const isAbsolute = path.startsWith('/');
     const parts = path.split('/');
     const normalized: string[] = [];
-    
+
     for (const part of parts) {
       if (part === '..') {
         normalized.pop();
@@ -668,7 +792,10 @@ class PathResolver {
         normalized.push(part);
       }
     }
-    
-    return normalized.join('/') || '.';
+
+    const joined = normalized.join('/') || '.';
+    // Preserve the leading root slash: DAG nodes are keyed by absolute path,
+    // so a stripped prefix could never match allPaths.
+    return isAbsolute ? `/${joined}` : joined;
   }
 }

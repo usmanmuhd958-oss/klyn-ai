@@ -5,7 +5,8 @@ import { ASTDependencyGraph } from '../kernel/src/ast/dependency_graph.js';
 import { PatchGenerator, type UnifiedDiff, type FileOperation } from './patch_generator.js';
 import { PatchValidator, type ValidationResult } from './patch_validator.js';
 import { writeFile, readFile, unlink, mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, extname, join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { indexStore, type IndexDelta } from '../src/indexer/index-store.js';
 
 export interface AgentQuery {
@@ -152,17 +153,35 @@ export class AgentExecutionEngine {
 
   /**
    * Phase 1: incremental manifest refresh instead of per-query re-ingestion.
+   * Phase 5: when a delta IS produced, apply it to the existing dependency
+   * graph + DAG tree in place instead of a full re-ingest + full rebuild.
    *
    * `indexStore.refresh()` runs the stat fast path — when no file changed it
    * returns an empty delta in microseconds without reading any content, and
    * the existing DAG / dependency graph / router / validator are reused.
-   * Only a real change (or a new root) triggers a full materialization.
    */
   private async refreshIndex(repositoryPath: string): Promise<IndexDelta> {
     const delta = await indexStore.refresh(repositoryPath);
 
-    if (this.indexedRoot === repositoryPath && this.router && this.dagRoot && !delta.changed) {
-      return delta; // fast path — nothing stale, skip DAG rebuild entirely
+    if (this.indexedRoot === repositoryPath && this.router && this.dagRoot && this.depGraph) {
+      if (!delta.changed) {
+        return delta; // fast path — nothing stale, skip DAG rebuild entirely
+      }
+      // Incremental path: the 3-level delta already isolated the touched
+      // files. The dependency graph and DAG tree use repo-relative keys, so
+      // pass the delta paths through untouched and resolve content on disk.
+      await this.depGraph.applyDelta(
+        {
+          added: delta.added,
+          modified: delta.modified,
+          removed: delta.removed,
+        },
+        (rel) => readFile(join(repositoryPath, rel), 'utf-8')
+      );
+      await this.syncDagTree(delta, repositoryPath);
+      this.validator = new PatchValidator(this.depGraph);
+      this.router.invalidateFileIndex();
+      return delta;
     }
 
     const { dagRoot, stats } = await this.pipeline.ingestRepository(repositoryPath);
@@ -173,11 +192,89 @@ export class AgentExecutionEngine {
     this.depGraph = new ASTDependencyGraph();
     await this.depGraph.buildFromDAG(dagRoot);
 
-    this.router = new CognitiveRouter(dagRoot, this.depGraph);
+    this.router = new CognitiveRouter(dagRoot, this.depGraph, indexStore, repositoryPath);
     this.validator = new PatchValidator(this.depGraph);
     this.indexedRoot = repositoryPath;
 
     return delta;
+  }
+
+  /**
+   * Keep the materialized DAG tree's content/hash fresh for the files the
+   * delta touched, so the router scores current content without a re-ingest.
+   * Walks the tree by repo-relative path segments (the DAG's own convention).
+   */
+  private async syncDagTree(delta: IndexDelta, repositoryPath: string): Promise<void> {
+    const root = this.dagRoot;
+    if (!root) return;
+    const rootPrefix = root.path === '.' ? '' : root.path.replace(/\/+$/, '');
+
+    const apply = async (rel: string, op: 'upsert' | 'remove') => {
+      const segs = rel.split('/').filter(Boolean);
+      if (segs.length === 0) return;
+      let node: DAGNode = root;
+      let prefix = rootPrefix;
+      for (let i = 0; i < segs.length; i++) {
+        prefix = prefix ? `${prefix}/${segs[i]}` : segs[i];
+        const isLeaf = i === segs.length - 1;
+        const idx = node.children.findIndex((c) => c.path === prefix);
+        if (isLeaf) {
+          if (op === 'remove') {
+            if (idx !== -1) node.children.splice(idx, 1);
+            return;
+          }
+          if (idx !== -1) {
+            await this.refreshNodeContent(node.children[idx], join(repositoryPath, prefix));
+          } else {
+            const placeholder: DAGNode = {
+              hash: '',
+              path: prefix,
+              type: 'file',
+              size: 0,
+              children: [],
+              mtime: Date.now(),
+              astNodeCount: 0,
+            };
+            node.children.push(placeholder);
+            await this.refreshNodeContent(placeholder, join(repositoryPath, prefix));
+          }
+          return;
+        }
+        let dir = node.children.find((c) => c.type !== 'file' && c.path === prefix);
+        if (!dir) {
+          dir = {
+            hash: '',
+            path: prefix,
+            type: 'directory',
+            size: 0,
+            children: [],
+            mtime: Date.now(),
+            astNodeCount: 0,
+          };
+          node.children.push(dir);
+        }
+        node = dir;
+      }
+    };
+
+    for (const rel of delta.added) await apply(rel, 'upsert');
+    for (const rel of delta.modified) await apply(rel, 'upsert');
+    for (const rel of delta.removed) await apply(rel, 'remove');
+  }
+
+  private async refreshNodeContent(node: DAGNode, absPath: string): Promise<void> {
+    try {
+      const content = await readFile(absPath, 'utf-8');
+      const buf = Buffer.from(content, 'utf-8');
+      node.content = new Uint8Array(buf);
+      node.hash = createHash('sha256').update(content).digest('hex');
+      node.size = buf.byteLength;
+      node.mtime = Date.now();
+      node.language = languageForPath(absPath);
+    } catch {
+      // File vanished between the delta and the refresh — leave the node as-is;
+      // an explicit removal delta handles deletions.
+    }
   }
 
   /** Stats from the incremental index store (files/symbols/chunks/last refresh). */
@@ -530,4 +627,21 @@ export class AgentExecutionEngine {
       estimatedComplexity: 0,
     };
   }
+}
+
+const LANGUAGE_BY_EXT: Record<string, string> = {
+  '.ts': 'typescript',
+  '.tsx': 'typescript',
+  '.js': 'javascript',
+  '.jsx': 'javascript',
+  '.mjs': 'javascript',
+  '.cjs': 'javascript',
+  '.json': 'json',
+  '.py': 'python',
+  '.go': 'go',
+  '.rs': 'rust',
+};
+
+function languageForPath(path: string): string {
+  return LANGUAGE_BY_EXT[extname(path).toLowerCase()] ?? '';
 }
