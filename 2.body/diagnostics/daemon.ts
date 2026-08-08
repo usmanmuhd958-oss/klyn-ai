@@ -236,7 +236,7 @@ export class TypeScriptServerDaemon {
 
   /** Write a request and return its seq (no response tracking — for
    *  fire-and-forget commands like geterr). */
-  private send(command: string, args: unknown): number {
+  private send(command: string, args?: unknown): number {
     if (!this.proc || !this.proc.stdin) throw new Error('TypeScriptServerDaemon is not started');
     const seq = ++this.seq;
     this.statsCounters.requests++;

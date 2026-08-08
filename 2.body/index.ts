@@ -18,3 +18,8 @@ export type { Transaction, TransactionResult, OverlaySnapshot } from './transact
 // Phase 7: persistent tsserver diagnostics daemon.
 export { TypeScriptServerDaemon } from './diagnostics/daemon.js';
 export type { DiagnosticEntry, DiagnosticSpan, DaemonOptions, DaemonStats } from './diagnostics/daemon.js';
+// Phase 10: deep system telemetry (kernel-boundary process monitoring).
+export { SystemMonitor, createSystemMonitor } from './sysmon.js';
+export type { SystemEvent, SystemEventKind, SysmonOptions } from './sysmon.js';
+export { TelemetryBridge, telemetryBridge } from '../1.bridge/src/telemetry_bridge.js';
+export type { ProcessSample, ProcessExit } from '../1.bridge/src/telemetry_bridge.js';

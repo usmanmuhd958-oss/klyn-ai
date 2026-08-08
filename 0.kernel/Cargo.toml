@@ -10,6 +10,7 @@ crate-type = ["cdylib"]
 candle-core = { version = "0.9.0", default-features = false }
 candle-transformers = { version = "0.9.0", default-features = false }
 candle-nn = "0.9.0"
+libc = "0.2.155"
 napi = { version = "2.13.3", features = ["async", "napi9", "tokio_rt"] }
 napi-derive = "2.13.3"
 tokenizers = { version = "0.15.2", default-features = false, features = ["onig"] }

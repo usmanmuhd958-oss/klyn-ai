@@ -19,7 +19,11 @@ export type EventType =
   | 'healing.completed'
   | 'healing.failed'
   | 'telemetry.metric'
-  | 'system.health_check';
+  | 'system.health_check'
+  | 'system.ok'
+  | 'system.error'
+  | 'system.panic'
+  | 'system.exit';
 
 export interface KernelEvent {
   id: string;

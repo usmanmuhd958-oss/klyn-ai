@@ -8,6 +8,7 @@ mod ringbuf;
 mod mmap_matrix;
 mod mmap_vector;
 mod simd;
+mod telemetry;
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
