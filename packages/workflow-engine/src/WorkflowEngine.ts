@@ -1,6 +1,6 @@
-import { Workflow, WorkflowNode } from "./types/workflow.types";
-import { AgentExecutor } from "../../agent-runtime/src/executor/AgentExecutor";
-import { SupabaseAgentMemory } from "../../agent-runtime/src/memory/SupabaseAgentMemory";
+import { Workflow, WorkflowNode } from "./types/workflow.types.js";
+import { AgentExecutor } from "../../agent-runtime/src/executor/AgentExecutor.js";
+import { SupabaseAgentMemory } from "../../agent-runtime/src/memory/SupabaseAgentMemory.js";
 
 export class WorkflowEngine {
   [key: string]: any;

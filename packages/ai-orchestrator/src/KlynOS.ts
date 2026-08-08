@@ -1,6 +1,6 @@
-import { AIModelRouter } from "../../ai-gateway/src/AIModelRouter";
-import { AgentRuntime } from "../../agent-runtime/src/runtime/AgentRuntime";
-import { ExecutionPipeline } from "./ExecutionPipeline";
+import { AIModelRouter } from "../../ai-gateway/src/AIModelRouter.js";
+import { AgentRuntime } from "../../agent-runtime/src/runtime/AgentRuntime.js";
+import { ExecutionPipeline } from "./ExecutionPipeline.js";
 
 export class KlynOS {
   [key: string]: any;

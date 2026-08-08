@@ -7,7 +7,6 @@ import { randomUUID } from 'crypto';
 import { spawn, ChildProcess } from 'child_process';
 import * as ts from 'typescript';
 import * as path from 'path';
-import * as fs from 'fs/promises';
 import { existsSync } from 'fs';
 
 /**
