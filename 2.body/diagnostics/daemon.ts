@@ -88,6 +88,12 @@ export class TypeScriptServerDaemon {
     if (options.onDiagnostics) this.diagSubs.add(options.onDiagnostics);
   }
 
+  /** Subscribe to every diagnostics event fan-out. Returns an unsubscribe. */
+  subscribeDiagnostics(cb: DiagSubscriber): () => void {
+    this.diagSubs.add(cb);
+    return () => this.diagSubs.delete(cb);
+  }
+
   get ready(): boolean {
     return this.proc !== null && !this.disposed;
   }

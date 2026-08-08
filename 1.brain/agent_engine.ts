@@ -22,6 +22,39 @@ export interface AgentOptions {
   maxRetries?: number;
 }
 
+// ===========================================================================
+// Phase 7 diagnostics hook — wires the LSP daemon into delta-aware routing.
+// The engine defines the seam; the implementation lives in 4.loops
+// (DiagnosticsHealBridge) so 1.brain stays free of daemon/compiler imports.
+// ===========================================================================
+
+export interface DeltaDiagnostic {
+  category: 'error' | 'warning' | 'suggestion' | 'message';
+  code: number;
+  message: string;
+  line?: number;
+}
+
+export interface DeltaDiagnostics {
+  /** Absolute path of the diagnosed file. */
+  file: string;
+  diagnostics: DeltaDiagnostic[];
+}
+
+/**
+ * Optional hook the engine calls after an incremental IndexDelta is applied.
+ * The bridge diagnoses the touched files (plus their DAG-affected dependents)
+ * and dispatches heals for any file carrying error diagnostics.
+ */
+export interface DiagnosticsBridge {
+  /** Diagnose absolute file paths; returns per-file diagnostics. */
+  diagnoseFiles(files: string[]): Promise<DeltaDiagnostics[]>;
+  /** Called with every file whose diagnostics contain at least one error. */
+  onErrors?(results: DeltaDiagnostics[]): void;
+}
+
+const MAX_DELTA_DIAGNOSTIC_FILES = 64;
+
 export interface ExecutionResult {
   success: boolean;
   route: RouteDecision;
@@ -54,6 +87,9 @@ export class AgentExecutionEngine {
   private ingestionStats: IngestionStats | null = null;
   /** Root the current DAG/router/validator were materialized for. */
   private indexedRoot: string | null = null;
+  /** Phase 7: LSP-daemon diagnostics bridge (delta-driven heals). */
+  private diagnosticsBridge: DiagnosticsBridge | null = null;
+  private lastDiagPass: Promise<void> | null = null;
 
   constructor() {
     this.pipeline = new RepoIngestionPipeline();
@@ -181,6 +217,9 @@ export class AgentExecutionEngine {
       await this.syncDagTree(delta, repositoryPath);
       this.validator = new PatchValidator(this.depGraph);
       this.router.invalidateFileIndex();
+      // Phase 7: fire the delta-driven LSP diagnostics pass (background —
+      // never blocks the query path on tsserver round trips).
+      this.lastDiagPass = this.emitDeltaDiagnostics(delta, repositoryPath);
       return delta;
     }
 
@@ -197,6 +236,48 @@ export class AgentExecutionEngine {
     this.indexedRoot = repositoryPath;
 
     return delta;
+  }
+
+  /** Attach a diagnostics bridge (LSP daemon) for delta-driven heals. */
+  attachDiagnosticsBridge(bridge: DiagnosticsBridge | null): void {
+    this.diagnosticsBridge = bridge;
+  }
+
+  /** Resolves when the most recent delta-driven diagnostics pass settles. */
+  async whenDiagnosticsIdle(): Promise<void> {
+    await this.lastDiagPass;
+  }
+
+  /**
+   * Phase 7: after an incremental delta, diagnose the touched files plus
+   * their DAG-affected dependents, then dispatch heals for any file with
+   * error diagnostics. Fire-and-forget; failures never break the engine.
+   */
+  private async emitDeltaDiagnostics(delta: IndexDelta, repositoryPath: string): Promise<void> {
+    const bridge = this.diagnosticsBridge;
+    if (!bridge) return;
+    const touched = new Set<string>([...delta.added, ...delta.modified]);
+    if (touched.size === 0) return;
+    // Include dependents that may have broken because of the touched files.
+    if (this.depGraph) {
+      for (const rel of [...delta.added, ...delta.modified]) {
+        for (const affected of this.depGraph.getAffectedFilesOnMutation(rel)) {
+          touched.add(affected);
+        }
+      }
+    }
+    const files = [...touched]
+      .slice(0, MAX_DELTA_DIAGNOSTIC_FILES)
+      .map((rel) => join(repositoryPath, rel));
+    try {
+      const results = await bridge.diagnoseFiles(files);
+      const withErrors = results.filter((r) =>
+        r.diagnostics.some((d) => d.category === 'error')
+      );
+      if (withErrors.length > 0) bridge.onErrors?.(withErrors);
+    } catch {
+      // Diagnostics must never break the engine path.
+    }
   }
 
   /**
@@ -390,7 +471,6 @@ export class AgentExecutionEngine {
 
     for (const file of route.context.relevantFiles) {
       const refactored = this.applyRefactoring(file.content, route);
-
       if (refactored !== file.content) {
         const diff = this.patchGenerator.generateUnifiedDiff(
           file.path,

@@ -101,6 +101,34 @@ class Healer {
     this.brainRouter = new BrainRouter()
   }
 
+  /** Attach a shared tsserver daemon (Phase 7): one persistent process is
+   *  reused by the engine's delta-driven diagnostics pass and this healer's
+   *  own watch flow. Real-time diagnostics events fan out into heals. */
+  public attachDaemon(daemon: TypeScriptServerDaemon | null): void {
+    if (!daemon) {
+      this.diagnosticsDaemon = null
+      this.diagnosticsReady = false
+      return
+    }
+    this.diagnosticsDaemon = daemon
+    this.diagnosticsReady = true
+    daemon.subscribeDiagnostics((file, diagnostics) => this.onDaemonDiagnostics(file, diagnostics))
+  }
+
+  /** External heal requests (e.g. from the engine's delta-driven diagnostics
+   *  pass). Dedupes against already-queued errors for the same file+message. */
+  public enqueue(context: ErrorContext | ErrorContext[]): void {
+    for (const ctx of Array.isArray(context) ? context : [context]) {
+      if (this.isHealing.get(ctx.filePath)) continue
+      const dup = this.errorQueue.some(
+        (e) => e.filePath === ctx.filePath && e.errorMessage === ctx.errorMessage
+      )
+      if (dup) continue
+      this.errorQueue.push(ctx)
+      if (!this.processingQueue) void this.processQueue()
+    }
+  }
+
   // ========== ZERO-PROMPT AUTO-WATCHER ==========
 
   /**
