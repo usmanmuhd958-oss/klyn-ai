@@ -6,3 +6,9 @@ export { CodePatcher } from './patcher.ts';
 export { CodeValidator } from './validator.ts';
 // @ts-ignore
 export { ProcessExecutor } from './executor.ts';
+// @ts-ignore
+export { ShellPool } from './pool/pool.ts';
+// @ts-ignore
+export { ShellSlot } from './pool/shell-slot.ts';
+// @ts-ignore
+export { CommandPlanCache } from './pool/plan-cache.ts';
