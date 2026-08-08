@@ -6,6 +6,7 @@ import { PatchGenerator, type UnifiedDiff, type FileOperation } from './patch_ge
 import { PatchValidator, type ValidationResult } from './patch_validator.js';
 import { writeFile, readFile, unlink, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { indexStore, type IndexDelta } from '../src/indexer/index-store.js';
 
 export interface AgentQuery {
   query: string;
@@ -50,6 +51,8 @@ export class AgentExecutionEngine {
   private validator: PatchValidator | null = null;
   private dagRoot: DAGNode | null = null;
   private ingestionStats: IngestionStats | null = null;
+  /** Root the current DAG/router/validator were materialized for. */
+  private indexedRoot: string | null = null;
 
   constructor() {
     this.pipeline = new RepoIngestionPipeline();
@@ -79,7 +82,7 @@ export class AgentExecutionEngine {
 
     try {
       const ingestStart = performance.now();
-      await this.ingestRepository(agentQuery.repositoryPath);
+      await this.refreshIndex(agentQuery.repositoryPath);
       stats.ingestionTime = performance.now() - ingestStart;
 
       const routeStart = performance.now();
@@ -144,6 +147,24 @@ export class AgentExecutionEngine {
   }
 
   async ingestRepository(repositoryPath: string): Promise<void> {
+    await this.refreshIndex(repositoryPath);
+  }
+
+  /**
+   * Phase 1: incremental manifest refresh instead of per-query re-ingestion.
+   *
+   * `indexStore.refresh()` runs the stat fast path — when no file changed it
+   * returns an empty delta in microseconds without reading any content, and
+   * the existing DAG / dependency graph / router / validator are reused.
+   * Only a real change (or a new root) triggers a full materialization.
+   */
+  private async refreshIndex(repositoryPath: string): Promise<IndexDelta> {
+    const delta = await indexStore.refresh(repositoryPath);
+
+    if (this.indexedRoot === repositoryPath && this.router && this.dagRoot && !delta.changed) {
+      return delta; // fast path — nothing stale, skip DAG rebuild entirely
+    }
+
     const { dagRoot, stats } = await this.pipeline.ingestRepository(repositoryPath);
 
     this.dagRoot = dagRoot;
@@ -154,6 +175,14 @@ export class AgentExecutionEngine {
 
     this.router = new CognitiveRouter(dagRoot, this.depGraph);
     this.validator = new PatchValidator(this.depGraph);
+    this.indexedRoot = repositoryPath;
+
+    return delta;
+  }
+
+  /** Stats from the incremental index store (files/symbols/chunks/last refresh). */
+  getIndexStats() {
+    return indexStore.getStats();
   }
 
   async generatePatches(route: RouteDecision, query: string): Promise<UnifiedDiff[]> {
