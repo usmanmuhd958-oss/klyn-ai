@@ -20,6 +20,7 @@ import { execSync } from 'child_process'
 import * as ts from 'typescript'
 import { BrainRouter } from './brain'
 import { getMemory, saveMemory, findSimilarError } from '../core/memory'
+import { TypeScriptServerDaemon, type DiagnosticEntry } from '../2.body/diagnostics/daemon.js'
 
 // ========== INTERFACES ==========
 
@@ -92,6 +93,9 @@ class Healer {
   private processingQueue = false
   private sessions: Map<string, HealingSession> = new Map()
   private attempts: HealingAttempt[] = []
+  // Phase 7: persistent tsserver daemon (lazy-spawned, compiler fallback).
+  private diagnosticsDaemon: TypeScriptServerDaemon | null = null
+  private diagnosticsReady = false
 
   constructor() {
     this.brainRouter = new BrainRouter()
@@ -156,13 +160,20 @@ class Healer {
   }
 
   /**
-   * TypeScript/syntax error detection on file change
+   * TypeScript/syntax error detection on file change.
+   * Phase 7: prefers the persistent tsserver daemon (incremental, same
+   * process — no per-file ts.createProgram); falls back to the compiler.
    */
   private async checkFileForErrors(filePath: string): Promise<void> {
     try {
       const fullPath = path.resolve(filePath)
       const code = await fs.readFile(fullPath, 'utf-8')
-      
+
+      // Try the LSP daemon first: open/change + geterr, events queue heals.
+      if (await this.tryDaemonDiagnostics(fullPath, code)) {
+        return
+      }
+
       const sourceFile = ts.createSourceFile(fullPath, code, ts.ScriptTarget.Latest, true)
       const program = ts.createProgram([fullPath], {
         noEmit: true,
@@ -189,6 +200,65 @@ class Healer {
       }
     } catch (error) {
       // Silent fail - don't spam on watcher checks
+    }
+  }
+
+  /**
+   * Phase 7: fire open + geterr through the persistent daemon. Diagnostics
+   * arrive via the daemon's event fan-out and are queued as heals.
+   */
+  private async tryDaemonDiagnostics(fullPath: string, code: string): Promise<boolean> {
+    const daemon = await this.ensureDaemon()
+    if (!daemon) return false
+    try {
+      await daemon.setFileContent(fullPath, code)
+      await daemon.requestDiagnostics([fullPath], 0)
+      return true
+    } catch (error) {
+      console.warn(`⚠️  LSP daemon failed (${(error as Error).message}); using compiler fallback`)
+      return false
+    }
+  }
+
+  /** Lazy-spawn the tsserver daemon once; false when unavailable. */
+  private async ensureDaemon(): Promise<TypeScriptServerDaemon | null> {
+    if (this.diagnosticsReady) return this.diagnosticsDaemon
+    if (this.diagnosticsDaemon === null) {
+      this.diagnosticsDaemon = new TypeScriptServerDaemon({
+        onDiagnostics: (file, diagnostics) => this.onDaemonDiagnostics(file, diagnostics)
+      })
+      this.diagnosticsReady = await this.diagnosticsDaemon.start()
+    }
+    return this.diagnosticsReady ? this.diagnosticsDaemon : null
+  }
+
+  /** Queue heals from daemon diagnostics (errors only, deduped per file). */
+  private onDaemonDiagnostics(file: string, diagnostics: DiagnosticEntry[]): void {
+    for (const diagnostic of diagnostics) {
+      if (diagnostic.category !== 'error') continue
+      const message = diagnostic.message
+      const lineNumber = diagnostic.start?.line ?? 1
+      void this.queueHeal({
+        filePath: file,
+        errorMessage: message,
+        errorType: this.categorizeError(message),
+        lineNumber
+      })
+    }
+  }
+
+  /**
+   * Phase 7: collect diagnostics synchronously for a dependent file via the
+   * daemon (waits for requestCompleted); null when the daemon is unavailable.
+   */
+  private async daemonDiagnosticsFor(fullPath: string, code: string): Promise<DiagnosticEntry[] | null> {
+    const daemon = await this.ensureDaemon()
+    if (!daemon) return null
+    try {
+      return await daemon.getDiagnostics(fullPath, code)
+    } catch (error) {
+      console.warn(`⚠️  LSP daemon diagnostics failed (${(error as Error).message}); using compiler fallback`)
+      return null
     }
   }
 
@@ -568,6 +638,25 @@ Return the complete fixed file:`
     for (const depFile of dependents) {
       try {
         const code = await fs.readFile(depFile, 'utf-8')
+
+        // Phase 7: daemon diagnostics first (one persistent process, no
+        // per-dependent ts.createProgram); compiler fallback only when the
+        // daemon is unavailable (null), never for a clean result.
+        const daemonDiags = await this.daemonDiagnosticsFor(depFile, code)
+        if (daemonDiags !== null) {
+          if (daemonDiags.length > 0) {
+            const first = daemonDiags[0]
+            console.log(`   🔧 Healing dependent: ${path.basename(depFile)}`)
+            await this.healFile({
+              filePath: depFile,
+              errorMessage: first.message,
+              errorType: this.categorizeError(first.message),
+              code
+            })
+          }
+          continue
+        }
+
         const sourceFile = ts.createSourceFile(depFile, code, ts.ScriptTarget.Latest, true)
         
         const program = ts.createProgram([depFile], {
@@ -575,7 +664,6 @@ Return the complete fixed file:`
           target: ts.ScriptTarget.Latest,
           skipLibCheck: true
         })
-
         const diagnostics = ts.getPreEmitDiagnostics(program, sourceFile)
 
         if (diagnostics.length > 0) {

@@ -30,11 +30,22 @@ export interface PatchResult {
   rolledBack: boolean;
 }
 
+export interface JournalEntry {
+  patchId: string;
+  filePath: string;
+  original: string;
+  timestamp: number;
+  reverted: boolean;
+}
+
 export class CodePatcher {
   [key: string]: any;
   private validator: CodeValidator;
   private backupDir: string;
   private patches: Map<string, CodePatch> = new Map();
+  /** Phase 6: atomic rollback journal — inverse ops are the stored original
+   *  contents, so rollback is an instant in-memory restore, no disk reads. */
+  private journal = new Map<string, JournalEntry>();
 
   constructor(backupDir = './.klyn/backups') {
     this.validator = new CodeValidator();
@@ -121,6 +132,15 @@ export class CodePatcher {
       };
 
       this.patches.set(patchId, patch);
+
+      // Record in the rollback journal (instant inverse restore).
+      this.journal.set(patchId, {
+        patchId,
+        filePath: absolutePath,
+        original: originalContent,
+        timestamp: Date.now(),
+        reverted: false,
+      });
 
       // Apply patch atomically
       await this.atomicWrite(absolutePath, patchedContent);
@@ -227,6 +247,9 @@ export class CodePatcher {
     try {
       await this.atomicWrite(patch.filePath, patch.original);
 
+      const entry = this.journal.get(patchId);
+      if (entry) entry.reverted = true;
+
       console.log(`[Patcher] ✅ Rollback successful`);
 
       kernelBus.publish(
@@ -248,6 +271,54 @@ export class CodePatcher {
    */
   getPatch(patchId: string): CodePatch | undefined {
     return this.patches.get(patchId);
+  }
+
+  /** Read-only snapshot of the rollback journal. */
+  getJournal(): JournalEntry[] {
+    return Array.from(this.journal.values()).map((e) => ({ ...e }));
+  }
+
+  get journalSize(): number {
+    return this.journal.size;
+  }
+
+  /**
+   * Instant bulk rollback: restore every not-yet-reverted patch from its
+   * in-memory original (zero disk reads). Returns the number restored.
+   */
+  async rollbackAll(): Promise<number> {
+    let restored = 0;
+    // Replay originals newest-first so the final disk state equals the state
+    // before the earliest un-reverted patch (true full undo).
+    const entries = Array.from(this.journal.values());
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const entry = entries[i];
+      if (entry.reverted) continue;
+      try {
+        await this.atomicWrite(entry.filePath, entry.original);
+        entry.reverted = true;
+        restored++;
+      } catch (error) {
+        console.error(`[Patcher] ❌ Bulk rollback failed for ${entry.filePath}:`, error);
+      }
+    }
+    if (restored > 0) {
+      console.log(`[Patcher] 🔄 Bulk rollback restored ${restored} file(s)`);
+    }
+    return restored;
+  }
+
+  /** Drop journal entries older than `maxAgeMs` (returns entries removed). */
+  pruneJournal(maxAgeMs: number): number {
+    const cutoff = Date.now() - maxAgeMs;
+    let pruned = 0;
+    for (const [patchId, entry] of this.journal) {
+      if (entry.reverted && entry.timestamp < cutoff) {
+        this.journal.delete(patchId);
+        pruned++;
+      }
+    }
+    return pruned;
   }
 
   /**

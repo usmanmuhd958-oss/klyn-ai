@@ -16,6 +16,7 @@
     "smoke:v670": "bun run genesis/v670/smoke.ts"
   },
   "dependencies": {
+    "@babel/parser": "^8.0.4",
     "@google/generative-ai": "^0.24.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",

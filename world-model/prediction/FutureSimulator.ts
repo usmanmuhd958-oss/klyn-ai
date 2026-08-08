@@ -2,7 +2,7 @@
  * =============================================================================
  * KLYN AI OS — World Model / Prediction — FutureSimulator
  * File: world-model/prediction/FutureSimulator.ts
- * Version: 1.0.0
+ * Version: 2.0.0
  *
  * A deterministic, dependency-free forecasting engine used by the Genesis V670
  * FutureRuntimeSimulator. Provides:
@@ -11,6 +11,9 @@
  *   - Confidence bands (normal approximation) for uncertainty.
  *   - Monte-Carlo-free scenario simulation with explicit iteration functions.
  *   - Trend classification and anomaly detection.
+ *   - PREDICTIVE LOOP (Phase 7): ingest change events, learn co-occurrence
+ *     windows, and emit ranked pre-warm signals so the healer / context
+ *     engine can pre-load the files most likely to be touched next.
  * =============================================================================
  */
 
@@ -54,10 +57,32 @@ export interface ScenarioResult<T> {
   finalState: T;
 }
 
-/**
- * Fit helper — ordinary least squares on (t, value).
- * Returns { slope, intercept, r2 }.
- */
+// ---------------------------------------------------------------------------
+// PHASE 7 — PREDICTIVE LOOP TYPES
+// ---------------------------------------------------------------------------
+
+export interface ChangeEvent {
+  /** Repo-relative file path that changed. */
+  path: string;
+  timestamp: number;
+  /** Optional importance weight (default 1). */
+  weight?: number;
+}
+
+export interface PreWarmSignal {
+  path: string;
+  confidence: number;
+  predictedAt: number;
+  /** The path whose change triggered this prediction. */
+  cause: string;
+  windowMs: number;
+}
+
+const MAX_EVENTS = 4096;
+const DEFAULT_WINDOW_MS = 60_000;
+const DEFAULT_INTERVAL_MS = 5_000;
+
+/** Fit helper — ordinary least squares on (t, value). */
 function fitLinear(samples: SamplePoint[]): { slope: number; intercept: number; r2: number } {
   const n = samples.length;
   if (n === 0) return { slope: 0, intercept: 0, r2: 0 };
@@ -118,6 +143,14 @@ function residualStd(samples: SamplePoint[], slope: number, intercept: number): 
 export class FutureSimulator {
   [key: string]: any;
   private samples: SamplePoint[] = [];
+
+  // Phase 7 predictive-loop state.
+  private events: ChangeEvent[] = [];
+  private lastSeen = new Map<string, number>();
+  private cooc = new Map<string, Map<string, number>>();
+  private preWarmCbs = new Set<(signal: PreWarmSignal) => void>();
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private emittedSignals = 0;
 
   constructor(history: SamplePoint[] | number[] = []) {
     for (const item of history) {
@@ -216,6 +249,121 @@ export class FutureSimulator {
 
   public clear(): void {
     this.samples = [];
+    this.resetPredictions();
+  }
+
+  // ---------------------------------------------------------------------------
+  // PHASE 7 — PREDICTIVE LOOP
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Ingest change events (e.g. the IndexDelta added/modified/removed lists
+   * from refreshIndex) and learn co-occurrence within `windowMs`.
+   */
+  public feed(changes: ChangeEvent | ChangeEvent[], windowMs: number = DEFAULT_WINDOW_MS): void {
+    const list = Array.isArray(changes) ? changes : [changes];
+    const now = Date.now();
+    for (const change of list) {
+      const path = change.path;
+      const ts = change.timestamp || now;
+      const weight = change.weight ?? 1;
+
+      this.events.push({ path, timestamp: ts, weight });
+      if (this.events.length > MAX_EVENTS) this.events.splice(0, this.events.length - MAX_EVENTS);
+      this.lastSeen.set(path, Math.max(this.lastSeen.get(path) ?? 0, ts));
+
+      // Pairwise co-occurrence with every other change inside the window.
+      const mine = this.cooc.get(path) ?? new Map<string, number>();
+      for (const other of this.events) {
+        if (other.path === path) continue;
+        if (ts - other.timestamp > windowMs) continue;
+        mine.set(other.path, (mine.get(other.path) ?? 0) + weight * (other.weight ?? 1));
+        const theirs = this.cooc.get(other.path) ?? new Map<string, number>();
+        theirs.set(path, (theirs.get(path) ?? 0) + weight * (other.weight ?? 1));
+        this.cooc.set(other.path, theirs);
+      }
+      this.cooc.set(path, mine);
+    }
+  }
+
+  /**
+   * Predict the files most likely to be touched next, given the most recent
+   * change as the trigger. Score = co-occurrence count × recency decay;
+   * confidence is normalized to (0..1] against the best candidate.
+   */
+  public predictNext(windowMs: number = DEFAULT_WINDOW_MS, limit = 5): PreWarmSignal[] {
+    if (this.events.length === 0) return [];
+    const trigger = this.events[this.events.length - 1];
+    const now = Date.now();
+    const candidates = this.cooc.get(trigger.path);
+    if (!candidates || candidates.size === 0) return [];
+
+    const scored: Array<{ path: string; score: number }> = [];
+    for (const [path, count] of candidates) {
+      const lastTs = this.lastSeen.get(path) ?? trigger.timestamp;
+      const age = Math.max(0, now - lastTs);
+      const decay = Math.exp(-age / Math.max(1, windowMs));
+      scored.push({ path, score: count * decay });
+    }
+    scored.sort((a, b) => b.score - a.score);
+    const top = scored.slice(0, limit);
+    const maxScore = top.length > 0 ? top[0].score : 0;
+
+    return top.map((c) => ({
+      path: c.path,
+      confidence: maxScore > 0 ? Number((c.score / maxScore).toFixed(4)) : 0,
+      predictedAt: now,
+      cause: trigger.path,
+      windowMs,
+    }));
+  }
+
+  /** Subscribe to pre-warm signals (background loop emission). */
+  public onPreWarm(cb: (signal: PreWarmSignal) => void): () => void {
+    this.preWarmCbs.add(cb);
+    return () => this.preWarmCbs.delete(cb);
+  }
+
+  /** Start the background predictive loop: emit top signals every interval. */
+  public start(intervalMs: number = DEFAULT_INTERVAL_MS, windowMs: number = DEFAULT_WINDOW_MS): void {
+    if (this.timer) return;
+    this.timer = setInterval(() => {
+      for (const signal of this.predictNext(windowMs)) {
+        this.emittedSignals++;
+        for (const cb of Array.from(this.preWarmCbs)) {
+          try {
+            cb(signal);
+          } catch {
+            // subscriber errors must not kill the loop
+          }
+        }
+      }
+    }, intervalMs);
+  }
+
+  /** Stop the background predictive loop. */
+  public stop(): void {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+  }
+
+  /** Drop all predictive state (events, co-occurrence, subscriptions). */
+  public resetPredictions(): void {
+    this.stop();
+    this.events = [];
+    this.lastSeen.clear();
+    this.cooc.clear();
+    this.emittedSignals = 0;
+  }
+
+  public get eventCount(): number {
+    return this.events.length;
+  }
+
+  public get signalCount(): number {
+    return this.emittedSignals;
   }
 
   // ---------------------------------------------------------------------------
