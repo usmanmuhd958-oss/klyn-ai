@@ -19,6 +19,12 @@ target/
 .klyn_config/
 .klyn_runtime/
 .klyn_state/
+.klyn/
+.runtime/
+.runtime-port.json
+.klyn-test-buggy.ts
+*.bak
+*.tmp
 
 # Local archives and generated builds
 archive/

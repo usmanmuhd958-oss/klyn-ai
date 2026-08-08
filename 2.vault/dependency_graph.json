@@ -1,8 +1,0 @@
-{
-  "engine": "KLYN-V14.2-DEPENDENCY-GRAPH",
-  "leapFactor": "1000_YEARS_AHEAD_OF_CURSOR_AND_ANTHROPIC",
-  "executionMode": "REALTIME_ZERO_COPY_RAM",
-  "nodesMapped": 16,
-  "edgesCount": 48,
-  "timestamp": "v142_graph_1785265767286"
-}

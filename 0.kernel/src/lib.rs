@@ -4,6 +4,8 @@ mod event;
 mod kernel;
 mod law_vm;
 mod memory;
+mod ringbuf;
+mod mmap_vector;
 mod simd;
 
 use napi::bindgen_prelude::*;

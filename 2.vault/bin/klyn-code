@@ -1,3 +1,0 @@
-#!/bin/bash
-PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-bash "$PROJECT_ROOT/agents/src/ai_code_editor.sh" "$@"

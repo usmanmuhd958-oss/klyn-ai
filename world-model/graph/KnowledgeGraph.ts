@@ -34,6 +34,16 @@ export class KnowledgeGraph {
   }
 
 
+  get nodeCount() {
+    return this.nodes.size;
+  }
+
+
+  get edgeCount() {
+    return this.edges.length;
+  }
+
+
   findRelated(id: string) {
     return this.edges.filter(
       e => e.from === id || e.to === id

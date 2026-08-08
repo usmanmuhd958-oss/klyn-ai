@@ -11,7 +11,9 @@
     "start": "node klyn_server.js",
     "dev": "node klyn_server.js",
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck:v670": "tsc --noEmit -p genesis/v670/tsconfig.json",
+    "smoke:v670": "bun run genesis/v670/smoke.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

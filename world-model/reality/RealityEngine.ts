@@ -1,5 +1,5 @@
-import { ProjectState } from "../state/ProjectState";
-import { DependencyGraph } from "../graph/DependencyGraph";
+import { ProjectState } from "../state/ProjectState.js";
+import { DependencyGraph } from "../graph/DependencyGraph.js";
 
 
 export type RealitySnapshot = {

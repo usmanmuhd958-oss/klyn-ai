@@ -1,4 +1,4 @@
-import { DependencyGraph } from "./DependencyGraph";
+import { DependencyGraph } from "./DependencyGraph.js";
 
 
 export type ImpactReport = {

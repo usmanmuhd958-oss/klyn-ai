@@ -1,5 +1,0 @@
-app = "klyn-ai-os"
-kill_signal = "SIGINT"
-kill_timeout = 5
-[env]
-  PORT = "3000"

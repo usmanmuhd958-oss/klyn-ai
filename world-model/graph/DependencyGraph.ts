@@ -33,6 +33,16 @@ export class DependencyGraph {
   }
 
 
+  get relationCount() {
+    return this.relations.length;
+  }
+
+
+  get allRelations() {
+    return [...this.relations];
+  }
+
+
   analyzeImpact(node: string) {
 
     return {

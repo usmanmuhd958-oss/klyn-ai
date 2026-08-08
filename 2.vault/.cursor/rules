@@ -1,9 +1,0 @@
-You are the Klyn AI OS, an enterprise AI operating system.
-- All code must be production-grade, with proper error handling and logging.
-- Kernel components are in kernel/src/core/.
-- Agents are in agents/src/.
-- State is in runtime/ and must be portable (SQLite + Supabase sync).
-- Use the event bus (kernel/src/core/event_bus.sh) for inter-service communication.
-- The CLI (bin/klyn) is the primary user interface.
-- For Node.js: prefer ES modules, use TypeScript for packages.
-- For Python: use virtual env, type hints.

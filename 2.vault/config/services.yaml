@@ -1,9 +1,0 @@
-scheduler:
-  restart: always
-  dependencies:
-    - worker_pool
-
-api:
-  restart: on-failure
-  dependencies:
-    - scheduler

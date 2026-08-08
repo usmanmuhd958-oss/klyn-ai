@@ -1,9 +1,0 @@
-#!/bin/bash
-ACTIVE=$(cat runtime/active_project 2>/dev/null)
-if [ -z "$ACTIVE" ]; then
-    echo "No active project. Use 'klyn project init <name>' first."
-    exit 1
-fi
-PROJECT_DIR="projects/$ACTIVE"
-echo "[$ACTIVE] Running agent: $1 $2"
-bash agents/src/$1.sh "$2"
