@@ -1,0 +1,42 @@
+{
+  "id": "v682",
+  "name": "AI Infrastructure Automation Layer",
+  "codename": "InfrastructureAutomation",
+  "mission": "Declarative infrastructure that provisions, patches, and repairs itself under policy.",
+  "principles": [
+    "Declare, then converge",
+    "Drift is a defect",
+    "Repair precedes alert"
+  ],
+  "dependsOn": [
+    "v681"
+  ],
+  "modules": [
+    "InfrastructureAutomationKernel",
+    "AutomationControlOrchestrator",
+    "InfrastructureAutomationRuntime",
+    "AutomationGovernanceController",
+    "ProvisioningEngine",
+    "InfrastructureStateRegistry",
+    "AutomationCoordinationHub",
+    "AutomationTelemetryObserver",
+    "InfrastructureSystemAdapter",
+    "AIInfrastructureAutomationPlatform"
+  ],
+  "contracts": [
+    "v682.engine.tick",
+    "v682.resource.provisioned",
+    "v682.drift.corrected",
+    "v682.metric.recorded"
+  ],
+  "policies": {
+    "maxEntities": 8192,
+    "tickMs": 16,
+    "batchSize": 128,
+    "ringSize": 1024,
+    "consensusThreshold": 0.75,
+    "compactionThreshold": 0.4,
+    "quota": 4096
+  },
+  "commitMessage": "feat(genesis): v682 ai infrastructure automation layer"
+}

@@ -1,0 +1,42 @@
+{
+  "id": "v676",
+  "name": "Global AI Workflow Civilization Layer",
+  "codename": "AIWorkflowCivilization",
+  "mission": "A civilization of interoperable workflows spanning teams, systems, and timezones.",
+  "principles": [
+    "Workflows are citizens",
+    "State is the constitution",
+    "Handoffs are contracts"
+  ],
+  "dependsOn": [
+    "v675"
+  ],
+  "modules": [
+    "AIWorkflowCivilizationKernel",
+    "GlobalWorkflowOrchestrator",
+    "WorkflowCivilizationRuntime",
+    "WorkflowGovernanceController",
+    "WorkflowExecutionEngine",
+    "WorkflowStateRegistry",
+    "WorkflowCoordinationHub",
+    "WorkflowTelemetryObserver",
+    "WorkflowIntegrationAdapter",
+    "AIWorkflowCivilizationPlatform"
+  ],
+  "contracts": [
+    "v676.engine.tick",
+    "v676.workflow.started",
+    "v676.workflow.completed",
+    "v676.metric.recorded"
+  ],
+  "policies": {
+    "maxEntities": 8192,
+    "tickMs": 16,
+    "batchSize": 128,
+    "ringSize": 1024,
+    "consensusThreshold": 0.75,
+    "compactionThreshold": 0.4,
+    "quota": 4096
+  },
+  "commitMessage": "feat(genesis): v676 global ai workflow civilization layer"
+}

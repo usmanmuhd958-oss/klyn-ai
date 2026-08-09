@@ -1,0 +1,42 @@
+{
+  "id": "v675",
+  "name": "Multi-Agent Enterprise Operating System Layer",
+  "codename": "MultiAgentEnterprise",
+  "mission": "Coordinate fleets of specialist agents as a single enterprise operating system with governed autonomy.",
+  "principles": [
+    "Agents are workers, not products",
+    "Identity precedes capability",
+    "Fleet behavior is audited"
+  ],
+  "dependsOn": [
+    "v674"
+  ],
+  "modules": [
+    "MultiAgentEnterpriseKernel",
+    "AgentFleetOrchestrator",
+    "MultiAgentRuntime",
+    "AgentGovernanceController",
+    "AgentSchedulerEngine",
+    "AgentIdentityRegistry",
+    "AgentCoordinationHub",
+    "AgentTelemetryObserver",
+    "AgentEnvironmentAdapter",
+    "MultiAgentEnterprisePlatform"
+  ],
+  "contracts": [
+    "v675.engine.tick",
+    "v675.agent.spawned",
+    "v675.agent.completed",
+    "v675.metric.recorded"
+  ],
+  "policies": {
+    "maxEntities": 4096,
+    "tickMs": 20,
+    "batchSize": 96,
+    "ringSize": 1024,
+    "consensusThreshold": 0.66,
+    "compactionThreshold": 0.45,
+    "quota": 2048
+  },
+  "commitMessage": "feat(genesis): v675 multi-agent enterprise operating system layer"
+}

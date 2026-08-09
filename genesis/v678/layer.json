@@ -1,0 +1,42 @@
+{
+  "id": "v678",
+  "name": "Autonomous Knowledge Economy Layer",
+  "codename": "KnowledgeEconomy",
+  "mission": "Price, exchange, and compound knowledge as the primary economic asset of the civilization.",
+  "principles": [
+    "Knowledge has value curves",
+    "Exchange requires provenance",
+    "Compounding beats hoarding"
+  ],
+  "dependsOn": [
+    "v677"
+  ],
+  "modules": [
+    "KnowledgeEconomyKernel",
+    "EconomyResourceOrchestrator",
+    "KnowledgeEconomyRuntime",
+    "EconomyGovernanceController",
+    "ValueTransferEngine",
+    "KnowledgeAssetRegistry",
+    "EconomyCoordinationHub",
+    "EconomyTelemetryObserver",
+    "KnowledgeMarketAdapter",
+    "AutonomousKnowledgeEconomyPlatform"
+  ],
+  "contracts": [
+    "v678.engine.tick",
+    "v678.asset.listed",
+    "v678.value.transferred",
+    "v678.metric.recorded"
+  ],
+  "policies": {
+    "maxEntities": 16384,
+    "tickMs": 32,
+    "batchSize": 64,
+    "ringSize": 512,
+    "consensusThreshold": 0.8,
+    "compactionThreshold": 0.6,
+    "quota": 8192
+  },
+  "commitMessage": "feat(genesis): v678 autonomous knowledge economy layer"
+}

@@ -1,0 +1,42 @@
+{
+  "id": "v672",
+  "name": "Infinite Intelligence Deployment Network Layer",
+  "codename": "IntelligenceDeployment",
+  "mission": "Deploy intelligence workloads across an unbounded network of nodes with self-healing propagation.",
+  "principles": [
+    "Deploy once, propagate everywhere",
+    "Node autonomy with mesh consensus",
+    "Rollback is a first-class primitive"
+  ],
+  "dependsOn": [
+    "v671"
+  ],
+  "modules": [
+    "IntelligenceDeploymentKernel",
+    "InfiniteDeploymentOrchestrator",
+    "DeploymentNetworkRuntime",
+    "NetworkDeploymentController",
+    "IntelligencePropagationEngine",
+    "DeploymentNodeRegistry",
+    "DeploymentCoordinationHub",
+    "NetworkTelemetryObserver",
+    "DeploymentEnvironmentAdapter",
+    "InfiniteDeploymentPlatform"
+  ],
+  "contracts": [
+    "v672.engine.tick",
+    "v672.node.joined",
+    "v672.release.propagated",
+    "v672.metric.recorded"
+  ],
+  "policies": {
+    "maxEntities": 4096,
+    "tickMs": 20,
+    "batchSize": 96,
+    "ringSize": 1024,
+    "consensusThreshold": 0.6,
+    "compactionThreshold": 0.4,
+    "quota": 2048
+  },
+  "commitMessage": "feat(genesis): v672 infinite intelligence deployment network layer"
+}

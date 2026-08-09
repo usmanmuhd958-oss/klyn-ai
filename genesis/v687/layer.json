@@ -1,0 +1,42 @@
+{
+  "id": "v687",
+  "name": "AI Organization Operating System Layer",
+  "codename": "AIOrganizationOS",
+  "mission": "Run organizations as programmable systems: roles, missions, and workflows as first-class objects.",
+  "principles": [
+    "Org charts are data",
+    "Missions have metrics",
+    "Roles are contracts"
+  ],
+  "dependsOn": [
+    "v686"
+  ],
+  "modules": [
+    "AIOrganizationOSKernel",
+    "OrganizationStructureOrchestrator",
+    "AIOrganizationRuntime",
+    "OrganizationGovernanceController",
+    "OrgWorkflowEngine",
+    "OrganizationRoleRegistry",
+    "OrganizationCoordinationHub",
+    "OrganizationTelemetryObserver",
+    "OrgSystemAdapter",
+    "AIOrganizationOSPlatform"
+  ],
+  "contracts": [
+    "v687.engine.tick",
+    "v687.role.assigned",
+    "v687.mission.completed",
+    "v687.metric.recorded"
+  ],
+  "policies": {
+    "maxEntities": 4096,
+    "tickMs": 25,
+    "batchSize": 64,
+    "ringSize": 512,
+    "consensusThreshold": 0.66,
+    "compactionThreshold": 0.5,
+    "quota": 2048
+  },
+  "commitMessage": "feat(genesis): v687 ai organization operating system layer"
+}

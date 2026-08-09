@@ -1,0 +1,42 @@
+{
+  "id": "v688",
+  "name": "Intelligent Digital Ecosystem Layer",
+  "codename": "DigitalEcosystem",
+  "mission": "A living ecosystem of products, partners, and agents that co-evolve under shared rules.",
+  "principles": [
+    "Species specialize, ecosystems stabilize",
+    "Symbiosis over extraction",
+    "Entry barriers are minimal"
+  ],
+  "dependsOn": [
+    "v687"
+  ],
+  "modules": [
+    "DigitalEcosystemKernel",
+    "EcosystemTopologyOrchestrator",
+    "DigitalEcosystemRuntime",
+    "EcosystemGovernanceController",
+    "EcosystemGrowthEngine",
+    "EcosystemEntityRegistry",
+    "EcosystemCoordinationHub",
+    "EcosystemTelemetryObserver",
+    "EcosystemIntegrationAdapter",
+    "IntelligentDigitalEcosystemPlatform"
+  ],
+  "contracts": [
+    "v688.engine.tick",
+    "v688.entity.joined",
+    "v688.symbiosis.formed",
+    "v688.metric.recorded"
+  ],
+  "policies": {
+    "maxEntities": 16384,
+    "tickMs": 20,
+    "batchSize": 96,
+    "ringSize": 1024,
+    "consensusThreshold": 0.7,
+    "compactionThreshold": 0.45,
+    "quota": 8192
+  },
+  "commitMessage": "feat(genesis): v688 intelligent digital ecosystem layer"
+}

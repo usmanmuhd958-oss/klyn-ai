@@ -1,0 +1,42 @@
+{
+  "id": "v680",
+  "name": "KLYN Intelligent Cloud Platform Layer",
+  "codename": "IntelligentCloud",
+  "mission": "A self-driving cloud control plane that provisions, routes, and rebalances capacity without humans.",
+  "principles": [
+    "Control plane over data plane",
+    "Workloads self-describe",
+    "Rebalance is continuous"
+  ],
+  "dependsOn": [
+    "v679"
+  ],
+  "modules": [
+    "IntelligentCloudKernel",
+    "CloudControlPlaneOrchestrator",
+    "IntelligentCloudRuntime",
+    "CloudGovernanceController",
+    "CloudWorkloadEngine",
+    "CloudResourceRegistry",
+    "CloudCoordinationHub",
+    "CloudTelemetryObserver",
+    "CloudProviderAdapter",
+    "IntelligentCloudPlatform"
+  ],
+  "contracts": [
+    "v680.engine.tick",
+    "v680.workload.scheduled",
+    "v680.capacity.rebalanced",
+    "v680.metric.recorded"
+  ],
+  "policies": {
+    "maxEntities": 32768,
+    "tickMs": 12,
+    "batchSize": 192,
+    "ringSize": 2048,
+    "consensusThreshold": 0.66,
+    "compactionThreshold": 0.3,
+    "quota": 8192
+  },
+  "commitMessage": "feat(genesis): v680 klyn intelligent cloud platform layer"
+}

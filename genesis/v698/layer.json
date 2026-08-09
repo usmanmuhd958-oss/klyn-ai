@@ -1,0 +1,42 @@
+{
+  "id": "v698",
+  "name": "Omniversal Intelligence Platform Layer",
+  "codename": "OmniversalIntelligence",
+  "mission": "Unify every prior layer into one omniversal intelligence surface with total capability recall.",
+  "principles": [
+    "Every layer is a module",
+    "Total recall under policy",
+    "Unity without dilution"
+  ],
+  "dependsOn": [
+    "v697"
+  ],
+  "modules": [
+    "OmniversalIntelligenceKernel",
+    "OmniversalOrchestrator",
+    "OmniversalIntelligenceRuntime",
+    "OmniversalGovernanceController",
+    "OmniversalReasoningEngine",
+    "OmniversalIntelligenceRegistry",
+    "OmniversalCoordinationHub",
+    "OmniversalTelemetryObserver",
+    "OmniversalIntegrationAdapter",
+    "OmniversalIntelligencePlatform"
+  ],
+  "contracts": [
+    "v698.engine.tick",
+    "v698.capability.unified",
+    "v698.memory.recalled",
+    "v698.metric.recorded"
+  ],
+  "policies": {
+    "maxEntities": 65536,
+    "tickMs": 8,
+    "batchSize": 256,
+    "ringSize": 4096,
+    "consensusThreshold": 0.85,
+    "compactionThreshold": 0.2,
+    "quota": 16384
+  },
+  "commitMessage": "feat(genesis): v698 omniversal intelligence platform layer"
+}

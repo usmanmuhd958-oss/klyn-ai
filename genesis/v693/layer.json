@@ -1,0 +1,42 @@
+{
+  "id": "v693",
+  "name": "Autonomous Innovation Engine Layer",
+  "codename": "InnovationEngine",
+  "mission": "A continuous innovation engine: generate hypotheses, prototype, measure, and scale winners.",
+  "principles": [
+    "Bets, not plans",
+    "Failing fast is data",
+    "Winners get compounding capital"
+  ],
+  "dependsOn": [
+    "v692"
+  ],
+  "modules": [
+    "InnovationEngineKernel",
+    "InnovationPipelineOrchestrator",
+    "InnovationRuntime",
+    "InnovationGovernanceController",
+    "IdeaGenerationEngine",
+    "InnovationPortfolioRegistry",
+    "InnovationCoordinationHub",
+    "InnovationTelemetryObserver",
+    "ResearchIntegrationAdapter",
+    "AutonomousInnovationPlatform"
+  ],
+  "contracts": [
+    "v693.engine.tick",
+    "v693.idea.seeded",
+    "v693.bet.graduated",
+    "v693.metric.recorded"
+  ],
+  "policies": {
+    "maxEntities": 4096,
+    "tickMs": 20,
+    "batchSize": 96,
+    "ringSize": 512,
+    "consensusThreshold": 0.66,
+    "compactionThreshold": 0.5,
+    "quota": 2048
+  },
+  "commitMessage": "feat(genesis): v693 autonomous innovation engine layer"
+}
