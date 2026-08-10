@@ -31,3 +31,6 @@ archive-history/
 
 # Migration backups
 .migration-backup/
+
+# Vector vault persistence (runtime state, recreated on boot)
+vault_data/

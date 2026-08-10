@@ -1,0 +1,11 @@
+diff --git a/.gitignore b/.gitignore
+index 8e9658a..94bee5c 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -31,3 +31,6 @@ archive-history/
+ 
+ # Migration backups
+ .migration-backup/
++
++# Vector vault persistence (runtime state, recreated on boot)
++vault_data/

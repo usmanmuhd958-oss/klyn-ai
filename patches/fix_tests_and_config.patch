@@ -1,0 +1,360 @@
+diff --git a/tests/diff.test.mjs b/tests/diff.test.mjs
+new file mode 100644
+index 0000000..f9a1ecb
+--- /dev/null
++++ b/tests/diff.test.mjs
+@@ -0,0 +1,129 @@
++// KLYN AI OS — Regression suite for the patch/diff engine (audit fix #1).
++// The previous LCS implementation was O(m*n) time AND memory; the new Myers
++// engine must be optimal on small inputs, correct on pathological ones, and
++// fast on whole-file LLM rewrites.
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import { PatchGenerator } from '../dist/1.brain/patch_generator.js';
++
++const pg = new PatchGenerator();
++
++/** Apply a DiffLine[] script; returns reconstructed new lines + edit count. */
++function applyScript(a, script) {
++  const out = [];
++  let ai = 0;
++  let edits = 0;
++  for (const s of script) {
++    if (s.type === 'context') {
++      out.push(s.content);
++      ai++;
++    } else if (s.type === 'delete') {
++      edits++;
++      ai++;
++    } else {
++      out.push(s.content);
++      edits++;
++    }
++  }
++  return { out, edits };
++}
++
++/** LCS-based optimal edit distance (delete+insert only — no substitution op). */
++function optimalDistance(a, b) {
++  const m = a.length;
++  const n = b.length;
++  let prev = new Array(n + 1).fill(0);
++  for (let i = 1; i <= m; i++) {
++    const cur = new Array(n + 1).fill(0);
++    for (let j = 1; j <= n; j++) {
++      cur[j] = a[i - 1] === b[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], cur[j - 1]);
++    }
++    prev = cur;
++  }
++  return m + n - 2 * prev[n];
++}
++
++function check(a, b, label, requireOptimal = true) {
++  const script = pg.computeDiffForTest ? pg.computeDiffForTest(a, b) : pg['computeDiff'](a, b);
++  const { out, edits } = applyScript(a, script);
++  assert.deepEqual(out, b, `reconstruction failed: ${label}`);
++  if (requireOptimal) {
++    assert.equal(edits, optimalDistance(a, b), `non-optimal diff: ${label}`);
++  }
++  return script;
++}
++
++describe('patch_generator diff engine', () => {
++  test('edge cases', () => {
++    check([], [], 'empty/empty');
++    check(['a'], [], 'a/empty');
++    check([], ['a'], 'empty/a');
++    check(['a'], ['a'], 'identical');
++    check(['a', 'b', 'c'], ['a', 'x', 'c'], 'middle replace');
++    check(['a', 'b', 'c'], ['a', 'b', 'c', 'd', 'e'], 'append');
++    check(['a', 'b', 'c', 'd', 'e'], ['a', 'b', 'c'], 'truncate');
++    check(['a', 'b'], ['b', 'a'], 'swap');
++    check(['a', 'b', 'c', 'd'], ['c', 'd', 'a', 'b'], 'rotate');
++    check(['x', 'a', 'a', 'a', 'y'], ['x', 'a', 'a', 'y'], 'dup delete');
++    check(['a'], ['a', 'a'], 'duplicate');
++  });
++
++  test('randomized small cases are optimal (300 cases)', () => {
++    const alph = ['α', 'β', 'γ', 'δ', 'ε'];
++    let seed = 12345;
++    const rng = () => {
++      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
++      return seed / 0x7fffffff;
++    };
++    for (let t = 0; t < 300; t++) {
++      const a = [];
++      for (let i = 0, n = Math.floor(rng() * 12); i < n; i++) a.push(alph[Math.floor(rng() * 5)] + i);
++      const b = [];
++      for (let i = 0, n = Math.floor(rng() * 12); i < n; i++) b.push(alph[Math.floor(rng() * 5)] + i);
++      check(a, b, `rand#${t}`);
++    }
++  });
++
++  test('whole-file rewrite (5k lines) completes quickly', () => {
++    const a = Array.from({ length: 5000 }, (_, i) => `old_${i}`);
++    const b = Array.from({ length: 5000 }, (_, i) => `new_${i}`);
++    const t0 = performance.now();
++    const script = pg['computeDiff'](a, b);
++    const dt = performance.now() - t0;
++    const { out } = applyScript(a, script);
++    assert.deepEqual(out, b);
++    assert.ok(dt < 5000, `diff took ${dt.toFixed(0)}ms (regression)`);
++  });
++
++  test('50k-line file with single edit stays fast', () => {
++    const big = Array.from({ length: 50000 }, (_, i) => `line_${i}`);
++    const big2 = big.slice();
++    big2[25000] = 'line_EDITED';
++    const t0 = performance.now();
++    pg['computeDiff'](big, big2);
++    const dt = performance.now() - t0;
++    assert.ok(dt < 5000, `diff took ${dt.toFixed(0)}ms (regression)`);
++  });
++
++  test('anchor fallback handles two fully-different 12k-line files', () => {
++    const a = Array.from({ length: 12000 }, (_, i) => `A${i}`);
++    const b = Array.from({ length: 12000 }, (_, i) => `B${i}`);
++    const t0 = performance.now();
++    const script = pg['computeDiff'](a, b);
++    const dt = performance.now() - t0;
++    const { out } = applyScript(a, script);
++    assert.deepEqual(out, b);
++    assert.ok(dt < 5000, `anchor diff took ${dt.toFixed(0)}ms (regression)`);
++  });
++
++  test('generateUnifiedDiff + formatUnifiedDiff keep working', () => {
++    const diff = pg.generateUnifiedDiff('test.ts', 'a\nb\nc\nd\ne\n', 'a\nb\nCHANGED\nd\ne\nf\n');
++    assert.equal(diff.hunks.length, 1);
++    assert.equal(diff.originalHash.length, 64);
++    assert.equal(diff.newHash.length, 64);
++    const formatted = pg.formatUnifiedDiff(diff);
++    assert.match(formatted, /^--- a\/test\.ts/m);
++    assert.match(formatted, /^@@ /m);
++    assert.match(formatted, /^\+CHANGED$/m);
++  });
++});
+diff --git a/tests/planner.test.mjs b/tests/planner.test.mjs
+new file mode 100644
+index 0000000..d091072
+--- /dev/null
++++ b/tests/planner.test.mjs
+@@ -0,0 +1,86 @@
++// KLYN AI OS — Regression suite for the patch planner (audit fix #7) and
++// validator (audit fix #6): regex-escape safety and babel-based syntax
++// validation with real error positions.
++import { test, describe } from 'node:test';
++import assert from 'node:assert/strict';
++import { PatchPlanner } from '../dist/1.brain/patch_planner.js';
++import { PatchValidator } from '../dist/1.brain/patch_validator.js';
++
++describe('patch planner', () => {
++  test('ruleModify escapes regex metacharacters in symbols', () => {
++    const planner = new PatchPlanner();
++    // A symbol with a regex metacharacter used to throw / misbehave.
++    const out = planner['ruleModify']('const a = 1; // fix (a)', ['(a']);
++    assert.equal(out, 'const a = 1; // fix Updated(a)');
++  });
++
++  test('ruleModify handles symbols with $, + and .', () => {
++    const planner = new PatchPlanner();
++    const content = 'cost = 5; total = cost + 1;';
++    const out = planner['ruleModify'](content, ['cost']);
++    assert.ok(out.includes('Updatedcost'));
++    assert.ok(out.includes('total = Updatedcost + 1;'));
++  });
++
++  test('planFromOperations produces deterministic planHash', () => {
++    const planner = new PatchPlanner();
++    const p1 = planner.planFromOperations(
++      [{ type: 'create', path: 'a.ts', content: 'x' }],
++      'q',
++      'create'
++    );
++    const p2 = planner.planFromOperations(
++      [{ type: 'create', path: 'a.ts', content: 'x' }],
++      'q',
++      'create'
++    );
++    assert.equal(p1.planHash, p2.planHash);
++    assert.equal(p1.files.length, 1);
++    assert.equal(p1.inverse.length, 1);
++    assert.equal(p1.inverse[0].type, 'delete');
++  });
++});
++
++describe('patch validator', () => {
++  const v = new PatchValidator();
++
++  test('accepts valid TypeScript', async () => {
++    const errs = await v['validateSyntax'](
++      'export function f(a: number): string {\n  const s = "}"; // brace in string\n  return `${a}`;\n}\n',
++      '/tmp/x.ts'
++    );
++    assert.deepEqual(errs, []);
++  });
++
++  test('rejects unbalanced braces with a line number (old impl missed this)', async () => {
++    const errs = await v['validateSyntax']('function f() {\n  return 1;\n', '/tmp/x.ts');
++    assert.ok(errs.length > 0, 'expected a syntax error');
++    assert.equal(errs[0].type, 'syntax');
++    assert.ok(errs[0].line >= 1);
++  });
++
++  test('does not false-positive on braces inside strings/templates/comments', async () => {
++    const code = [
++      '// } not a brace',
++      'const a = "{" + "}";',
++      'const t = `{{ ${1} }}`;',
++      'const re = /[{}]/g;',
++      'export const ok = true;',
++    ].join('\n');
++    const errs = await v['validateSyntax'](code, '/tmp/ok.ts');
++    assert.deepEqual(errs, []);
++  });
++
++  test('accepts .jsx/.tsx via plugin selection', async () => {
++    const errs = await v['validateSyntax'](
++      'export const el = <div className="x">{1 + 1}</div>;',
++      '/tmp/el.tsx'
++    );
++    assert.deepEqual(errs, []);
++  });
++
++  test('resolveRelativePath handles .. and .', async () => {
++    const got = await v['resolveRelativePath']('../a/b', '/repo/src/index.ts');
++    assert.equal(got, '/repo/a/b');
++  });
++});
+diff --git a/tests/vault.test.mjs b/tests/vault.test.mjs
+new file mode 100644
+index 0000000..95c2ffc
+--- /dev/null
++++ b/tests/vault.test.mjs
+@@ -0,0 +1,104 @@
++// KLYN AI OS — Regression suite for the vector vault (audit fix #2).
++// Verifies persistence across re-initialization (state hydration), top-K
++// ordering, threshold filtering, prefix removal and namespace isolation.
++import { test, describe, before, after } from 'node:test';
++import assert from 'node:assert/strict';
++import os from 'node:os';
++import fs from 'node:fs';
++import path from 'node:path';
++import {
++  initializeVault,
++  storeMemory,
++  recall,
++  queryMemory,
++  removeMemoryPrefix,
++  memoryCount,
++} from '../index.js';
++
++let dir;
++
++function emb(seed) {
++  // Category-vector embeddings: index parity groups seeds into 3 categories,
++  // so same-category seeds are highly similar and cross-category ~orthogonal
++  // (deterministic, avoids accidental negative similarities).
++  const a = new Float32Array(16);
++  for (let i = 0; i < 16; i++) {
++    a[i] = (i % 3 === seed % 3 ? 1 : 0) + (i + 1) * seed * 1e-6;
++  }
++  let n = 0;
++  for (const v of a) n += v * v;
++  n = Math.sqrt(n);
++  for (let i = 0; i < 16; i++) a[i] /= n;
++  return a;
++}
++
++describe('vector vault', () => {
++  before(() => {
++    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'klyn-vault-test-'));
++    initializeVault(dir);
++  });
++  after(() => {
++    fs.rmSync(dir, { recursive: true, force: true });
++  });
++
++  test('store/recall with namespace filtering and ordering', async () => {
++    storeMemory('a', 'ns1', emb(1), Buffer.from(JSON.stringify({ file: 'a.ts' })), ['a']);
++    storeMemory('b', 'ns1', emb(2), Buffer.from(JSON.stringify({ file: 'b.ts' })), ['b']);
++    storeMemory('c', 'ns2', emb(3), Buffer.from(JSON.stringify({ file: 'c.ts' })), ['c']);
++    await new Promise((r) => setTimeout(r, 150)); // let debounced flush land
++
++    const res = recall(emb(1), 'ns1', 2, 0);
++    assert.equal(res[0].id, 'a');
++    assert.equal(res[0].payload.toString('utf8'), JSON.stringify({ file: 'a.ts' }));
++    assert.ok(res[0].score >= res[1].score);
++  });
++
++  test('state hydrates from disk after re-initialization', async () => {
++    initializeVault(dir);
++    assert.equal(memoryCount(), 3);
++    const res = recall(emb(2), 'ns1', 1, 0);
++    assert.equal(res[0].id, 'b');
++    assert.equal(res[0].payload.toString('utf8'), JSON.stringify({ file: 'b.ts' }));
++  });
++
++  test('queryMemory performs real similarity search', () => {
++    const q = queryMemory('ns1', emb(3), 2);
++    assert.equal(q.length, 2);
++    assert.ok(q.every((r) => r.namespace === 'ns1'));
++  });
++
++  test('threshold filters low-similarity entries', () => {
++    // seed 6 => category 0, which no ns1 entry uses: all sims ~0 < 0.99.
++    const res = recall(emb(6), 'ns1', 5, 0.99);
++    assert.equal(res.length, 0);
++  });
++
++  test('removeMemoryPrefix drops stale blocks and persists the removal', async () => {
++    removeMemoryPrefix('a');
++    assert.equal(memoryCount(), 2);
++    initializeVault(dir); // re-hydrate from the compacted file
++    assert.equal(memoryCount(), 2);
++    assert.equal(recall(emb(1), 'ns1', 1, 0)[0].id, 'b');
++  });
++
++  test('top-K is bounded and sorted', async () => {
++    for (let i = 0; i < 500; i++) storeMemory('x' + i, 'big', emb(i), Buffer.from('p' + i), []);
++    await new Promise((r) => setTimeout(r, 200));
++    const res = recall(emb(100), 'big', 10, 0);
++    assert.equal(res.length, 10);
++    for (let i = 1; i < res.length; i++) {
++      assert.ok(res[i - 1].similarity >= res[i].similarity);
++      assert.ok(Number.isFinite(res[i].similarity));
++    }
++  });
++
++  test('degenerate (zero/NaN) embeddings are rejected, not stored', async () => {
++    const zero = new Float32Array(16);
++    storeMemory('bad-zero', 'ns1', zero, Buffer.from('x'), []);
++    const nan = new Float32Array(16).fill(NaN);
++    storeMemory('bad-nan', 'ns1', nan, Buffer.from('x'), []);
++    await new Promise((r) => setTimeout(r, 150));
++    const res = recall(emb(1), 'ns1', 20, 0);
++    assert.ok(!res.some((r) => r.id === 'bad-zero' || r.id === 'bad-nan'));
++  });
++});
+diff --git a/vitest.config.ts b/vitest.config.ts
+new file mode 100644
+index 0000000..395bdeb
+--- /dev/null
++++ b/vitest.config.ts
+@@ -0,0 +1,17 @@
++import { defineConfig } from 'vitest/config';
++
++// KLYN AI OS — Vitest configuration.
++// Excludes historical archives (genesis bootstrap history, ESM migration
++// backups, compiled output) so `npm run test:integration` only ever runs the
++// live kernel test suite.
++export default defineConfig({
++  test: {
++    exclude: [
++      '**/node_modules/**',
++      '**/.migration-backup/**',
++      '**/genesis/**',
++      '**/dist/**',
++      '**/build/**',
++    ],
++  },
++});
