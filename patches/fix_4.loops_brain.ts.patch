@@ -1,0 +1,82 @@
+diff --git a/4.loops/brain.ts b/4.loops/brain.ts
+index 2dff2c4..a3ae8a7 100644
+--- a/4.loops/brain.ts
++++ b/4.loops/brain.ts
+@@ -13,7 +13,7 @@
+  * - 55x cheaper than single-model approach
+  */
+ 
+-import { execSync } from 'child_process'
++// AUDIT FIX: execSync import removed — LLM calls now use native fetch.
+ // @ts-ignore
+ import fs from 'fs'
+ // @ts-ignore
+@@ -429,7 +429,11 @@ export class BrainRouter {
+   }
+ 
+   /**
+-   * Generic curl wrapper with timeout and retry
++   * Generic fetch wrapper with timeout and retry
++   *
++   * AUDIT FIX: previously shelled out to `curl` via execSync, blocking the
++   * whole event loop for the duration of every LLM round trip. fetch is
++   * fully async; timeout/network error semantics are preserved.
+    */
+   private async curl(
+     endpoint: string,
+@@ -437,38 +441,35 @@ export class BrainRouter {
+     payload: any,
+     timeoutSec: number
+   ): Promise<string> {
+-    const payloadStr = JSON.stringify(payload).replace(/'/g, "'\\''")
+-    
+-    const headerArgs = Object.entries(headers)
+-      .map(([key, value]) => `-H "${key}: ${value}"`)
+-      .join(' ')
+-
+-    const curlCmd = `curl -s -X POST "${endpoint}" \
+-${headerArgs} \
+---max-time ${timeoutSec} \
+---retry 2 \
+---retry-delay 1 \
+--d '${payloadStr}'`
++    const controller = new AbortController()
++    const timer = setTimeout(() => controller.abort(), timeoutSec * 1000)
+ 
+     try {
+-      const response = execSync(curlCmd, {
+-        encoding: 'utf-8',
+-        timeout: (timeoutSec + 5) * 1000,
+-        maxBuffer: 50 * 1024 * 1024, // 50MB for large responses
+-        stdio: 'pipe'
++      const res = await fetch(endpoint, {
++        method: 'POST',
++        headers,
++        body: JSON.stringify(payload),
++        signal: controller.signal
+       })
+ 
+-      return response
++      if (!res.ok) {
++        throw new Error(`HTTP ${res.status}`)
++      }
++
++      return await res.text()
+     } catch (error) {
+       if (error instanceof Error) {
+-        if (error.message.includes('timeout')) {
++        if (error.name === 'AbortError') {
+           throw new Error(`Request timeout after ${timeoutSec}s`)
+         }
+-        if (error.message.includes('Command failed')) {
++        if (error.message.includes('fetch failed') || error.message.includes('ENOTFOUND') ||
++            error.message.includes('ECONNREFUSED') || error.message.includes('ECONNRESET')) {
+           throw new Error('Network error or API unavailable')
+         }
+       }
+       throw error
++    } finally {
++      clearTimeout(timer)
+     }
+   }
+ 

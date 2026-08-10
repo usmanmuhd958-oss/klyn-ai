@@ -1,0 +1,167 @@
+diff --git a/klyn_server.js b/klyn_server.js
+index db74159..4c60077 100644
+--- a/klyn_server.js
++++ b/klyn_server.js
+@@ -7,7 +7,7 @@ import path from 'node:path';
+ import fs from 'node:fs';
+ import vm from 'node:vm';
+ import { fileURLToPath } from 'node:url';
+-import { initializeVault, storeMemory, recall } from './index.js';
++import { initializeVault, storeMemory, recall, removeMemoryPrefix } from './index.js';
+ 
+ const __dirname = path.dirname(fileURLToPath(import.meta.url));
+ 
+@@ -15,6 +15,11 @@ class KlynServerEngine {
+   constructor(workDir) {
+     this.workDir = workDir;
+     initializeVault(path.join(workDir, 'vault_data'));
++    // Audit fix: index + dependency graph are now memoized and rebuilt only
++    // when files actually change (mtime/size), instead of a full synchronous
++    // re-scan of the codebase on every boot / patch / impact request.
++    this.fileMtimes = new Map();
++    this.depCache = null;
+     this.indexCodebase();
+   }
+ 
+@@ -55,32 +60,54 @@ class KlynServerEngine {
+ 
+   indexCodebase() {
+     const files = fs.readdirSync(this.workDir);
++    let anyChanged = false;
+     for (const file of files) {
++      if (!file.endsWith('.js') && !file.endsWith('.ts')) continue;
+       const full = path.join(this.workDir, file);
+-      if (fs.statSync(full).isFile() && (file.endsWith('.js') || file.endsWith('.ts'))) {
+-        const content = fs.readFileSync(full, 'utf8');
+-        const lines = content.split('\n');
+-        let currentBlock = [];
+-        let blockName = "global_scope";
+-        let blockIdx = 0;
++      let stat;
++      try {
++        stat = fs.statSync(full);
++      } catch {
++        continue; // Deleted between readdir and stat.
++      }
++      if (!stat.isFile()) continue;
++
++      const prev = this.fileMtimes.get(full);
++      if (prev && prev.mtimeMs === stat.mtimeMs && prev.size === stat.size) {
++        continue; // Unchanged since last pass — skip re-hashing and re-storing.
++      }
++
++      anyChanged = true;
++      this.fileMtimes.set(full, { mtimeMs: stat.mtimeMs, size: stat.size });
++      this.depCache = null; // Dependency graph is stale once any file changes.
+ 
+-        for (const line of lines) {
+-          if (line.includes('function') || line.includes('class') || line.includes('const ')) {
+-            if (currentBlock.length > 0) {
+-              const code = currentBlock.join('\n');
+-              storeMemory(`srv_${file}_${blockIdx++}`, "law_core_v1", this.generateEmbedding(code), Buffer.from(JSON.stringify({ file, blockName, code })), [file, "ast"]);
+-              currentBlock = [];
+-            }
+-            blockName = line.trim().slice(0, 40);
++      // Incremental: drop stale blocks for this file before re-storing, so
++      // repeated patches do not accumulate duplicated (stale) embeddings.
++      removeMemoryPrefix(`srv_${file}_`);
++
++      const content = fs.readFileSync(full, 'utf8');
++      const lines = content.split('\n');
++      let currentBlock = [];
++      let blockName = "global_scope";
++      let blockIdx = 0;
++
++      for (const line of lines) {
++        if (line.includes('function') || line.includes('class') || line.includes('const ')) {
++          if (currentBlock.length > 0) {
++            const code = currentBlock.join('\n');
++            storeMemory(`srv_${file}_${blockIdx++}`, "law_core_v1", this.generateEmbedding(code), Buffer.from(JSON.stringify({ file, blockName, code })), [file, "ast"]);
++            currentBlock = [];
+           }
+-          currentBlock.push(line);
+-        }
+-        if (currentBlock.length > 0) {
+-          const code = currentBlock.join('\n');
+-          storeMemory(`srv_${file}_${blockIdx++}`, "law_core_v1", this.generateEmbedding(code), Buffer.from(JSON.stringify({ file, blockName, code })), [file, "ast"]);
++          blockName = line.trim().slice(0, 40);
+         }
++        currentBlock.push(line);
++      }
++      if (currentBlock.length > 0) {
++        const code = currentBlock.join('\n');
++        storeMemory(`srv_${file}_${blockIdx++}`, "law_core_v1", this.generateEmbedding(code), Buffer.from(JSON.stringify({ file, blockName, code })), [file, "ast"]);
+       }
+     }
++    return anyChanged;
+   }
+ 
+   getEnrichedContext(query, topK = 3) {
+@@ -95,27 +122,55 @@ class KlynServerEngine {
+     });
+   }
+ 
+-  buildDependencyGraph() {
++  getDependencyGraph() {
++    // Audit fix: previously every /v1/impact request re-read every .js/.ts
++    // file synchronously from disk. The graph is now rebuilt only when a
++    // file's mtime/size changed (see indexCodebase invalidating depCache).
++    if (this.depCache) return this.depCache;
++
+     const graph = {};
+     const files = fs.readdirSync(this.workDir);
+     for (const file of files) {
+-      if (file.endsWith('.js') || file.endsWith('.ts')) {
+-        const content = fs.readFileSync(path.join(this.workDir, file), 'utf8');
+-        const imports = [];
+-        const matches = content.matchAll(/require\(['"]\.\/(.*?)['"]\)/g);
+-        for (const m of matches) {
+-          let dep = m[1];
+-          if (!dep.endsWith('.js')) dep += '.js';
+-          imports.push(dep);
+-        }
+-        graph[file] = imports;
++      if (!file.endsWith('.js') && !file.endsWith('.ts')) continue;
++      const full = path.join(this.workDir, file);
++      let content;
++      try {
++        content = fs.readFileSync(full, 'utf8');
++      } catch {
++        continue;
+       }
++      const imports = [];
++      const addDep = (spec) => {
++        if (!spec || !spec.startsWith('.')) return;
++        // Strip query/hash suffixes and resolve the extension-less form.
++        let dep = spec.split(/[?#]/)[0];
++        if (!path.extname(dep)) {
++          if (fs.existsSync(path.join(this.workDir, dep + '.js'))) dep += '.js';
++          else if (fs.existsSync(path.join(this.workDir, dep + '.ts'))) dep += '.ts';
++          else if (fs.existsSync(path.join(this.workDir, dep, 'index.js'))) dep += '/index.js';
++          else if (fs.existsSync(path.join(this.workDir, dep, 'index.ts'))) dep += '/index.ts';
++          else dep += '.js';
++        }
++        if (!imports.includes(dep)) imports.push(dep);
++      };
++
++      // CommonJS require().
++      for (const m of content.matchAll(/require\(['"](\.\/.*?)['"]\)/g)) addDep(m[1]);
++      // ESM static imports: `import x from './y'`, `import './y'`, etc.
++      for (const m of content.matchAll(/\bimport\s+(?:[^'"]*?\s+from\s+)?['"](\.\/.*?)['"]/g)) addDep(m[1]);
++      // Dynamic import().
++      for (const m of content.matchAll(/\bimport\s*\(\s*['"](\.\/.*?)['"]\s*\)/g)) addDep(m[1]);
++      // export ... from './y'.
++      for (const m of content.matchAll(/\bexport\s+[^'"]*?\s+from\s+['"](\.\/.*?)['"]/g)) addDep(m[1]);
++
++      graph[file] = imports;
+     }
++    this.depCache = graph;
+     return graph;
+   }
+ 
+   analyzeImpact(targetFile) {
+-    const graph = this.buildDependencyGraph();
++    const graph = this.getDependencyGraph();
+     const affectedFiles = [];
+     for (const [file, deps] of Object.entries(graph)) {
+       if (deps.includes(targetFile)) {

@@ -1,7 +1,8 @@
 // 1.brain/patch_validator.ts
 import type { UnifiedDiff, FileOperation } from './patch_generator.js';
 import type { ASTDependencyGraph } from '../kernel/src/ast/dependency_graph.js';
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
+import { parse } from '@babel/parser';
 
 export interface ValidationResult {
   valid: boolean;
@@ -23,9 +24,13 @@ export interface ValidationWarning {
 }
 
 export class PatchValidator {
+  /** Per-pass memo for relative-import resolution (cleared per validateDiff). */
+  private importResolutionCache = new Map<string, boolean>();
+
   constructor(private depGraph?: ASTDependencyGraph) {}
 
   async validateDiff(diff: UnifiedDiff, dryRun: boolean = true): Promise<ValidationResult> {
+    this.importResolutionCache.clear();
     const errors: ValidationError[] = [];
     const warnings: ValidationWarning[] = [];
 
@@ -107,37 +112,39 @@ export class PatchValidator {
 
   private validateSyntax(content: string, filePath: string): ValidationError[] {
     const errors: ValidationError[] = [];
-    const ext = filePath.split('.').pop();
+    const ext = filePath.split('.').pop()?.toLowerCase();
 
-    if (!ext || !['ts', 'tsx', 'js', 'jsx'].includes(ext)) {
+    if (!ext || !['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs'].includes(ext)) {
       return errors;
     }
 
-    const brackets = { '{': 0, '[': 0, '(': 0 };
-    const closeBrackets = { '}': '{', ']': '[', ')': '(' };
-    const lines = content.split('\n');
+    // AUDIT FIX: the previous check counted braces per character, which
+    // false-positived on braces inside strings, template literals, comments
+    // and regexes (rejecting valid LLM patches), and missed genuinely broken
+    // code that happened to be brace-balanced. Use the real parser
+    // (@babel/parser, already a dependency) with error positions.
+    const plugins: any[] = [];
+    if (ext === 'ts' || ext === 'tsx') plugins.push(['typescript', { dts: false }]);
+    if (ext === 'tsx' || ext === 'jsx') plugins.push('jsx');
+    plugins.push('decorators-legacy');
 
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-
-      for (const char of line) {
-        if (char in brackets) {
-          brackets[char as keyof typeof brackets]++;
-        } else if (char in closeBrackets) {
-          const open = closeBrackets[char as keyof typeof closeBrackets];
-          brackets[open as keyof typeof brackets]--;
-        }
-      }
-    }
-
-    for (const [bracket, count] of Object.entries(brackets)) {
-      if (count !== 0) {
-        errors.push({
-          type: 'syntax',
-          message: `Unmatched ${bracket}: ${count > 0 ? 'unclosed' : 'extra closing'}`,
-          filePath,
-        });
-      }
+    try {
+      parse(content, {
+        sourceType: 'module',
+        allowReturnOutsideFunction: true,
+        errorRecovery: false,
+        plugins,
+      });
+    } catch (error) {
+      const err = error as { message?: string; loc?: { line?: number; column?: number } };
+      const loc = err.loc;
+      const message = (err.message || 'Syntax error').replace(/\s*\(\d+:\d+\)$/, '');
+      errors.push({
+        type: 'syntax',
+        message,
+        filePath,
+        line: loc?.line,
+      });
     }
 
     return errors;
@@ -263,24 +270,28 @@ export class PatchValidator {
   }
 
   private async checkRelativeImport(importPath: string, fromFile: string): Promise<boolean> {
+    // AUDIT FIX: the previous implementation probed up to 7 candidate paths
+    // with SEQUENTIAL awaited reads per import statement — a 20-import file
+    // cost 140+ serialized syscalls per validation pass. Candidates are now
+    // probed in one parallel round and memoized per (fromFile, importPath).
+    const cacheKey = `${fromFile}\u0000${importPath}`;
+    const cached = this.importResolutionCache.get(cacheKey);
+    if (cached !== undefined) return cached;
+
     const extensions = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json'];
     const basePath = this.resolveRelativePath(importPath, fromFile);
+    const candidates = [
+      ...extensions.map((ext) => basePath + ext),
+      basePath + '/index.ts',
+      basePath + '/index.js',
+    ];
 
-    for (const ext of extensions) {
-      try {
-        await readFile(basePath + ext, 'utf-8');
-        return true;
-      } catch {
-        continue;
-      }
-    }
-
-    try {
-      await readFile(basePath + '/index.ts', 'utf-8');
-      return true;
-    } catch {
-      return false;
-    }
+    const results = await Promise.all(
+      candidates.map((candidate) => stat(candidate).then(() => true, () => false))
+    );
+    const resolved = results.some(Boolean);
+    this.importResolutionCache.set(cacheKey, resolved);
+    return resolved;
   }
 
   private resolveRelativePath(importPath: string, fromFile: string): string {

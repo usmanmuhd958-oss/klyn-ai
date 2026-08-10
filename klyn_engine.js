@@ -3,8 +3,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import assert from 'node:assert';
-import { spawn, execSync } from 'node:child_process';
+import { spawn, exec } from 'node:child_process';
+import { promisify } from 'node:util';
 import { performance } from 'node:perf_hooks';
+
+const execAsync = promisify(exec);
 
 const workDir = process.cwd();
 const args = process.argv.slice(2);
@@ -166,16 +169,33 @@ class GitEdgeSyncEngine {
     this.rootDir = rootDir;
   }
 
-  syncAsync(customMessage) {
-    setImmediate(() => {
+  /**
+   * Commit ONLY the engine-written files.
+   *
+   * AUDIT FIX: this previously ran `git add .` and committed the ENTIRE
+   * working tree, sweeping up the user's unrelated changes into machine
+   * commits. The pipeline now passes the explicit file list it wrote this
+   * session; the commit is skipped when none of them changed.
+   * execSync -> async exec so git never blocks the event loop.
+   */
+  syncAsync(customMessage, files = []) {
+    setImmediate(async () => {
       try {
-        const status = execSync('git status --porcelain', { cwd: this.rootDir, encoding: 'utf8' });
-        if (!status.trim()) return;
+        const uniqueFiles = Array.from(new Set(files.filter(Boolean)));
+        if (uniqueFiles.length === 0) return;
+        // Paths are passed with `--` so a filename can never be parsed as an
+        // option, and path-relative so `git add` works from rootDir.
+        const relFiles = uniqueFiles.map((f) => f.replace(this.rootDir + '/', ''));
+        const status = await execAsync('git status --porcelain -- ' + relFiles.map((f) => `"${f}"`).join(' '), {
+          cwd: this.rootDir,
+          encoding: 'utf8',
+        });
+        if (!status.stdout.trim()) return;
 
-        execSync('git add .', { cwd: this.rootDir });
+        await execAsync('git add -- ' + relFiles.map((f) => `"${f}"`).join(' '), { cwd: this.rootDir });
         const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 19);
         const commitMsg = customMessage || `[KLYN-NEURAL-SYNC] Auto-commit at ${timestamp}`;
-        execSync(`git commit -m "${commitMsg.replace(/"/g, '\\"')}"`, { cwd: this.rootDir });
+        await execAsync(`git commit -m "${commitMsg.replace(/"/g, '\\"')}" -- ${relFiles.map((f) => `"${f}"`).join(' ')}`, { cwd: this.rootDir });
       } catch (err) {}
     });
   }
@@ -188,6 +208,8 @@ class MultiAgentNeuralPipeline {
   constructor(rootDir) {
     this.rootDir = rootDir;
     this.astGuardHeader = `// [KLYN-AST-GUARD] Verified & Protected by Klyn OS Kernel\n`;
+    /** Files this engine wrote during the session (scoped git sync). */
+    this.sessionFiles = new Set();
   }
 
   async executeTask(prompt) {
@@ -250,7 +272,10 @@ class MultiAgentNeuralPipeline {
     console.log("======================================================================");
 
     if (!bypassSync) {
-      new GitEdgeSyncEngine(this.rootDir).syncAsync(`feat(quantum-sync): task "${prompt.slice(0, 30)}" background commit`);
+      new GitEdgeSyncEngine(this.rootDir).syncAsync(
+        `feat(quantum-sync): task "${prompt.slice(0, 30)}" background commit`,
+        Array.from(this.sessionFiles)
+      );
     }
   }
 
@@ -293,6 +318,8 @@ class MultiAgentNeuralPipeline {
 
     fs.writeFileSync(filePath, targetCode, 'utf8');
     fs.writeFileSync(testPath, targetTest, 'utf8');
+    this.sessionFiles.add(filePath);
+    this.sessionFiles.add(testPath);
     console.log(` ├── [VERIFIED AST MODULE] ${filename}`);
     console.log(` └── [AUTO-GENERATED TEST] test_${filename}`);
   }

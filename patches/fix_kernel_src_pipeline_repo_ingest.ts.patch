@@ -1,0 +1,105 @@
+diff --git a/kernel/src/pipeline/repo_ingest.ts b/kernel/src/pipeline/repo_ingest.ts
+index 9d1eeaf..ab9ae67 100644
+--- a/kernel/src/pipeline/repo_ingest.ts
++++ b/kernel/src/pipeline/repo_ingest.ts
+@@ -97,11 +97,24 @@ export class RepoIngestionPipeline {
+   private hashCache: Map<string, string> = new Map();
+   private nodeCache: Map<string, DAGNode> = new Map();
+ 
+-  async ingestRepository(dirPath: string): Promise<{ dagRoot: DAGNode; stats: IngestionStats }> {
++  // AUDIT FIX: nodeCache/hashCache previously grew unboundedly (one entry per
++  // path+mtime, never evicted across re-ingests) and every getIncrementalDiff
++  // cleared them, turning the "incremental" diff into a full re-ingest.
++  // Caches are now size-bounded (FIFO eviction) and getIncrementalDiff keeps
++  // them across passes so the mtime fast-path actually skips unchanged files.
++  private static readonly NODE_CACHE_MAX = 20000;
++  private static readonly HASH_CACHE_MAX = 50000;
++
++  async ingestRepository(
++    dirPath: string,
++    options?: { clearCaches?: boolean }
++  ): Promise<{ dagRoot: DAGNode; stats: IngestionStats }> {
+     const startTime = performance.now();
+-    
+-    this.hashCache.clear();
+-    this.nodeCache.clear();
++
++    if (options?.clearCaches !== false) {
++      this.hashCache.clear();
++      this.nodeCache.clear();
++    }
+     
+     let totalFiles = 0;
+     let totalBytes = 0;
+@@ -147,7 +160,9 @@ export class RepoIngestionPipeline {
+     
+     const oldMap = this.flattenDAG(oldRoot);
+     
+-    const { dagRoot: newRoot } = await this.ingestRepository(dirPath);
++    // Audit fix: keep the mtime-keyed caches across the pass so unchanged
++    // files are resolved from cache instead of re-read + re-hashed.
++    const { dagRoot: newRoot } = await this.ingestRepository(dirPath, { clearCaches: false });
+     const newMap = this.flattenDAG(newRoot);
+     
+     const added: DAGNode[] = [];
+@@ -257,6 +272,7 @@ export class RepoIngestionPipeline {
+       };
+       
+       this.nodeCache.set(cacheKey, node);
++      this.evictNodeCache();
+       return node;
+     }
+     
+@@ -280,9 +296,22 @@ export class RepoIngestionPipeline {
+     };
+     
+     this.nodeCache.set(cacheKey, node);
++    this.evictNodeCache();
+     return node;
+   }
+ 
++  /** FIFO eviction: drop the oldest entries once the cache exceeds its cap. */
++  private evictNodeCache(): void {
++    if (this.nodeCache.size <= RepoIngestionPipeline.NODE_CACHE_MAX) return;
++    const excess = this.nodeCache.size - RepoIngestionPipeline.NODE_CACHE_MAX;
++    let evicted = 0;
++    for (const key of this.nodeCache.keys()) {
++      if (evicted >= excess) break;
++      this.nodeCache.delete(key);
++      evicted++;
++    }
++  }
++
+   private async createDirectoryNode(
+     rootPath: string,
+     currentPath: string,
+@@ -380,6 +409,7 @@ export class RepoIngestionPipeline {
+       .digest('hex');
+     
+     this.hashCache.set(key, hash);
++    this.evictHashCache();
+     return hash;
+   }
+ 
+@@ -390,9 +420,21 @@ export class RepoIngestionPipeline {
+     
+     const hash = createHash('sha256').update(input).digest('hex');
+     this.hashCache.set(input, hash);
++    this.evictHashCache();
+     return hash;
+   }
+ 
++  private evictHashCache(): void {
++    if (this.hashCache.size <= RepoIngestionPipeline.HASH_CACHE_MAX) return;
++    const excess = this.hashCache.size - RepoIngestionPipeline.HASH_CACHE_MAX;
++    let evicted = 0;
++    for (const key of this.hashCache.keys()) {
++      if (evicted >= excess) break;
++      this.hashCache.delete(key);
++      evicted++;
++    }
++  }
++
+   private getExtension(filename: string): string {
+     const lastDot = filename.lastIndexOf('.');
+     const lastSlash = filename.lastIndexOf(sep);

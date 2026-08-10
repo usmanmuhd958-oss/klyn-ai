@@ -1,0 +1,33 @@
+diff --git a/package.json b/package.json
+index 8efb13a..d4775a5 100644
+--- a/package.json
++++ b/package.json
+@@ -12,6 +12,9 @@
+     "dev": "node klyn_server.js",
+     "build": "tsc -p tsconfig.json",
+     "typecheck": "tsc --noEmit -p tsconfig.json",
++    "test": "npm run build && node --test \"tests/*.test.mjs\"",
++    "test:integration": "vitest run kernel/tests/integration/context_weaver.test.ts --reporter=verbose",
++    "bench": "npm run build && node dist/benchmark/perf_test.js",
+     "typecheck:v670": "tsc --noEmit -p genesis/v670/tsconfig.json",
+     "smoke:v670": "bun run genesis/v670/smoke.ts",
+     "genesis:forge": "node genesis/forge.mjs all",
+@@ -19,6 +22,9 @@
+     "genesis:typecheck": "tsc --noEmit -p genesis/tsconfig.json",
+     "genesis:test": "bun run genesis/evolution.ts"
+   },
++  "engines": {
++    "node": ">=20.11"
++  },
+   "dependencies": {
+     "@babel/parser": "^8.0.4",
+     "@google/generative-ai": "^0.24.1",
+@@ -30,6 +36,7 @@
+   },
+   "devDependencies": {
+     "@types/node": "^26.2.0",
+-    "typescript": "^5.9.3"
++    "typescript": "^5.9.3",
++    "vitest": "^3.2.0"
+   }
+ }

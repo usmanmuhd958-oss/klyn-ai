@@ -1,0 +1,311 @@
+diff --git a/index.js b/index.js
+index 70fb863..867eb96 100644
+--- a/index.js
++++ b/index.js
+@@ -1,44 +1,290 @@
+ // [KLYN-V4.7-SELF-HEALED-AST-NODE: Cannot use import statement outside a module]
++// KLYN AI OS — Vector Vault (persistent memory store)
++//
++// AUDIT FIX (2026-08): the vault previously lived only in a process-local Map:
++//   - every restart lost the entire index (state hydration failure), forcing
++//     a full re-index on boot;
++//   - `recall()` was O(N) with a full O(N log N) sort and one object spread
++//     allocation per entry on every query;
++//   - `queryMemory()` ignored the embedding entirely.
++//
++// Now the vault:
++//   - persists entries to <vault>/memory.jsonl (append-only, batched + debounced),
++//     compacts atomically when the file grows large, and rehydrates on boot;
++//   - answers recall with a bounded top-K min-heap (O(N log K)) and cached
++//     embedding norms (no re-normalization per query);
++//   - exposes removeMemoryPrefix() so incremental re-indexing can drop stale
++//     blocks without a full vault reset.
+ import fs from 'node:fs';
+ import path from 'node:path';
+ 
+ const memoryMap = new Map();
++/** Cache of per-entry L2 norms so recall does not recompute them per query. */
++const normCache = new Map();
++
++let vaultDir = null;
++let persistTimer = null;
++let pendingWrites = [];
++let persistedBytes = 0;
++
++const PERSIST_FILE = 'memory.jsonl';
++/** Rewrite the whole file (atomic tmp+rename) once the log exceeds this size. */
++const COMPACT_BYTES = 64 * 1024 * 1024;
++/** Debounce window for batching appends (ms). */
++const FLUSH_DEBOUNCE_MS = 50;
+ 
+ export function initializeVault(vaultPath) {
++  vaultDir = vaultPath;
+   if (!fs.existsSync(vaultPath)) {
+     fs.mkdirSync(vaultPath, { recursive: true });
+   }
++  loadFromDisk();
++}
++
++function persistFilePath() {
++  return vaultDir ? path.join(vaultDir, PERSIST_FILE) : null;
++}
++
++function loadFromDisk() {
++  memoryMap.clear();
++  normCache.clear();
++  const file = persistFilePath();
++  if (!file || !fs.existsSync(file)) return;
++  try {
++    const raw = fs.readFileSync(file, 'utf8');
++    persistedBytes = raw.length;
++    for (const line of raw.split('\n')) {
++      if (!line) continue;
++      try {
++        const rec = JSON.parse(line);
++        if (rec && typeof rec.id === 'string' && rec.embedding) {
++          if (Array.isArray(rec.embedding)) {
++            rec.embedding = Float32Array.from(rec.embedding);
++          }
++          if (rec.payload !== null && rec.payload !== undefined) {
++            // Payloads were stored as Buffers; restore them so consumers can
++            // keep calling payload.toString('utf8').
++            rec.payload = rec.payloadEncoding === 'base64' || typeof rec.payload !== 'string'
++              ? Buffer.from(rec.payload, 'base64')
++              : Buffer.from(String(rec.payload), 'utf8');
++          }
++          memoryMap.set(rec.id, rec);
++          normCache.set(rec.id, computeNorm(rec.embedding));
++        }
++      } catch {
++        // Skip corrupt lines; compaction will drop them.
++      }
++    }
++  } catch {
++    // Unreadable vault is not fatal — start empty.
++  }
++}
++
++function computeNorm(embedding) {
++  if (!embedding) return 0;
++  let norm = 0;
++  for (let i = 0; i < embedding.length; i++) norm += embedding[i] * embedding[i];
++  return Math.sqrt(norm);
+ }
+ 
+ export function storeMemory(id, namespace, embedding, payload, tags) {
+-  memoryMap.set(id, { id, namespace, embedding, payload, tags });
++  if (!id || !embedding) return;
++  const norm = computeNorm(embedding);
++  // Defensive: degenerate (zero / NaN) embeddings must not poison recall.
++  if (!Number.isFinite(norm) || norm === 0) return;
++  const entry = { id, namespace, embedding, payload, tags };
++  memoryMap.set(id, entry);
++  normCache.set(id, norm);
++  pendingWrites.push(entry);
++  scheduleFlush();
+ }
+ 
+ export function queryMemory(namespace, embedding, topK = 5) {
+-  return Array.from(memoryMap.values()).slice(0, topK);
++  // Previously returned arbitrary entries; delegate to real similarity search.
++  return recall(embedding, namespace, topK, 0);
+ }
+ 
+-function cosineSimilarity(a, b) {
++function cosineSimilarity(a, b, normA, normB) {
+   if (!a || !b || a.length !== b.length) return 0;
+   let dot = 0;
+-  let normA = 0;
+-  let normB = 0;
+-  for (let i = 0; i < a.length; i++) {
+-    dot += a[i] * b[i];
+-    normA += a[i] * a[i];
+-    normB += b[i] * b[i];
+-  }
++  for (let i = 0; i < a.length; i++) dot += a[i] * b[i];
+   if (normA === 0 || normB === 0) return 0;
+-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
++  return dot / (normA * normB);
++}
++
++/** Minimal binary min-heap used for bounded top-K selection. */
++class MinHeap {
++  constructor(capacity) {
++    this.capacity = capacity;
++    this.items = [];
++  }
++  get size() {
++    return this.items.length;
++  }
++  peek() {
++    return this.items[0];
++  }
++  push(item) {
++    const arr = this.items;
++    arr.push(item);
++    let i = arr.length - 1;
++    while (i > 0) {
++      const parent = (i - 1) >> 1;
++      if (arr[parent].similarity <= arr[i].similarity) break;
++      const tmp = arr[parent];
++      arr[parent] = arr[i];
++      arr[i] = tmp;
++      i = parent;
++    }
++    if (arr.length > this.capacity) this.pop();
++  }
++  pop() {
++    const arr = this.items;
++    const top = arr[0];
++    const last = arr.pop();
++    if (arr.length > 0) {
++      arr[0] = last;
++      let i = 0;
++      const n = arr.length;
++      for (;;) {
++        const l = 2 * i + 1;
++        const r = l + 1;
++        let smallest = i;
++        if (l < n && arr[l].similarity < arr[smallest].similarity) smallest = l;
++        if (r < n && arr[r].similarity < arr[smallest].similarity) smallest = r;
++        if (smallest === i) break;
++        const tmp = arr[smallest];
++        arr[smallest] = arr[i];
++        arr[i] = tmp;
++        i = smallest;
++      }
++    }
++    return top;
++  }
++  sortedDesc() {
++    return this.items.slice().sort((a, b) => b.similarity - a.similarity);
++  }
+ }
+ 
+ export function recall(embedding, namespace, topK = 5, threshold = 0) {
+-  const scored = [];
++  const k = Math.max(1, topK | 0);
++  const heap = new MinHeap(k);
++  const normQ = computeNorm(embedding);
++
+   for (const m of memoryMap.values()) {
+     if (namespace && m.namespace !== namespace) continue;
+-    const sim = cosineSimilarity(embedding, m.embedding);
+-    if (sim >= threshold) scored.push({ ...m, similarity: sim, score: sim });
++    const normM = normCache.get(m.id);
++    if (normM === undefined || !Number.isFinite(normM) || normM === 0) continue;
++    const sim = cosineSimilarity(embedding, m.embedding, normQ, normM);
++    if (sim < threshold) continue;
++    // Reuse the stored entry — no per-query spread allocation.
++    const scored = { id: m.id, namespace: m.namespace, embedding: m.embedding, payload: m.payload, tags: m.tags, similarity: sim, score: sim };
++    heap.push(scored);
+   }
+-  scored.sort((a, b) => b.similarity - a.similarity);
+-  return scored.slice(0, topK);
++
++  return heap.sortedDesc().slice(0, k);
+ }
++
++/** Drop every entry whose id starts with `prefix` (used by incremental
++ *  re-indexing so stale per-file blocks are replaced, not duplicated). */
++export function removeMemoryPrefix(prefix) {
++  if (!prefix) return;
++  for (const id of memoryMap.keys()) {
++    if (id.startsWith(prefix)) {
++      memoryMap.delete(id);
++      normCache.delete(id);
++    }
++  }
++  // An append-only log cannot express deletions: flush pending appends,
++  // then rewrite the full state so removals are durable on disk.
++  flushNow();
++  compact();
++}
++
++export function memoryCount() {
++  return memoryMap.size;
++}
++
++// ---------------------------------------------------------------------------
++// Persistence plumbing
++// ---------------------------------------------------------------------------
++
++function scheduleFlush() {
++  if (persistTimer) return;
++  persistTimer = setTimeout(() => {
++    persistTimer = null;
++    flushNow();
++  }, FLUSH_DEBOUNCE_MS);
++}
++
++function flushNow() {
++  const file = persistFilePath();
++  if (!file || pendingWrites.length === 0) return;
++
++  const batch = pendingWrites;
++  pendingWrites = [];
++
++  try {
++    // Fast path: append batch to the log.
++    let chunk = '';
++    for (const entry of batch) {
++      const isBuffer = Buffer.isBuffer(entry.payload);
++      const rec = {
++        id: entry.id,
++        namespace: entry.namespace,
++        embedding: Array.from(entry.embedding),
++        payload: entry.payload
++          ? (isBuffer ? entry.payload.toString('base64') : String(entry.payload))
++          : null,
++        payloadEncoding: isBuffer ? 'base64' : 'utf8',
++        tags: entry.tags || [],
++      };
++      chunk += JSON.stringify(rec) + '\n';
++    }
++    fs.appendFileSync(file, chunk, 'utf8');
++    persistedBytes += chunk.length;
++
++    // Slow path: compact when the log grows large.
++    if (persistedBytes > COMPACT_BYTES) {
++      compact();
++    }
++  } catch {
++    // Persistence must never break the in-memory engine.
++  }
++}
++
++function compact() {
++  const file = persistFilePath();
++  if (!file) return;
++  try {
++    let chunk = '';
++    for (const entry of memoryMap.values()) {
++      const isBuffer = Buffer.isBuffer(entry.payload);
++      chunk += JSON.stringify({
++        id: entry.id,
++        namespace: entry.namespace,
++        embedding: Array.from(entry.embedding),
++        payload: entry.payload
++          ? (isBuffer ? entry.payload.toString('base64') : String(entry.payload))
++          : null,
++        payloadEncoding: isBuffer ? 'base64' : 'utf8',
++        tags: entry.tags || [],
++      }) + '\n';
++    }
++    const tmpFile = file + '.tmp.' + process.pid + '.' + Date.now();
++    fs.writeFileSync(tmpFile, chunk, 'utf8');
++    fs.renameSync(tmpFile, file);
++    persistedBytes = chunk.length;
++  } catch {
++    // Non-fatal: the log stays valid, compaction retries on next trigger.
++  }
++}
++
++// Best-effort durability on shutdown (sync — safe in exit handlers).
++process.on('exit', () => {
++  if (persistTimer) {
++    clearTimeout(persistTimer);
++    persistTimer = null;
++  }
++  flushNow();
++});

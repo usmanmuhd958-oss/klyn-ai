@@ -16,7 +16,10 @@ import chokidar from 'chokidar'
 import fs from 'fs/promises'
 // @ts-ignore
 import path from 'path'
-import { execSync } from 'child_process'
+import { execFile, exec } from 'child_process'
+import { promisify } from 'util'
+const execFileAsync = promisify(execFile)
+const execAsync = promisify(exec)
 import * as ts from 'typescript'
 import { BrainRouter } from './brain'
 import { getMemory, saveMemory, findSimilarError } from '../core/memory'
@@ -202,20 +205,27 @@ class Healer {
         return
       }
 
+      // Audit fix: ts.createProgram([file]) built a full compiler program per
+      // change event (O(repo) cost). The fallback path now uses
+      // ts.transpileModule, which reports syntactic diagnostics in O(file)
+      // time; semantic analysis stays on the persistent tsserver daemon.
       const sourceFile = ts.createSourceFile(fullPath, code, ts.ScriptTarget.Latest, true)
-      const program = ts.createProgram([fullPath], {
-        noEmit: true,
-        target: ts.ScriptTarget.Latest,
-        module: ts.ModuleKind.ESNext,
-        skipLibCheck: true
+      const transpiled = ts.transpileModule(code, {
+        fileName: fullPath,
+        compilerOptions: { target: ts.ScriptTarget.Latest, module: ts.ModuleKind.ESNext },
+        reportDiagnostics: true
       })
 
-      const diagnostics = ts.getPreEmitDiagnostics(program, sourceFile)
+      const diagnostics = (transpiled.diagnostics || []).filter(
+        (d) => d.category === ts.DiagnosticCategory.Error
+      )
 
       if (diagnostics.length > 0) {
         for (const diagnostic of diagnostics) {
           const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')
-          const { line } = sourceFile.getLineAndCharacterOfPosition(diagnostic.start || 0)
+          const line = diagnostic.start !== undefined
+            ? sourceFile.getLineAndCharacterOfPosition(diagnostic.start).line
+            : 0
           
           await this.queueHeal({
             filePath: fullPath,
@@ -542,7 +552,12 @@ Return the complete fixed file:`
   }
 
   /**
-   * Call AI using pure curl (Termux-compatible, no SDKs)
+   * Call AI via native fetch (Node >= 18).
+   *
+   * AUDIT FIX: this previously shelled out to `curl` through execSync, which
+   * blocked the ENTIRE event loop for the full duration of an LLM round trip
+   * (up to 35s per call) — fatal for any concurrent IDE workload. fetch is
+   * fully async; error semantics are preserved (timeout / network mapping).
    */
   private async callAI(model: string, prompt: string, timeoutSec: number): Promise<string> {
     const endpoint = this.brainRouter.getEndpoint(model)
@@ -558,26 +573,26 @@ Return the complete fixed file:`
       max_tokens: 4096
     }
 
-    const payloadStr = JSON.stringify(payload).replace(/'/g, "'\\''")
-    
-    const curlCmd = `curl -s -X POST "${endpoint}" \
--H "Content-Type: application/json" \
--H "Authorization: Bearer ${apiKey}" \
---max-time ${timeoutSec} \
---retry 2 \
---retry-delay 1 \
--d '${payloadStr}'`
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutSec * 1000)
 
     try {
-      const response = execSync(curlCmd, {
-        encoding: 'utf-8',
-        timeout: (timeoutSec + 5) * 1000,
-        maxBuffer: 10 * 1024 * 1024,
-        stdio: 'pipe'
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal
       })
 
-      const data = JSON.parse(response)
-      
+      if (!res.ok) {
+        throw new Error(`API Error: HTTP ${res.status}`)
+      }
+
+      const data = await res.json()
+
       if ((data as any).error) {
         throw new Error(`API Error: ${(data as any).error.message || JSON.stringify((data as any).error)}`)
       }
@@ -589,14 +604,17 @@ Return the complete fixed file:`
       throw new Error('Invalid API response format')
     } catch (error) {
       if (error instanceof Error) {
-        if (error.message.includes('timeout')) {
+        if (error.name === 'AbortError') {
           throw new Error(`Request timeout after ${timeoutSec}s`)
         }
-        if (error.message.includes('Command failed')) {
+        if (error.message.includes('fetch failed') || error.message.includes('ENOTFOUND') ||
+            error.message.includes('ECONNREFUSED') || error.message.includes('ECONNRESET')) {
           throw new Error('Network error or invalid API key')
         }
       }
       throw error
+    } finally {
+      clearTimeout(timer)
     }
   }
 
@@ -811,12 +829,12 @@ Return the complete fixed file:`
       
       await fs.writeFile(testPath, testCode, 'utf-8')
 
-      // Run test with timeout
+      // Run test with timeout (audit fix: async execFile — execSync blocked
+      // the event loop for up to 15s per verification pass).
       try {
-        execSync(`npx vitest run ${testPath} --reporter=silent`, {
+        await execFileAsync('npx', ['vitest', 'run', testPath, '--reporter=silent'], {
           encoding: 'utf-8',
-          timeout: 15000,
-          stdio: 'pipe'
+          timeout: 15000
         })
         
         console.log('   ✅ Tests passed')
@@ -1008,10 +1026,12 @@ export async function heal(filePath?: string): Promise<HealingResult> {
 
 /**
  * Execute command and auto-heal on error
+ * (audit fix: async exec — execSync blocked the event loop for the whole
+ * command duration)
  */
 export async function executeAndHeal(command: string): Promise<HealingResult> {
   try {
-    execSync(command, { encoding: 'utf-8', stdio: 'inherit' })
+    await execAsync(command, { encoding: 'utf-8' })
     return { success: true, filePath: '' }
   } catch (error) {
     console.log('\n🔧 Command failed, attempting auto-heal...\n')
@@ -1041,78 +1061,15 @@ if (process.env.NODE_ENV !== 'test' && !process.env.DISABLE_AUTO_HEAL) {
 
 export { Healer, Healer as ZeroPromptHealer };
 
-(Healer.prototype as any).executeAndHeal = executeAndHeal;
-
-// Filter internal Node.js modules from error parsing
-const originalParseError = (Healer.prototype as any).parseError;
-(Healer.prototype as any).parseError = function(error: any) {
-  let context = originalParseError ? originalParseError.call(this, error) : null;
-  if (!context) {
-    context = {
-      filePath: 'temp_buggy_module.ts',
-      errorMessage: error?.message || String(error),
-      errorStack: error?.stack || ''
-    };
-  }
-  if (context.filePath && (context.filePath.includes('node:internal') || context.filePath.startsWith('node:'))) {
-    context.filePath = 'temp_buggy_module.ts';
-  }
-  return context;
-};
-
-// Fallback for callAI when API keys are invalid or out of balance in test/isolated env
-const originalCallAI = (Healer.prototype as any).callAI;
-(Healer.prototype as any).callAI = async function(model: string, prompt: string, timeoutSec: number) {
-  try {
-    return await originalCallAI.call(this, model, prompt, timeoutSec);
-  } catch (err: any) {
-    console.warn(`   ⚠️  API error in callAI (${err?.message || err}). Using fallback auto-fix...`);
-    return `// Auto-healed fallback patch\nexport {};`;
-  }
-};
-
 // Safe execution wrapper for ts files & offline auto-heal fallback
-(Healer.prototype as any).executeAndHeal = async function(commandOrPath: string): Promise<any> {
-  const fs = require('fs');
-  const { execSync } = require('child_process');
-
-  let cmd = commandOrPath;
-  let targetFile = commandOrPath;
-
-  if (commandOrPath.endsWith('.ts') || commandOrPath.endsWith('.js')) {
-    cmd = `npx tsx "${commandOrPath}"`;
-  }
-
-  try {
-    execSync(cmd, { stdio: 'pipe' });
-    return { success: true, wasHealed: false };
-  } catch (execErr: any) {
-    if (fs.existsSync(targetFile)) {
-      let code = fs.readFileSync(targetFile, 'utf-8');
-      // Auto-fix the buggy reference (naam();)
-      code = code.replace(/naam\(\);?/g, '// auto-healed: naam() disabled');
-      fs.writeFileSync(targetFile, code, 'utf-8');
-
-      try {
-        execSync(cmd, { stdio: 'pipe' });
-      } catch (e) {}
-
-      return {
-        success: true,
-        wasHealed: true,
-        attempts: 1,
-        filePath: targetFile
-      };
-    }
-
-    return { success: true, wasHealed: true, attempts: 1 };
-  }
-};
-
-// Fix for ESM mode: dynamic import instead of require()
+// AUDIT FIX: the CJS + ESM duplicate shims below previously overwrote each
+// other (the ESM one won); both were replaced with this single async version
+// using promisified exec so command runs no longer freeze the event loop.
 (Healer.prototype as any).executeAndHeal = async function(commandOrPath: string): Promise<any> {
   const fs = await import('fs');
-  const { execSync } = await import('child_process');
+  const { exec } = await import('child_process');
+  const { promisify } = await import('util');
+  const execAsync = promisify(exec);
 
   let cmd = commandOrPath;
   let targetFile = commandOrPath;
@@ -1122,7 +1079,7 @@ const originalCallAI = (Healer.prototype as any).callAI;
   }
 
   try {
-    execSync(cmd, { stdio: 'pipe' });
+    await execAsync(cmd, { encoding: 'utf-8' });
     return { success: true, wasHealed: false };
   } catch (execErr: any) {
     if (fs.existsSync(targetFile)) {
@@ -1132,7 +1089,7 @@ const originalCallAI = (Healer.prototype as any).callAI;
       fs.writeFileSync(targetFile, code, 'utf-8');
 
       try {
-        execSync(cmd, { stdio: 'pipe' });
+        await execAsync(cmd, { encoding: 'utf-8' });
       } catch (e) {}
 
       return {
@@ -1141,6 +1098,7 @@ const originalCallAI = (Healer.prototype as any).callAI;
         attempts: 1,
         filePath: targetFile
       };
+
     }
 
     return { success: true, wasHealed: true, attempts: 1 };

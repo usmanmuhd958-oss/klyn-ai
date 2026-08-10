@@ -1,0 +1,32 @@
+diff --git a/1.brain/patch_planner.ts b/1.brain/patch_planner.ts
+index 4567b29..ef06570 100644
+--- a/1.brain/patch_planner.ts
++++ b/1.brain/patch_planner.ts
+@@ -235,11 +235,26 @@ export class PatchPlanner {
+   private ruleModify(content: string, symbols: string[]): string {
+     let modified = content;
+     for (const symbol of symbols) {
+-      modified = modified.replace(new RegExp(`\\b${symbol}\\b`, 'g'), `Updated${symbol}`);
++      // AUDIT FIX: symbols were interpolated into RegExp unescaped — a symbol
++      // containing regex metacharacters ('.', '(', '+', '$', ...) either
++      // threw a SyntaxError or matched unintended code.
++      const escaped = PatchPlanner.escapeRegExp(symbol);
++      // \b only applies between word characters; symbols that start/end with
++      // non-word characters (e.g. "(a") must not be boundary-anchored there.
++      const prefix = /^[A-Za-z0-9_$]/.test(symbol) ? '\\b' : '';
++      const suffix = /[A-Za-z0-9_$]$/.test(symbol) ? '\\b' : '';
++      modified = modified.replace(
++        new RegExp(`${prefix}${escaped}${suffix}`, 'g'),
++        `Updated${symbol}`
++      );
+     }
+     return modified;
+   }
+ 
++  private static escapeRegExp(input: string): string {
++    return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
++  }
++
+   private ruleCreate(filePath: string, route: RouteDecision, query: string): string {
+     const ext = filePath.split('.').pop() ?? '';
+     if (ext === 'ts' || ext === 'tsx') {
