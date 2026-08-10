@@ -7,7 +7,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
-import { initializeVault, storeMemory, recall } from './index.js';
+import { initializeVault, storeMemory, recall, memoryStats } from './index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -15,7 +15,11 @@ class KlynServerEngine {
   constructor(workDir) {
     this.workDir = workDir;
     initializeVault(path.join(workDir, 'vault_data'));
-    this.indexCodebase();
+    console.log('[TRACE] loadIndexCache START');
+this.loadIndexCache();
+console.log('[TRACE] loadIndexCache END');
+console.log('[KLYN] Background index disabled - worker mode pending');
+
   }
 
   hashWord(word) {
@@ -53,10 +57,81 @@ class KlynServerEngine {
     return arr;
   }
 
+
+  recursiveIndex(dir, results = []) {
+    const ignore = [
+      "node_modules",
+      ".git",
+      "target",
+      "vault_data",
+      ".migration-backup",
+      "backups",
+      "dist"
+    ];
+
+    for (const item of fs.readdirSync(dir)) {
+      if (ignore.includes(item)) continue;
+
+      const full = path.join(dir, item);
+      const stat = fs.statSync(full);
+
+      if (stat.isDirectory()) {
+        this.recursiveIndex(full, results);
+      } else if (
+        item.endsWith(".js") ||
+        item.endsWith(".ts")
+      ) {
+        results.push(full);
+      }
+    }
+
+    return results;
+  }
+
+
+  loadIndexCache() {
+    try {
+      const cacheFile = path.join(
+        this.workDir,
+        ".klyn-index-cache.json"
+      );
+
+      if (fs.existsSync(cacheFile)) {
+        this.indexCache = JSON.parse(
+          fs.readFileSync(cacheFile, "utf8")
+        );
+      } else {
+        this.indexCache = {};
+      }
+    } catch {
+      this.indexCache = {};
+    }
+  }
+
+  saveIndexCache() {
+    try {
+      const cacheFile = path.join(
+        this.workDir,
+        ".klyn-index-cache.json"
+      );
+
+      fs.writeFileSync(
+        cacheFile,
+        JSON.stringify(this.indexCache || {}, null, 2)
+      );
+    } catch {}
+  }
+
   indexCodebase() {
-    const files = fs.readdirSync(this.workDir);
+    const indexStart = Date.now();
+
+    const files = this.recursiveIndex(this.workDir);
+
+    console.log(
+      `[KLYN INDEX] Files: ${files.length} Time: ${Date.now() - indexStart}ms`
+    );
     for (const file of files) {
-      const full = path.join(this.workDir, file);
+      const full = file;
       if (fs.statSync(full).isFile() && (file.endsWith('.js') || file.endsWith('.ts'))) {
         const content = fs.readFileSync(full, 'utf8');
         const lines = content.split('\n');
@@ -68,7 +143,13 @@ class KlynServerEngine {
           if (line.includes('function') || line.includes('class') || line.includes('const ')) {
             if (currentBlock.length > 0) {
               const code = currentBlock.join('\n');
-              storeMemory(`srv_${file}_${blockIdx++}`, "law_core_v1", this.generateEmbedding(code), Buffer.from(JSON.stringify({ file, blockName, code })), [file, "ast"]);
+              storeMemory(
+  `srv_${file}_${blockIdx++}`,
+  "law_core_v1",
+  this.generateEmbedding(`${file} ${blockName} ${code}`),
+  Buffer.from(JSON.stringify({ file, blockName, code })),
+  [file, "ast"]
+);
               currentBlock = [];
             }
             blockName = line.trim().slice(0, 40);
@@ -77,7 +158,13 @@ class KlynServerEngine {
         }
         if (currentBlock.length > 0) {
           const code = currentBlock.join('\n');
-          storeMemory(`srv_${file}_${blockIdx++}`, "law_core_v1", this.generateEmbedding(code), Buffer.from(JSON.stringify({ file, blockName, code })), [file, "ast"]);
+          storeMemory(
+  `srv_${file}_${blockIdx++}`,
+  "law_core_v1",
+  this.generateEmbedding(`${file} ${blockName} ${code}`),
+  Buffer.from(JSON.stringify({ file, blockName, code })),
+  [file, "ast"]
+);
         }
       }
     }
@@ -210,20 +297,36 @@ class KlynServerEngine {
   }
 }
 
+
+const memoryDebug = () => ({
+  status: "ok",
+  message: "KLYN memory debug active"
+});
+
 const engine = new KlynServerEngine(__dirname);
 
 function startServer(port) {
   const server = http.createServer((req, res) => {
+    console.log('[HTTP]', req.method, req.url);
+
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Access-Control-Allow-Origin', '*');
 
     let body = '';
     req.on('data', chunk => { body += chunk.toString(); });
+
     req.on('end', () => {
+      console.log('[HTTP REQUEST RECEIVED]', req.method, req.url);
+
       try {
         const payload = body ? JSON.parse(body) : {};
 
-        if (req.method === 'POST' && req.url === '/v1/context') {
+        if (req.method === 'GET' && req.url === '/v1/memory-status') {
+          console.log('[MEMORY STATUS HIT]');
+          const data = JSON.stringify(memoryStats());
+          console.log('[MEMORY SIZE]', data.length);
+          res.end(data);
+        } else if (req.method === 'POST' && req.url === '/v1/context') {
           const contextBlocks = engine.getEnrichedContext(payload.prompt || '', 3);
           res.writeHead(200);
           res.end(JSON.stringify({
@@ -284,7 +387,8 @@ function startServer(port) {
   });
 
   // Bind to 0.0.0.0 and honor the PORT injected by the host environment
-  server.listen(port, '0.0.0.0', () => {
+  console.log('[TRACE] BEFORE LISTEN');
+server.listen(port, '0.0.0.0', () => {
     console.log(`[KLYN SERVER] Local Gateway running on http://localhost:${port}`);
   });
 }

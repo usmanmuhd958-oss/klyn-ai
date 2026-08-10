@@ -1,33 +1,8 @@
-native/klyn_daemon
-native/klyn_client
-/tmp/klyn_vector_store.db
-/tmp/klyn_ipc.sock
+*.log
+klyn-runtime.log
+backups/
+bin/*.backup
+dump_*.sh
 node_modules/
-.env
 dist/
-build/
-.DS_Store
-
-# Klyn AI OS local runtime state and caches
-.klyn_config/
-.klyn_runtime/
-.klyn_state/
-.klyn/
-.runtime/
-.runtime-port.json
-.klyn-test-buggy.ts
-*.bak
-*.tmp
-*.db
-*.sock
-
-# Comprehensive compilation targets
-target/
-0.kernel/target/
-1.orchestrator/target/
-
-# Historical archives
-archive-history/
-
-# Migration backups
-.migration-backup/
+.env

@@ -1,4 +1,3 @@
-// [KLYN-AST-GUARD] Verified & Protected by Klyn OS Kernel
 #!/usr/bin/env node
 
 import path from 'node:path';
