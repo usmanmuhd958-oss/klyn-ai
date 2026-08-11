@@ -1,5 +1,8 @@
 export class AutonomousAgentCivilizationLayer {
-  initialize() {
-    return "Agent civilization layer online";
+  organize(agents:any[]){
+    return {
+      agents,
+      civilization:"active"
+    };
   }
 }

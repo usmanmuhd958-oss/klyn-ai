@@ -1,10 +1,8 @@
 export class MultiAgentCollaborationEngine {
-
-  collaborate(tasks:any[]){
+  collaborate(task:any){
     return {
-      tasks,
-      collaborationActive:true
+      task,
+      collaboration:"enabled"
     };
   }
-
 }

@@ -1,10 +1,8 @@
 export class AgentLifecycleManagementEngine {
-
-  manage(state:any){
+  manage(agent:any){
     return {
-      status:"agent_lifecycle_active",
-      state
+      lifecycle:"managed",
+      agent
     };
   }
-
 }
