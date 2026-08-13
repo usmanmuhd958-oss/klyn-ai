@@ -1,0 +1,23 @@
+{
+  "output": {
+    "filePath": "repomix-output.xml",
+    "style": "xml",
+    "removeEmptyLines": true
+  },
+  "ignore": {
+    "useGitignore": true,
+    "useDefaultPatterns": true,
+    "customPatterns": [
+      "vault_data/**",
+      ".migration-backup/**",
+      "architecture-audit/**",
+      "bootstrap_*",
+      "backups/**",
+      "target/**",
+      "dist/**",
+      "*.log",
+      "*.sqlite",
+      "*.db"
+    ]
+  }
+}

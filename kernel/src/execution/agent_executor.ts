@@ -1,13 +1,24 @@
-import { AgentExecutor } from '../../../packages/agent-runtime/src/executor/AgentExecutor.js';
-/**
- * @deprecated
- * Use packages/agent-runtime/src/executor/AgentExecutor.ts
- */
+
+import {
+  AgentExecutor
+} from "@klyn/agent-runtime/executor";
+
+
+let executorInstance: AgentExecutor | null = null;
+
+
+export function getAgentExecutor(): AgentExecutor {
+
+  if (!executorInstance) {
+    executorInstance = new AgentExecutor();
+  }
+
+  return executorInstance;
+
+}
+
 
 export {
-  AgentExecutor
-} from "../../../packages/agent-runtime/src/executor/AgentExecutor.js";
+ AgentExecutor
+};
 
-export function getAgentExecutor() {
-  return new AgentExecutor();
-}
