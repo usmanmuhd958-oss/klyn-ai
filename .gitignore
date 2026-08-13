@@ -47,3 +47,6 @@ coverage/
 
 # TypeScript cache
 *.tsbuildinfo
+
+.next/
+next-env.d.ts

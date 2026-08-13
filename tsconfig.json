@@ -1,45 +1,42 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "outDir": "./dist",
-    "rootDir": "./",
-    "strict": false,
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
+    "allowJs": true,
     "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
     "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
     "paths": {
-      "@klyn/agent-runtime": [
-        "packages/agent-runtime/src/index.ts"
-      ],
-      "@klyn/agent-runtime/*": [
-        "packages/agent-runtime/src/*"
-      ],
-      "@klyn/agent-runtime/executor": [
-        "packages/agent-runtime/src/executor/index.ts"
+      "@/*": [
+        "./*"
       ]
-    },
-    "baseUrl": "."
+    }
   },
   "include": [
-    "src/**/*",
-    "kernel/**/*",
-    "1.brain/**/*",
-    "benchmark/**/*",
-    "packages/**/*.ts",
-    "packages/evolution-controller/src/**/*.ts"
+    "next-env.d.ts",
+    "app/**/*",
+    "components/**/*",
+    "lib/**/*",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules",
-    "dist",
-    "1.brain/index.ts",
-    "1.brain/providers/**/*",
-    "1.brain/graph_memory.ts",
-    "kernel/src/indexer/**/*",
-    "kernel/src/orchestrator/**/*",
-    "kernel/src/pipeline/context_pruner.ts",
-    "kernel/NexusKernel.ts",
-    "kernel/tests/**/*"
+    "node_modules"
   ]
 }
