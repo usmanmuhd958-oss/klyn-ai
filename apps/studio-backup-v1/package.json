@@ -1,0 +1,39 @@
+{
+  "name": "@klyn/studio",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@codemirror/commands": "^6.7.0",
+    "@codemirror/lang-javascript": "^6.0.0",
+    "@codemirror/language": "^6.10.0",
+    "@codemirror/state": "^6.5.0",
+    "@codemirror/view": "^6.36.0",
+    "@klyn/agent-runtime": "workspace:*",
+    "@klyn/workflow-engine": "workspace:*",
+    "@radix-ui/react-dialog": "^1.1.4",
+    "@radix-ui/react-tooltip": "^1.1.6",
+    "@supabase/supabase-js": "^2.47.0",
+    "@xyflow/react": "^12.4.0",
+    "next": "^15.4.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "y-websocket": "^2.1.0",
+    "yjs": "^13.6.20",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "autoprefixer": "^10.5.4",
+    "babel-plugin-react-compiler": "^1.0.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.0"
+  }
+}

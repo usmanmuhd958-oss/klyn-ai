@@ -1,21 +1,28 @@
-/**
- * KLYN Agent Runtime Public API
- * Canonical Export Boundary
- */
+export type AgentStatus =
+  | "idle" | "planning" | "executing" | "verifying"
+  | "blocked" | "done" | "failed";
 
-export * from "./executor/index.js";
+export interface ReasoningStep {
+  id: string;
+  ts: number;
+  kind: "thought" | "tool-call" | "observation" | "hypothesis";
+  text: string;
+  tool?: string;
+}
 
-export * from "./runtime/AgentRuntime.js";
-export * from "./runtime/OrchestrationRuntime.js";
+export interface SwarmEvent {
+  type:
+    | "agent:spawn" | "agent:retire" | "agent:status" | "agent:thought"
+    | "diff:proposed" | "runtime:metrics" | "workflow:step";
+  agentId?: string;
+  payload: Record<string, unknown>;
+}
 
-export * from "./memory/SupabaseAgentMemory.js";
-
-export * from "./queue/AgentQueue.js";
-
-export * from "./retry/RetryManager.js";
-
-export * from "./scheduler/TaskScheduler.js";
-
-export * from "./validation/AgentValidator.js";
-
-export * from "./types/agent.types.js";
+export interface AgentManifest {
+  id: string;
+  role: "planner" | "implementer" | "reviewer" | "healer";
+  model: string;
+  status: AgentStatus;
+  tokensPerSec: number;
+  currentTask?: string;
+}

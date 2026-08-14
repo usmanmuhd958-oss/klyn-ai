@@ -1,0 +1,26 @@
+@import "@xyflow/react/dist/style.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  background-color: #09090b;
+  color: #f4f4f5;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* Mobile Clean UI Fixes */
+@media (max-width: 640px) {
+  .react-flow__minimap {
+    display: none !important;
+  }
+  .react-flow__controls {
+    bottom: 80px !important;
+  }
+}
+.react-flow__controls button {
+  background-color: #18181b !important;
+  fill: #e4e4e7 !important;
+  border-bottom: 1px solid #27272a !important;
+}
