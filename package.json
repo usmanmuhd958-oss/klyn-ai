@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "typecheck:v670": "tsc --noEmit -p genesis/v670/tsconfig.json",
     "smoke:v670": "bun run genesis/v670/smoke.ts",
+    "smoke:phase3": "bun run packages/self-healing-runtime/smoke.ts",
     "genesis:forge": "node genesis/forge.mjs all",
     "genesis:verify": "node genesis/forge.mjs verify",
     "genesis:typecheck": "tsc --noEmit -p genesis/tsconfig.json",

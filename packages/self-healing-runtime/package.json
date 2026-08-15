@@ -1,0 +1,10 @@
+{
+  "name": "@klyn/self-healing-runtime",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Phase 3 autonomous mutation & self-healing loop: inline patch validation, deterministic rollback, and synthetic mutation quality gates",
+  "main": "src/index.ts",
+  "scripts": {
+    "smoke": "bun run smoke.ts"
+  }
+}

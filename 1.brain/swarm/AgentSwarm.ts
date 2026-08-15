@@ -42,6 +42,10 @@ export interface EpochOptions {
   diagnose?: (projected: Map<string, string>, repoRoot: string) => Promise<SpecDiagnostic[]>;
   /** Require the Tester's approval (default true). */
   requireTester?: boolean;
+  /** Phase 3: external abort flag (e.g. an orchestrator timeout). When
+   *  observed before the epoch commit checkpoint, the epoch rolls back
+   *  instead of committing — a timed-out epoch never writes files. */
+  signal?: { aborted: boolean };
 }
 
 export interface EpochResult {
@@ -123,6 +127,15 @@ export class AgentSwarm {
 
     const requireTester = options.requireTester ?? true;
     const approved = votes.every((v) => v.approved) && (!requireTester || votes.every((v) => v.role !== 'tester' || v.approved));
+
+    // Phase 3: orchestrator timeout / external abort checkpoint — a timed-out
+    // epoch is rolled back here, never committed.
+    if (options.signal?.aborted) {
+      await this.patcher.rollback(epochTx);
+      for (const fork of forks) this.patcher.abort(fork);
+      errors.push('Epoch aborted by orchestrator timeout signal');
+      return { success: false, committed: false, votes, filesWritten: [], errors, plan };
+    }
 
     if (!approved) {
       await this.patcher.rollback(epochTx);

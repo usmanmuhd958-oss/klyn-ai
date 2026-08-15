@@ -145,6 +145,27 @@ export class IndexStore {
     return files ? Array.from(files).sort() : [];
   }
 
+  /**
+   * Phase 3: symbols whose NAME contains `fragment` (case-insensitive).
+   * Used by the structural context engine to resolve lowercase/partial
+   * query tokens that are not exact symbol names. Capped per fragment.
+   */
+  querySymbolsByFragment(fragment: string, limit = 8): SymbolRecord[] {
+    const lower = fragment.toLowerCase();
+    if (!lower) return [];
+    const out: SymbolRecord[] = [];
+    for (const [name, ids] of this.inverted) {
+      if (!name.toLowerCase().includes(lower)) continue;
+      for (const id of ids) {
+        const file = id.substring(0, id.indexOf(':'));
+        const rec = this.symbolsByFile.get(file)?.get(id);
+        if (rec) out.push(rec);
+        if (out.length >= limit) return out;
+      }
+    }
+    return out;
+  }
+
   /** Batch symbol -> declaring-files lookup (used by CognitiveRouter). */
   querySymbolLocations(symbols: string[]): Map<string, string[]> {
     const out = new Map<string, string[]>();
