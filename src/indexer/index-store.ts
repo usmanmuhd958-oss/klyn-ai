@@ -176,6 +176,31 @@ export class IndexStore {
     return out;
   }
 
+  /** All repo-relative file paths currently indexed (graph enumeration). */
+  getAllFiles(): string[] {
+    return Array.from(this.symbolsByFile.keys()).sort();
+  }
+
+  /**
+   * Direct import edges: file -> resolved files it imports (the local
+   * dependency graph, NOT the transitive closure). Enumerated from the
+   * per-file import lists maintained during ingestion — zero re-scanning.
+   */
+  getDirectImports(): Map<string, string[]> {
+    const out = new Map<string, string[]>();
+    const allPaths = new Set(this.symbolsByFile.keys());
+    for (const [rel, imports] of this.importsByFile) {
+      const targets: string[] = [];
+      for (const imp of imports) {
+        if (!imp.source.startsWith('.')) continue;
+        const target = resolveImportPath(imp.source, rel, allPaths);
+        if (target && target !== rel) targets.push(target);
+      }
+      out.set(rel, targets);
+    }
+    return out;
+  }
+
   /** Files that (transitively) import from `path`. */
   getAffectedFiles(path: string): string[] {
     const affected = new Set<string>();

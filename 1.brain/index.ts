@@ -20,6 +20,9 @@ export * from './red_team_fuzzer.js';
 export * from './experience_learner.js';
 export * from './adaptive_policy.js';
 export * from './evolution_loop.js';
+// Phase 8: headless graph query engine + enterprise knowledge core.
+export * from './graph_query_engine.js';
+export * from './enterprise_knowledge_graph.js';
 // @ts-ignore
 export * from './llm_gateway.js';
 export * from './cost_optimizer.js';

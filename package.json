@@ -19,6 +19,7 @@
     "smoke:phase5": "bun run 1.brain/smoke.phase5.ts",
     "smoke:phase6": "bun run 1.brain/smoke.phase6.ts",
     "smoke:phase7": "bun run 1.brain/smoke.phase7.ts",
+    "smoke:phase8": "bun run 1.brain/smoke.phase8.ts",
     "genesis:forge": "node genesis/forge.mjs all",
     "genesis:verify": "node genesis/forge.mjs verify",
     "genesis:typecheck": "tsc --noEmit -p genesis/tsconfig.json",

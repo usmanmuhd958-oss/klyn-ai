@@ -12,3 +12,6 @@ export type {
 // Phase 7: self-healing fleet supervision for the mesh.
 export { FleetOrchestrator } from './fleet_orchestrator.js';
 export type { FleetNodeState, FleetOptions, FleetStats } from './fleet_orchestrator.js';
+// Phase 8: zero-touch edge provisioning + hot-swap state migration.
+export { EdgeProvisioner } from './edge_provisioner.js';
+export type { ProvisionedTask, EdgeWorkerState, EdgeProvisionerOptions, EdgeStats } from './edge_provisioner.js';
