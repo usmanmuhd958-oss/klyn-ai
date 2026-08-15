@@ -8,6 +8,9 @@ export * from './types.js';
 // @ts-ignore
 export * from './config.js';
 export * from './cognitive_router.js';
+// Phase 4: real-time profiling + intent-to-AST synthesis.
+export * from './runtime_profiler.js';
+export * from './spec_compiler.js';
 // @ts-ignore
 export * from './llm_gateway.js';
 export * from './cost_optimizer.js';
