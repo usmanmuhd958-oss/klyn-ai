@@ -47,6 +47,10 @@ import { SelfHostingLoop } from '../1.brain/self_hosting_loop.js';
 import { TemporalCausality, HybridLogicalClock } from '../1.brain/temporal_causality.js';
 import { SelfReplicator } from '../1.brain/self_replication.js';
 import { FederatedMesh } from '../packages/swarm-mesh/src/federated_mesh.js';
+import { MeshStorage } from '../packages/swarm-mesh/src/mesh_storage.js';
+import { MeshHealer } from '../packages/swarm-mesh/src/mesh_healer.js';
+import { ConsensusIsolation } from '../1.brain/consensus_isolation.js';
+import { QuorumEpochLoop } from '../1.brain/swarm/QuorumEpochLoop.js';
 import { runLatencySuite } from '../1.brain/benchmarks/latency_suite.js';
 import { rateLimiter } from '../kernel/src/services/rate_limiter.js';
 import type { EnginePersistence } from '../kernel/src/storage/persistent_ledger.js';
@@ -104,6 +108,14 @@ export interface Phase9Deps {
   replicator?: SelfReplicator;
   /** Phase 12 federated replica swarm (peer registry + causal sync). */
   mesh?: FederatedMesh;
+  /** Phase 12 lock-free BFT consensus engine (quorum + quarantine). */
+  consensus?: ConsensusIsolation;
+  /** Phase 13 durable mesh topology store (JSON-L). */
+  meshStorage?: MeshStorage;
+  /** Phase 13 self-healing mesh convergence engine. */
+  meshHealer?: MeshHealer;
+  /** Phase 13 quorum-gated swarm epoch loop. */
+  quorumLoop?: QuorumEpochLoop;
   repoRoot?: string;
   /** Token override (tests). Defaults to KLYN_ADMIN_TOKEN. */
   token?: string;
@@ -113,7 +125,7 @@ export interface Phase9Deps {
 const DEFAULT_RATE_LIMIT = { windowMs: 60_000, max: 100 };
 
 /** Fill engine defaults so the surface works out of the box. */
-function resolveDeps(deps: Phase9Deps = {}): Required<Pick<Phase9Deps, 'graph' | 'profiler' | 'quantum' | 'epoch' | 'selfHosting' | 'temporal' | 'replicator' | 'mesh'>> & Phase9Deps {
+function resolveDeps(deps: Phase9Deps = {}): Required<Pick<Phase9Deps, 'graph' | 'profiler' | 'quantum' | 'epoch' | 'selfHosting' | 'temporal' | 'replicator' | 'mesh' | 'consensus' | 'meshHealer' | 'quorumLoop'>> & Phase9Deps {
   const graph = deps.graph ?? new GraphQueryEngine();
   const profiler = deps.profiler ?? new RuntimeProfiler();
   const quantum = deps.quantum ?? new QuantumZkLedger('klyn-headless-master');
@@ -122,7 +134,10 @@ function resolveDeps(deps: Phase9Deps = {}): Required<Pick<Phase9Deps, 'graph' |
   const temporal = deps.temporal ?? new TemporalCausality({ nodeId: process.env.KLYN_NODE_ID ?? 'klyn-headless' });
   const replicator = deps.replicator ?? new SelfReplicator();
   const mesh = deps.mesh ?? new FederatedMesh({ nodeId: temporal.stats().nodeId, temporal });
-  return { ...deps, graph, profiler, quantum, epoch, selfHosting, temporal, replicator, mesh };
+  const consensus = deps.consensus ?? new ConsensusIsolation({ nodeId: temporal.stats().nodeId });
+  const meshHealer = deps.meshHealer ?? new MeshHealer(mesh, deps.meshStorage);
+  const quorumLoop = deps.quorumLoop ?? new QuorumEpochLoop({ consensus, voters: [] });
+  return { ...deps, graph, profiler, quantum, epoch, selfHosting, temporal, replicator, mesh, consensus, meshHealer, quorumLoop };
 }
 
 // ---------------------------------------------------------------------------
@@ -488,7 +503,69 @@ export async function handlePhase9Request(req: HeadlessRequest, deps: Phase9Deps
       return ok(report);
     }
 
-    return fail('NOT_FOUND', `No Phase 9/10/11/12 route for ${method} ${path}`, 404);
+    // ── PHASE 13: SELF-HEALING MESH SURFACE ─────────────────────────────────
+    // Durable topology view, quarantine control (inspect/quarantine/admit),
+    // and explicit convergence triggers — same token auth + rate limiting.
+
+    // ── GET /v1/mesh/topology — durable cluster topology + peer health ──────
+    if (method === 'GET' && path === '/v1/mesh/topology') {
+      const reputations = d.meshStorage ? await d.meshStorage.restoreReputations() : {};
+      const vectorClock = d.meshStorage ? await d.meshStorage.restoreVectorClock() : d.temporal.hlc;
+      return ok({
+        nodeId: d.mesh.nodeId,
+        peers: d.mesh.nodes(),
+        reputations,
+        vectorClock,
+        stats: d.mesh.getStats(),
+        healer: d.meshHealer.getStats(),
+        consensus: d.consensus.getStats(),
+        quorumLoop: d.quorumLoop.getStats(),
+      });
+    }
+
+    // ── POST /v1/mesh/quarantine — inspect | quarantine | admit ─────────────
+    if (method === 'POST' && path === '/v1/mesh/quarantine') {
+      const payload = (req.body ?? {}) as Record<string, unknown>;
+      const action = String(payload.action ?? 'inspect');
+      const nodeId = String(payload.nodeId ?? '');
+      if (action === 'quarantine') {
+        if (!nodeId) return fail('VALIDATION_ERROR', 'quarantine requires { nodeId }', 422);
+        d.consensus.quarantine(nodeId, String(payload.reason ?? 'programmatic quarantine'));
+        return ok({ nodeId, quarantined: true, quarantinedList: d.consensus.getStats().quarantined });
+      }
+      if (action === 'admit') {
+        if (!nodeId) return fail('VALIDATION_ERROR', 'admit requires { nodeId }', 422);
+        d.consensus.admit(nodeId);
+        return ok({ nodeId, quarantined: false, quarantinedList: d.consensus.getStats().quarantined });
+      }
+      const quarantined = d.consensus.getStats().quarantined;
+      const suspicion: Record<string, number> = {};
+      for (const q of quarantined) suspicion[q] = d.consensus.suspicionOf(q);
+      return ok({ quarantined, suspicion });
+    }
+
+    // ── POST /v1/mesh/heal — trigger explicit mesh state convergence ────────
+    //   { peer, delta } → converge one reconnecting peer (zero-data-loss
+    //                      verified)
+    //   { peer }        → the delta this node would push to that peer
+    //   {}              → run the monitoring sweep + report pending
+    if (method === 'POST' && path === '/v1/mesh/heal') {
+      const payload = (req.body ?? {}) as Record<string, unknown>;
+      const peer = String(payload.peer ?? '');
+      const delta = Array.isArray(payload.delta) ? (payload.delta as unknown[]) : null;
+      if (peer && delta !== null) {
+        const result = await d.meshHealer.reconnect(peer, delta as Parameters<MeshHealer['reconnect']>[1]);
+        if (d.meshStorage) await d.meshStorage.persistTopology(d.mesh.nodes());
+        return ok(result);
+      }
+      if (peer) {
+        return ok({ peer, delta: d.mesh.produceDelta(0), note: 'delta to push to the reconnecting peer' });
+      }
+      const actions = d.meshHealer.tick();
+      return ok({ actions, pending: d.meshHealer.pending(), stats: d.meshHealer.getStats() });
+    }
+
+    return fail('NOT_FOUND', `No Phase 9/10/11/12/13 route for ${method} ${path}`, 404);
   }
 }
 
@@ -735,6 +812,23 @@ function createRouter(deps: Phase9Deps & { supabase?: any; logger?: any } = {}) 
     res.status(result.status).json(result.body);
   }));
 
+  // ── PHASE 13: Self-healing mesh surface — same core handlers ──────────────
+
+  router.get('/v1/mesh/topology', requireToken, asyncHandler(async (req: any, res: any) => {
+    const result = await handlePhase9Request({ method: 'GET', url: req.url, headers: req.headers }, deps);
+    res.status(result.status).json(result.body);
+  }));
+
+  router.post('/v1/mesh/quarantine', requireToken, asyncHandler(async (req: any, res: any) => {
+    const result = await handlePhase9Request({ method: 'POST', url: req.url, headers: req.headers, body: req.body }, deps);
+    res.status(result.status).json(result.body);
+  }));
+
+  router.post('/v1/mesh/heal', requireToken, asyncHandler(async (req: any, res: any) => {
+    const result = await handlePhase9Request({ method: 'POST', url: req.url, headers: req.headers, body: req.body }, deps);
+    res.status(result.status).json(result.body);
+  }));
+
   // -------------------------------------------------------------------------
   // Global Error Handler (MUST be the last middleware)
   // -------------------------------------------------------------------------
@@ -764,5 +858,6 @@ export const PHASE9_ROUTES = ['/v1/graph/query', '/v1/system/metrics', '/v1/audi
 export const PHASE10_ROUTES = ['/v1/self/audit', '/v1/self/evolve', '/v1/self/manifest', '/v1/self/rollback'] as const;
 export const PHASE11_ROUTES = ['/v1/temporal/now', '/v1/temporal/rewind', '/v1/temporal/causality', '/v1/replicate/seed', '/v1/replicate/bootstrap', '/v1/replicate/sync'] as const;
 export const PHASE12_ROUTES = ['/v1/federation/nodes', '/v1/federation/sync', '/v1/benchmarks/run'] as const;
+export const PHASE13_ROUTES = ['/v1/mesh/topology', '/v1/mesh/quarantine', '/v1/mesh/heal'] as const;
 export default router;
 export { router, createRouter };

@@ -288,7 +288,10 @@ export class ConsensusIsolation {
       this.castVote(proposal.id, voter, outcome.ok, outcome.reasons.join('; '));
     }
     const result = this.result(proposal.id)!;
-    if (!result.committed) this.noteSuspicion(proposal.proposer);
+    // Suspicion is only earned when a VOTING ROUND actually failed — a
+    // fail-closed round with zero voters is a cluster-availability issue,
+    // not a Byzantine one, and must never mark an honest proposer suspect.
+    if (!result.committed && result.approvals + result.rejections > 0) this.noteSuspicion(proposal.proposer);
     return { proposal, result };
   }
 
@@ -313,6 +316,14 @@ export class ConsensusIsolation {
   admit(nodeId: string): void {
     this.quarantined.delete(nodeId);
     this.suspicion.delete(nodeId);
+  }
+
+  /** Immediate, programmatic quarantine (e.g. the quorum loop catches a
+   *  rogue agent mid-epoch with an invalid ZK/WOTS proof). Sets suspicion to
+   *  the threshold so the isolation is durable, not just a flag. */
+  quarantine(nodeId: string, _reason = 'explicit quarantine'): void {
+    this.suspicion.set(nodeId, this.quarantineThreshold);
+    this.quarantined.add(nodeId);
   }
 
   suspicionOf(nodeId: string): number {

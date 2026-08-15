@@ -137,6 +137,17 @@ export class FederatedMesh {
     return this.peers.delete(nodeId);
   }
 
+  /** Restore a peer's last-known causal state (cold-boot re-discovery path).
+   *  Requires the peer to already be joined. */
+  restorePeerState(nodeId: string, state: { lastHlc?: HlcTime | null; lastSeq?: number; failCount?: number }): boolean {
+    const node = this.peers.get(nodeId);
+    if (!node) return false;
+    if (state.lastHlc) node.lastHlc = { ...state.lastHlc };
+    if (typeof state.lastSeq === 'number') node.lastSeq = state.lastSeq;
+    if (typeof state.failCount === 'number') node.failCount = state.failCount;
+    return true;
+  }
+
   /** Liveness heartbeat — refreshes lastSeen and marks the peer online. */
   heartbeat(nodeId: string): boolean {
     const node = this.peers.get(nodeId);
