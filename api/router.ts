@@ -43,6 +43,7 @@ import { GraphQueryEngine } from '../1.brain/graph_query_engine.js';
 import { RuntimeProfiler } from '../1.brain/runtime_profiler.js';
 import { QuantumZkLedger } from '../kernel/src/security/quantum_zk.js';
 import { EpochDriver, type EpochFinding } from '../1.brain/e2e_autonomous_epoch.js';
+import { SelfHostingLoop } from '../1.brain/self_hosting_loop.js';
 import { rateLimiter } from '../kernel/src/services/rate_limiter.js';
 import type { EnginePersistence } from '../kernel/src/storage/persistent_ledger.js';
 
@@ -91,6 +92,8 @@ export interface Phase9Deps {
   quantum?: QuantumZkLedger;
   epoch?: EpochDriver;
   persistence?: EnginePersistence;
+  /** Phase 10 self-hosting loop (guarded dogfood driver for /v1/self/*). */
+  selfHosting?: SelfHostingLoop;
   repoRoot?: string;
   /** Token override (tests). Defaults to KLYN_ADMIN_TOKEN. */
   token?: string;
@@ -100,12 +103,13 @@ export interface Phase9Deps {
 const DEFAULT_RATE_LIMIT = { windowMs: 60_000, max: 100 };
 
 /** Fill engine defaults so the surface works out of the box. */
-function resolveDeps(deps: Phase9Deps = {}): Required<Pick<Phase9Deps, 'graph' | 'profiler' | 'quantum' | 'epoch'>> & Phase9Deps {
+function resolveDeps(deps: Phase9Deps = {}): Required<Pick<Phase9Deps, 'graph' | 'profiler' | 'quantum' | 'epoch' | 'selfHosting'>> & Phase9Deps {
   const graph = deps.graph ?? new GraphQueryEngine();
   const profiler = deps.profiler ?? new RuntimeProfiler();
   const quantum = deps.quantum ?? new QuantumZkLedger('klyn-headless-master');
   const epoch = deps.epoch ?? new EpochDriver({ quantum, persistence: deps.persistence });
-  return { ...deps, graph, profiler, quantum, epoch };
+  const selfHosting = deps.selfHosting ?? new SelfHostingLoop({ repoRoot: deps.repoRoot ?? process.cwd(), persistence: deps.persistence });
+  return { ...deps, graph, profiler, quantum, epoch, selfHosting };
 }
 
 // ---------------------------------------------------------------------------
@@ -318,7 +322,50 @@ export async function handlePhase9Request(req: HeadlessRequest, deps: Phase9Deps
       return ok(outcome);
     }
 
-    return fail('NOT_FOUND', `No Phase 9 route for ${method} ${path}`, 404);
+    // ── PHASE 10: SELF-HOSTING SURFACE (guarded dogfood API) ───────────────
+    // Klyn audits, evolves, and rolls back its OWN source through the same
+    // token-authenticated, rate-limited headless surface. All four routes are
+    // guarded by the SelfHostingLoop (critical-file protection, convergence
+    // locks, blast-radius containment, manual-finding escalation).
+
+    // ── POST /v1/self/audit — scan the OS's own source tree ────────────────
+    if (method === 'POST' && path === '/v1/self/audit') {
+      const report = await d.selfHosting.audit();
+      return ok(report);
+    }
+
+    // ── POST /v1/self/evolve — evolve one cached finding (guarded) ─────────
+    if (method === 'POST' && path === '/v1/self/evolve') {
+      const payload = (req.body ?? {}) as Record<string, unknown>;
+      const findingId = String(payload.findingId ?? '');
+      if (!findingId) return fail('VALIDATION_ERROR', 'self/evolve requires { findingId } from the last /v1/self/audit', 422);
+      const outcome = await d.selfHosting.evolveById(findingId, { force: payload.force === true });
+      if (outcome === null) return fail('FINDING_NOT_FOUND', `no cached finding with id ${findingId} — run /v1/self/audit first`, 404);
+      if (outcome.vetoed) return fail('SELF_MUTATION_VETOED', outcome.vetoReason ?? 'vetoed', 422, outcome);
+      if (!outcome.ok) return fail('SELF_EPOCH_REJECTED', outcome.epoch?.errors.join('; ') ?? 'epoch failed', 422, outcome);
+      return ok(outcome);
+    }
+
+    // ── GET /v1/self/manifest — tamper-evident evolution record + status ────
+    if (method === 'GET' && path === '/v1/self/manifest') {
+      const mf = d.selfHosting.manifestRef;
+      const entries = mf ? await mf.all() : [];
+      const verify = mf ? await mf.verify() : { valid: true, entries: 0, brokenAt: null };
+      const status = await d.selfHosting.status();
+      return ok({ entries, verify, status });
+    }
+
+    // ── POST /v1/self/rollback — byte-exact restore to a manifest seq ──────
+    if (method === 'POST' && path === '/v1/self/rollback') {
+      const payload = (req.body ?? {}) as Record<string, unknown>;
+      const seq = Number(payload.seq ?? NaN);
+      if (!Number.isInteger(seq) || seq < 1) return fail('VALIDATION_ERROR', 'self/rollback requires { seq } (positive integer)', 422);
+      const result = await d.selfHosting.rollback(seq);
+      if (!result.ok) return fail('ROLLBACK_FAILED', result.reason ?? 'rollback failed', 404, result);
+      return ok(result);
+    }
+
+    return fail('NOT_FOUND', `No Phase 9/10 route for ${method} ${path}`, 404);
   }
 }
 
@@ -493,6 +540,27 @@ function createRouter(deps: Phase9Deps & { supabase?: any; logger?: any } = {}) 
     res.status(result.status).json(result.body);
   }));
 
+  // ── PHASE 10: Self-hosting surface — same core handlers, same auth ────────
+  router.post('/v1/self/audit', requireToken, asyncHandler(async (req: any, res: any) => {
+    const result = await handlePhase9Request({ method: 'POST', url: req.url, headers: req.headers, body: req.body }, deps);
+    res.status(result.status).json(result.body);
+  }));
+
+  router.post('/v1/self/evolve', requireToken, asyncHandler(async (req: any, res: any) => {
+    const result = await handlePhase9Request({ method: 'POST', url: req.url, headers: req.headers, body: req.body }, deps);
+    res.status(result.status).json(result.body);
+  }));
+
+  router.get('/v1/self/manifest', requireToken, asyncHandler(async (req: any, res: any) => {
+    const result = await handlePhase9Request({ method: 'GET', url: req.url, headers: req.headers }, deps);
+    res.status(result.status).json(result.body);
+  }));
+
+  router.post('/v1/self/rollback', requireToken, asyncHandler(async (req: any, res: any) => {
+    const result = await handlePhase9Request({ method: 'POST', url: req.url, headers: req.headers, body: req.body }, deps);
+    res.status(result.status).json(result.body);
+  }));
+
   // -------------------------------------------------------------------------
   // Global Error Handler (MUST be the last middleware)
   // -------------------------------------------------------------------------
@@ -519,5 +587,6 @@ const router = createRouter();
 // the smoke suite, and the route list the gateway dispatches on.
 // ---------------------------------------------------------------------------
 export const PHASE9_ROUTES = ['/v1/graph/query', '/v1/system/metrics', '/v1/audit/verify', '/v1/autonomous/heal'] as const;
+export const PHASE10_ROUTES = ['/v1/self/audit', '/v1/self/evolve', '/v1/self/manifest', '/v1/self/rollback'] as const;
 export default router;
 export { router, createRouter };

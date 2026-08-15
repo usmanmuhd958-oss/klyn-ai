@@ -38,7 +38,7 @@ import type { RuntimeProfiler, Violation } from './runtime_profiler.js';
 import type { EnginePersistence } from '../kernel/src/storage/persistent_ledger.js';
 import type { FileOperation } from './patch_generator.js';
 
-export type EpochSource = 'fuzzer' | 'profiler' | 'manual';
+export type EpochSource = 'fuzzer' | 'profiler' | 'manual' | 'self';
 
 export interface EpochFinding {
   source: EpochSource;
@@ -90,6 +90,9 @@ export interface EpochDriveOptions {
   persistence?: EnginePersistence;
   /** Propose a policy candidate every N successful patches (default 4). */
   proposeEvery?: number;
+  /** Phase 10 self-hosting: inject a custom candidate synthesizer. Defaults
+   *  to `synthesizeDefensivePatch` (unchanged Phase 9 behavior). */
+  synthesize?: (original: string, finding: EpochFinding) => string;
 }
 
 const DEFAULT_PROPOSE_EVERY = 4;
@@ -107,6 +110,7 @@ export class EpochDriver {
   private policy: AdaptivePolicyEngine;
   private persistence?: EnginePersistence;
   private readonly proposeEvery: number;
+  private readonly synthesize: (original: string, finding: EpochFinding) => string;
   private patchCount = 0;
   private drivenKeys = new Set<string>();
 
@@ -122,6 +126,7 @@ export class EpochDriver {
     this.policy = options.policy ?? new AdaptivePolicyEngine();
     this.persistence = options.persistence;
     this.proposeEvery = options.proposeEvery ?? DEFAULT_PROPOSE_EVERY;
+    this.synthesize = options.synthesize ?? synthesizeDefensivePatch;
   }
 
   // -------------------------------------------------------------------------
@@ -167,8 +172,10 @@ export class EpochDriver {
       return this.recordFailure(outcome, t0);
     }
 
-    // 2) Synthesize the defensive candidate + fail-fast quality gate.
-    const candidate = synthesizeDefensivePatch(original, finding);
+    // 2) Synthesize the candidate + fail-fast quality gate. The Phase 10
+    //    self-hosting loop injects its own self-repair synthesizer here; the
+    //    default keeps the Phase 9 defensive-patch behavior byte-identical.
+    const candidate = this.synthesize(original, finding);
     if (candidate.length === 0 || candidate === original) {
       errors.push('defensive patch synthesizer produced no change');
       return this.recordFailure(outcome, t0);
