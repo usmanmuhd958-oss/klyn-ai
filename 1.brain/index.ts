@@ -23,6 +23,9 @@ export * from './evolution_loop.js';
 // Phase 8: headless graph query engine + enterprise knowledge core.
 export * from './graph_query_engine.js';
 export * from './enterprise_knowledge_graph.js';
+// Phase 11: temporal causality engine + autonomous self-replication.
+export * from './temporal_causality.js';
+export * from './self_replication.js';
 // @ts-ignore
 export * from './llm_gateway.js';
 export * from './cost_optimizer.js';

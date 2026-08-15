@@ -44,6 +44,8 @@ import { RuntimeProfiler } from '../1.brain/runtime_profiler.js';
 import { QuantumZkLedger } from '../kernel/src/security/quantum_zk.js';
 import { EpochDriver, type EpochFinding } from '../1.brain/e2e_autonomous_epoch.js';
 import { SelfHostingLoop } from '../1.brain/self_hosting_loop.js';
+import { TemporalCausality, HybridLogicalClock } from '../1.brain/temporal_causality.js';
+import { SelfReplicator } from '../1.brain/self_replication.js';
 import { rateLimiter } from '../kernel/src/services/rate_limiter.js';
 import type { EnginePersistence } from '../kernel/src/storage/persistent_ledger.js';
 
@@ -94,6 +96,10 @@ export interface Phase9Deps {
   persistence?: EnginePersistence;
   /** Phase 10 self-hosting loop (guarded dogfood driver for /v1/self/*). */
   selfHosting?: SelfHostingLoop;
+  /** Phase 11 temporal causality engine (HLC + time travel + causal sync). */
+  temporal?: TemporalCausality;
+  /** Phase 11 self-replicator (seed generation + bootstrap verification). */
+  replicator?: SelfReplicator;
   repoRoot?: string;
   /** Token override (tests). Defaults to KLYN_ADMIN_TOKEN. */
   token?: string;
@@ -103,13 +109,15 @@ export interface Phase9Deps {
 const DEFAULT_RATE_LIMIT = { windowMs: 60_000, max: 100 };
 
 /** Fill engine defaults so the surface works out of the box. */
-function resolveDeps(deps: Phase9Deps = {}): Required<Pick<Phase9Deps, 'graph' | 'profiler' | 'quantum' | 'epoch' | 'selfHosting'>> & Phase9Deps {
+function resolveDeps(deps: Phase9Deps = {}): Required<Pick<Phase9Deps, 'graph' | 'profiler' | 'quantum' | 'epoch' | 'selfHosting' | 'temporal' | 'replicator'>> & Phase9Deps {
   const graph = deps.graph ?? new GraphQueryEngine();
   const profiler = deps.profiler ?? new RuntimeProfiler();
   const quantum = deps.quantum ?? new QuantumZkLedger('klyn-headless-master');
   const epoch = deps.epoch ?? new EpochDriver({ quantum, persistence: deps.persistence });
   const selfHosting = deps.selfHosting ?? new SelfHostingLoop({ repoRoot: deps.repoRoot ?? process.cwd(), persistence: deps.persistence });
-  return { ...deps, graph, profiler, quantum, epoch, selfHosting };
+  const temporal = deps.temporal ?? new TemporalCausality({ nodeId: process.env.KLYN_NODE_ID ?? 'klyn-headless' });
+  const replicator = deps.replicator ?? new SelfReplicator();
+  return { ...deps, graph, profiler, quantum, epoch, selfHosting, temporal, replicator };
 }
 
 // ---------------------------------------------------------------------------
@@ -365,7 +373,84 @@ export async function handlePhase9Request(req: HeadlessRequest, deps: Phase9Deps
       return ok(result);
     }
 
-    return fail('NOT_FOUND', `No Phase 9/10 route for ${method} ${path}`, 404);
+    // ── PHASE 11: TEMPORAL CAUSALITY SURFACE ───────────────────────────────
+    // HLC-stamped causal log, exact time-travel state reconstruction, and
+    // happened-before / concurrency queries — the "rewindable universe" of
+    // the OS, behind the same token auth + rate limiting.
+
+    // ── GET /v1/temporal/now — HLC time + causal log stats ────────────────
+    if (method === 'GET' && path === '/v1/temporal/now') {
+      return ok(d.temporal.stats());
+    }
+
+    // ── GET /v1/temporal/rewind?seq=N — reconstruct exact state at a point ─
+    if (method === 'GET' && path === '/v1/temporal/rewind') {
+      const seqParam = query.get('seq');
+      const seq = Number(seqParam ?? NaN);
+      if (!Number.isInteger(seq) || seq < 0) {
+        return fail('VALIDATION_ERROR', 'rewind requires { seq } (integer >= 0)', 422);
+      }
+      return ok(d.temporal.rewind(seq));
+    }
+
+    // ── GET /v1/temporal/causality?a=N&b=M — happened-before verdict ───────
+    if (method === 'GET' && path === '/v1/temporal/causality') {
+      const a = Number(query.get('a') ?? NaN);
+      const b = Number(query.get('b') ?? NaN);
+      if (!Number.isInteger(a) || a < 1 || !Number.isInteger(b) || b < 1) {
+        return fail('VALIDATION_ERROR', 'causality requires { a, b } (positive integers)', 422);
+      }
+      const aHlc = d.temporal.hlcOf(a);
+      const bHlc = d.temporal.hlcOf(b);
+      if (aHlc === null || bHlc === null) {
+        return fail('CAUSAL_SEQ_NOT_FOUND', `unknown causal seq (a=${a}, b=${b}) — max is ${d.temporal.seq}`, 404);
+      }
+      return ok({
+        a,
+        b,
+        aHlc,
+        bHlc,
+        happenedBefore: HybridLogicalClock.happenedBefore(aHlc, bHlc),
+        concurrent: HybridLogicalClock.concurrent(aHlc, bHlc),
+      });
+    }
+
+    // ── PHASE 11: SELF-REPLICATION SURFACE ─────────────────────────────────
+    // The OS proves its own byte identity (seed), re-forges a byte-exact
+    // replica (bootstrap), and hands replicas the causal ledger delta (sync)
+    // so a fresh clone can catch up to the exact current state.
+
+    // ── POST /v1/replicate/seed — generate + verify own identity seed ──────
+    if (method === 'POST' && path === '/v1/replicate/seed') {
+      const repoRoot = (deps.repoRoot ?? process.cwd()) as string;
+      const seed = await d.replicator.generateSeed(repoRoot);
+      const verify = await d.replicator.verifyTree(seed, repoRoot);
+      return ok({ seed, verify });
+    }
+
+    // ── POST /v1/replicate/bootstrap — re-forge a byte-exact replica ───────
+    // Dry-run by default ({ apply: false } → plan only, zero writes).
+    if (method === 'POST' && path === '/v1/replicate/bootstrap') {
+      const payload = (req.body ?? {}) as Record<string, unknown>;
+      const targetDir = String(payload.targetDir ?? '');
+      if (!targetDir) return fail('VALIDATION_ERROR', 'bootstrap requires { targetDir }', 422);
+      const repoRoot = (deps.repoRoot ?? process.cwd()) as string;
+      const result = await d.replicator.bootstrap(repoRoot, targetDir, { apply: payload.apply === true });
+      return ok(result);
+    }
+
+    // ── GET /v1/replicate/sync?since=N — causal ledger delta for replicas ──
+    if (method === 'GET' && path === '/v1/replicate/sync') {
+      const sinceParam = query.get('since');
+      const since = Number(sinceParam ?? 0);
+      if (!Number.isInteger(since) || since < 0) {
+        return fail('VALIDATION_ERROR', 'sync requires { since } (integer >= 0)', 422);
+      }
+      const delta = d.temporal.deltaSince(since);
+      return ok({ since, to: d.temporal.seq, delta });
+    }
+
+    return fail('NOT_FOUND', `No Phase 9/10/11 route for ${method} ${path}`, 404);
   }
 }
 
@@ -561,6 +646,40 @@ function createRouter(deps: Phase9Deps & { supabase?: any; logger?: any } = {}) 
     res.status(result.status).json(result.body);
   }));
 
+  // ── PHASE 11: Temporal causality + replication surface — same core ───────
+  // handlers, same auth, same rate limiting. GET routes pass the full URL so
+  // the core handler can read the query string (seq/since/a/b).
+
+  router.get('/v1/temporal/now', requireToken, asyncHandler(async (req: any, res: any) => {
+    const result = await handlePhase9Request({ method: 'GET', url: req.url, headers: req.headers }, deps);
+    res.status(result.status).json(result.body);
+  }));
+
+  router.get('/v1/temporal/rewind', requireToken, asyncHandler(async (req: any, res: any) => {
+    const result = await handlePhase9Request({ method: 'GET', url: req.url, headers: req.headers }, deps);
+    res.status(result.status).json(result.body);
+  }));
+
+  router.get('/v1/temporal/causality', requireToken, asyncHandler(async (req: any, res: any) => {
+    const result = await handlePhase9Request({ method: 'GET', url: req.url, headers: req.headers }, deps);
+    res.status(result.status).json(result.body);
+  }));
+
+  router.post('/v1/replicate/seed', requireToken, asyncHandler(async (req: any, res: any) => {
+    const result = await handlePhase9Request({ method: 'POST', url: req.url, headers: req.headers, body: req.body }, deps);
+    res.status(result.status).json(result.body);
+  }));
+
+  router.post('/v1/replicate/bootstrap', requireToken, asyncHandler(async (req: any, res: any) => {
+    const result = await handlePhase9Request({ method: 'POST', url: req.url, headers: req.headers, body: req.body }, deps);
+    res.status(result.status).json(result.body);
+  }));
+
+  router.get('/v1/replicate/sync', requireToken, asyncHandler(async (req: any, res: any) => {
+    const result = await handlePhase9Request({ method: 'GET', url: req.url, headers: req.headers }, deps);
+    res.status(result.status).json(result.body);
+  }));
+
   // -------------------------------------------------------------------------
   // Global Error Handler (MUST be the last middleware)
   // -------------------------------------------------------------------------
@@ -588,5 +707,6 @@ const router = createRouter();
 // ---------------------------------------------------------------------------
 export const PHASE9_ROUTES = ['/v1/graph/query', '/v1/system/metrics', '/v1/audit/verify', '/v1/autonomous/heal'] as const;
 export const PHASE10_ROUTES = ['/v1/self/audit', '/v1/self/evolve', '/v1/self/manifest', '/v1/self/rollback'] as const;
+export const PHASE11_ROUTES = ['/v1/temporal/now', '/v1/temporal/rewind', '/v1/temporal/causality', '/v1/replicate/seed', '/v1/replicate/bootstrap', '/v1/replicate/sync'] as const;
 export default router;
 export { router, createRouter };

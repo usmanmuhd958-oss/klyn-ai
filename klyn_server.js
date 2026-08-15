@@ -28,7 +28,7 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import vm from 'node:vm';
 import os from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, parse as parseUrl } from 'node:url';
 import { initializeVault, storeMemory, removeMemory, recall } from './index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -407,13 +407,21 @@ class KlynServerEngine {
   }
 }
 
-// ─── PHASE 9 HEADLESS API (TS engines, Bun runtime) ────────────────────────
-// The Phase 9 autonomous surface (api/router.ts) is TypeScript. Under plain
-// Node this gateway intentionally stays dependency-free, so the TS engines
-// are imported lazily ONLY when the process runs under Bun (bun klyn_server.js)
-// — `node klyn_server.js` reports the surface as unavailable instead of
-// crashing. The handler core is shared with the Express router.
-const PHASE9_ROUTES = new Set(['/v1/graph/query', '/v1/system/metrics', '/v1/audit/verify', '/v1/autonomous/heal']);
+// ─── PHASE 9/10/11 HEADLESS API (TS engines, Bun runtime) ──────────────────
+// The Phase 9/10/11 autonomous surface (api/router.ts) is TypeScript. Under
+// plain Node this gateway intentionally stays dependency-free, so the TS
+// engines are imported lazily ONLY when the process runs under Bun
+// (bun klyn_server.js) — `node klyn_server.js` reports the surface as
+// unavailable instead of crashing. The handler core is shared with the
+// Express router.
+const PHASE9_ROUTES = new Set([
+  // Phase 9
+  '/v1/graph/query', '/v1/system/metrics', '/v1/audit/verify', '/v1/autonomous/heal',
+  // Phase 10 (self-hosting)
+  '/v1/self/audit', '/v1/self/evolve', '/v1/self/manifest', '/v1/self/rollback',
+  // Phase 11 (replication)
+  '/v1/replicate/seed', '/v1/replicate/bootstrap',
+]);
 let phase9HandlerPromise = null;
 
 function getPhase9Handler(logger) {
@@ -510,16 +518,25 @@ function createServer(engine, deps = {}) {
       return;
     }
 
-    // ── PHASE 9: GET surface (authenticated headless API) ──
-    if (req.method === 'GET' && (req.url === '/v1/system/metrics' || req.url === '/v1/audit/verify')) {
+    // ── PHASE 9/10/11: GET surface (authenticated headless API) ──
+    // Pathname matching so query-string routes (rewind?seq=, sync?since=,
+    // causality?a=&b=) reach the shared handler with their full URL intact.
+    const pathname = parseUrl(req.url || '/', true).pathname;
+    const PHASE_GET_ROUTES = new Set([
+      '/v1/system/metrics', '/v1/audit/verify',
+      '/v1/self/manifest',
+      '/v1/temporal/now', '/v1/temporal/rewind', '/v1/temporal/causality',
+      '/v1/replicate/sync',
+    ]);
+    if (req.method === 'GET' && PHASE_GET_ROUTES.has(pathname)) {
       const phase9 = getPhase9Handler(logger);
       if (!phase9) {
-        respond(res, 503, { status: 'error', message: 'Phase 9 headless API requires the Bun runtime (bun klyn_server.js)' });
+        respond(res, 503, { status: 'error', message: 'Phase 9/10/11 headless API requires the Bun runtime (bun klyn_server.js)' });
         return;
       }
       const handler = await phase9;
       if (!handler) {
-        respond(res, 503, { status: 'error', message: 'Phase 9 headless API failed to initialize' });
+        respond(res, 503, { status: 'error', message: 'Phase 9/10/11 headless API failed to initialize' });
         return;
       }
       const result = await handler({ method: 'GET', url: req.url, headers: req.headers });
@@ -587,15 +604,15 @@ function createServer(engine, deps = {}) {
           const result = await engine.analyzeImpact(payload.file || '');
           respond(res, 200, { status: 'analyzed', details: result });
         } else if (PHASE9_ROUTES.has(url)) {
-          // ── PHASE 9: POST surface (authenticated headless API) ──
+          // ── PHASE 9/10/11: POST surface (authenticated headless API) ──
           const phase9 = getPhase9Handler(logger);
           if (!phase9) {
-            respond(res, 503, { status: 'error', message: 'Phase 9 headless API requires the Bun runtime (bun klyn_server.js)' });
+            respond(res, 503, { status: 'error', message: 'Phase 9/10/11 headless API requires the Bun runtime (bun klyn_server.js)' });
             return;
           }
           const handler = await phase9;
           if (!handler) {
-            respond(res, 503, { status: 'error', message: 'Phase 9 headless API failed to initialize' });
+            respond(res, 503, { status: 'error', message: 'Phase 9/10/11 headless API failed to initialize' });
             return;
           }
           const result = await handler({ method: 'POST', url, headers: req.headers, body: payload });
