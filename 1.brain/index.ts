@@ -16,6 +16,10 @@ export * from './cross_repo_graph.js';
 export * from './cascade_router.js';
 // Phase 6: autonomous red-team adversarial fuzzing.
 export * from './red_team_fuzzer.js';
+// Phase 7: autonomous self-evolving intelligence layer.
+export * from './experience_learner.js';
+export * from './adaptive_policy.js';
+export * from './evolution_loop.js';
 // @ts-ignore
 export * from './llm_gateway.js';
 export * from './cost_optimizer.js';
