@@ -1,11 +1,12 @@
 #!/bin/bash
 PROJECT_ROOT="${PROJECT_ROOT:-${HOME}/klyn-ai-os}"
+# api/gateway.ts (8000), api/metrics.ts (9090) and the original server were
+# consolidated into the single unified entrypoint klyn_server.js (Phase 2).
 SERVICES=(
   "node api/server.js:api"
-  "node api/metrics.js:metrics"
+  "node klyn_server.js:gateway"
   "node apps/web/admin.js:admin"
   "node dashboard/web_editor.js:web_editor"
-  "node api/gateway.js:gateway"
   "node services/collaboration/server.js:collaboration"
 )
 

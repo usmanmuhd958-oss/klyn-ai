@@ -54,8 +54,18 @@ const DEFAULT_RETRY_POLICY = Object.freeze({
     baseMs:       200,
     maxMs:        30_000,
     multiplier:   2,
-    // Return true to retry, false to abort immediately (non-retriable error)
-    isRetriable:  (_err) => true,
+    // Return true to retry, false to abort immediately (non-retriable error).
+    // 4xx client/business errors are NOT retried (they only burn quota — an
+    // invalid payload will never succeed on attempt 2); 429 rate limits,
+    // 5xx server errors and network/timeout errors ARE retried.
+    isRetriable:  (err) => {
+        const status = err?.statusCode ?? err?.status;
+        if (typeof status === 'number') {
+            if (status === 429 || status >= 500) return true;
+            if (status >= 400) return false;
+        }
+        return true; // network / DNS / timeout / unknown — safe to retry
+    },
     onAttempt:    null,   // (attempt, delay, err) => void — observability hook
     onExhausted:  null,   // (attempts, lastErr) => void
     timeout:      null,   // Per-attempt timeout in ms (null = no timeout)
@@ -477,7 +487,7 @@ async function withCircuit(name, fn, cbOptions = {}) {
  * @param {object}        [retryPolicy]
  * @param {object}        [cbOptions]
  */
-async function withRetryAndCircuit(circuitName, fn, retryPolicy = {}, cbOptions = {}) {
+async function withRetryAndCircuit(circuitName, fn, retryPolicy: any = {}, cbOptions: any = {}) {
     const cb = registry.get(circuitName, cbOptions);
 
     return withRetry(
@@ -485,10 +495,14 @@ async function withRetryAndCircuit(circuitName, fn, retryPolicy = {}, cbOptions 
         {
             ...retryPolicy,
             isRetriable: (err) => {
-                // Never retry if circuit is OPEN
+                // Never retry if the circuit is OPEN (probe failed or cooldown).
                 if (err instanceof CircuitOpenError) return false;
-                // @ts-ignore
-                return retryPolicy.isRetriable ? retryPolicy.isRetriable(err) : true;
+                // When no custom classifier is supplied, fall back to the
+                // DEFAULT_RETRY_POLICY policy: 4xx client/business errors are
+                // NOT retried (they only burn quota), while 429/5xx server
+                // errors and network/timeout errors ARE retried.
+                const custom = retryPolicy.isRetriable;
+                return custom ? custom(err) : DEFAULT_RETRY_POLICY.isRetriable(err);
             },
         }
     );

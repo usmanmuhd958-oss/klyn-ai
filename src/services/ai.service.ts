@@ -1,4 +1,5 @@
 import { getSupabase } from '../lib/supabase.js';
+import { withRetryAndCircuit } from '../../kernel/backoff.js';
 
 export interface AIResponse {
   text: string;
@@ -18,28 +19,54 @@ interface AIRequest {
   provider?: string;
 }
 
+// All external provider calls share one resilience policy: jittered
+// exponential backoff + circuit breaker via kernel/backoff.ts. 4xx client
+// errors are never retried (they only burn quota); 429/5xx and network errors
+// retry with backoff. Each provider gets its own circuit so one degraded
+// upstream cannot trip the others.
+const AI_RETRY = { maxAttempts: 3, baseMs: 200, maxMs: 2_000 };
+
+async function fetchJson(url: string, init: RequestInit, circuit: string): Promise<any> {
+  return withRetryAndCircuit(
+    circuit,
+    async () => {
+      const res = await fetch(url, init);
+      if (!res.ok) {
+        const err: any = new Error(`HTTP ${res.status} ${res.statusText} from ${url}`);
+        err.statusCode = res.status;
+        err.retryable = res.status === 429 || res.status >= 500;
+        throw err;
+      }
+      return res.json();
+    },
+    AI_RETRY
+  );
+}
+
 async function callAnthropic(prompt: string): Promise<AIResponse> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not set');
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'content-type': 'application/json',
+  const data = await fetchJson(
+    'https://api.anthropic.com/v1/messages',
+    {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-5',
+        max_tokens: 4096,
+        messages: [{ role: 'user', content: prompt }],
+      }),
     },
-    body: JSON.stringify({
-      model: 'claude-fable-5',
-      max_tokens: 4096,
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  });
-  if (!(res as any).ok) throw new Error(`Anthropic API error: ${(res as any).status} ${(res as any).statusText}`);
-  const data: any = await (res as any).json();
+    'ai:anthropic'
+  );
   const text = data?.content?.[0]?.text || '';
   return {
     text,
-    model: 'claude-fable-5',
+    model: 'claude-sonnet-4-5',
     provider: 'anthropic',
     usage: {
       prompt_tokens: data?.usage?.input_tokens ?? prompt.length,
@@ -51,23 +78,25 @@ async function callAnthropic(prompt: string): Promise<AIResponse> {
 async function callOpenAI(prompt: string): Promise<AIResponse> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error('OPENAI_API_KEY is not set');
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
+  const data = await fetchJson(
+    'https://api.openai.com/v1/chat/completions',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        messages: [{ role: 'user', content: prompt }],
+      }),
     },
-    body: JSON.stringify({
-      model: 'gpt-5.6-sol',
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  });
-  if (!(res as any).ok) throw new Error(`OpenAI API error: ${(res as any).status} ${(res as any).statusText}`);
-  const data: any = await (res as any).json();
+    'ai:openai'
+  );
   const text = data?.choices?.[0]?.message?.content || '';
   return {
     text,
-    model: 'gpt-5.6-sol',
+    model: 'gpt-4o',
     provider: 'openai',
     usage: {
       prompt_tokens: data?.usage?.prompt_tokens ?? prompt.length,
@@ -79,20 +108,22 @@ async function callOpenAI(prompt: string): Promise<AIResponse> {
 async function callGemini(prompt: string): Promise<AIResponse> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY is not set');
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-pro:generateContent?key=${apiKey}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-    }),
-  });
-  if (!(res as any).ok) throw new Error(`Gemini API error: ${(res as any).status} ${(res as any).statusText}`);
-  const data: any = await (res as any).json();
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${apiKey}`;
+  const data = await fetchJson(
+    url,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+      }),
+    },
+    'ai:gemini'
+  );
   const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
   return {
     text,
-    model: 'gemini-3.5-pro',
+    model: 'gemini-2.5-pro',
     provider: 'gemini',
     usage: {
       prompt_tokens: data?.usageMetadata?.promptTokenCount ?? prompt.length,
@@ -104,23 +135,25 @@ async function callGemini(prompt: string): Promise<AIResponse> {
 async function callDeepSeek(prompt: string): Promise<AIResponse> {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) throw new Error('DEEPSEEK_API_KEY is not set');
-  const res = await fetch('https://api.deepseek.com/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
+  const data = await fetchJson(
+    'https://api.deepseek.com/chat/completions',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        messages: [{ role: 'user', content: prompt }],
+      }),
     },
-    body: JSON.stringify({
-      model: 'deepseek-v4-pro',
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  });
-  if (!(res as any).ok) throw new Error(`DeepSeek API error: ${(res as any).status} ${(res as any).statusText}`);
-  const data: any = await (res as any).json();
+    'ai:deepseek'
+  );
   const text = data?.choices?.[0]?.message?.content || '';
   return {
     text,
-    model: 'deepseek-v4-pro',
+    model: 'deepseek-chat',
     provider: 'deepseek',
     usage: {
       prompt_tokens: data?.usage?.prompt_tokens ?? prompt.length,
@@ -132,17 +165,19 @@ async function callDeepSeek(prompt: string): Promise<AIResponse> {
 async function callOllama(prompt: string, model?: string): Promise<AIResponse> {
   const host = process.env.OLLAMA_HOST || 'http://localhost:11434';
   const usedModel = model || 'llama3.2';
-  const res = await fetch(`${host}/api/generate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: usedModel,
-      prompt,
-      stream: false,
-    }),
-  });
-  if (!(res as any).ok) throw new Error(`Ollama API error: ${(res as any).status} ${(res as any).statusText}`);
-  const data: any = await (res as any).json();
+  const data = await fetchJson(
+    `${host}/api/generate`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: usedModel,
+        prompt,
+        stream: false,
+      }),
+    },
+    'ai:ollama'
+  );
   const text = data?.response || '';
   return {
     text,

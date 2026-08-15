@@ -6,6 +6,7 @@ import OpenAI from 'openai';
 import type { LLMRequest, LLMResponse, StreamChunk, ProviderConfig } from '../types.ts';
 // @ts-ignore
 import { MODEL_REGISTRY } from '../config.ts';
+import { withRetryAndCircuit } from '../../kernel/backoff.js';
 
 export class OpenAIProvider {
   [key: string]: any;
@@ -15,10 +16,13 @@ export class OpenAIProvider {
 
   constructor(config: ProviderConfig) {
     this.config = config;
+    // SDK auto-retry is disabled — kernel/backoff.ts owns retries (jittered
+    // exponential backoff + circuit breaker) so behavior is uniform across
+    // providers and 4xx errors never burn quota.
     this.client = new OpenAI({
       apiKey: config.apiKey,
       organization: config.organization,
-      maxRetries: config.maxRetries || 3,
+      maxRetries: 0,
       timeout: config.timeout || 120_000,
     });
   }
@@ -47,15 +51,19 @@ export class OpenAIProvider {
           : request.prompt,
       });
 
-      const response = await this.client.chat.completions.create({
-        model: modelConfig.apiModelId,
-        messages,
-        max_tokens: request.maxTokens || 4096,
-        temperature: request.temperature ?? 0.7,
-        top_p: request.topP,
-        stop: request.stopSequences,
-        tools: request.tools as any,
-      });
+      const response = await withRetryAndCircuit(
+        'openai',
+        () => this.client.chat.completions.create({
+          model: modelConfig.apiModelId,
+          messages,
+          max_tokens: request.maxTokens || 4096,
+          temperature: request.temperature ?? 0.7,
+          top_p: request.topP,
+          stop: request.stopSequences,
+          tools: request.tools as any,
+        }),
+        { maxAttempts: this.config.maxRetries || 3, baseMs: 200, maxMs: 8_000 }
+      );
 
       const choice = response.choices[0];
       const usage = {

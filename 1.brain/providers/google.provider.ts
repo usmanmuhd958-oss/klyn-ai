@@ -6,6 +6,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { LLMRequest, LLMResponse, StreamChunk, ProviderConfig } from '../types.ts';
 // @ts-ignore
 import { MODEL_REGISTRY } from '../config.ts';
+import { withRetryAndCircuit } from '../../kernel/backoff.js';
 
 export class GoogleProvider {
   [key: string]: any;
@@ -28,15 +29,19 @@ export class GoogleProvider {
         systemInstruction: request.systemPrompt,
       });
 
-      const result = await model.generateContent({
-        contents: [{ role: 'user', parts: [{ text: request.prompt }] }],
-        generationConfig: {
-          maxOutputTokens: request.maxTokens || 4096,
-          temperature: request.temperature ?? 0.7,
-          topP: request.topP,
-          stopSequences: request.stopSequences,
-        },
-      });
+      const result = await withRetryAndCircuit(
+        'google',
+        () => model.generateContent({
+          contents: [{ role: 'user', parts: [{ text: request.prompt }] }],
+          generationConfig: {
+            maxOutputTokens: request.maxTokens || 4096,
+            temperature: request.temperature ?? 0.7,
+            topP: request.topP,
+            stopSequences: request.stopSequences,
+          },
+        }),
+        { maxAttempts: this.config.maxRetries || 3, baseMs: 200, maxMs: 8_000 }
+      );
 
       const response = result.response;
       const text = response.text();

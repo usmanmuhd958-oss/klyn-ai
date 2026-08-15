@@ -6,6 +6,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { LLMRequest, LLMResponse, StreamChunk, ProviderConfig } from '../types.ts';
 // @ts-ignore
 import { MODEL_REGISTRY } from '../config.ts';
+import { withRetryAndCircuit } from '../../kernel/backoff.js';
 
 export class AnthropicProvider {
   [key: string]: any;
@@ -14,9 +15,12 @@ export class AnthropicProvider {
 
   constructor(config: ProviderConfig) {
     this.config = config;
+    // SDK auto-retry is disabled — kernel/backoff.ts owns retries (jittered
+    // exponential backoff + circuit breaker) so behavior is uniform across
+    // providers and 4xx errors never burn quota.
     this.client = new Anthropic({
       apiKey: config.apiKey,
-      maxRetries: config.maxRetries || 3,
+      maxRetries: 0,
       timeout: config.timeout || 120_000,
     });
   }
@@ -26,33 +30,37 @@ export class AnthropicProvider {
     const modelConfig = MODEL_REGISTRY[modelName];
     
     try {
-      const response = await this.client.messages.create({
-        model: modelConfig.apiModelId,
-        max_tokens: request.maxTokens || 4096,
-        temperature: request.temperature ?? 0.7,
-        top_p: request.topP,
-        stop_sequences: request.stopSequences,
-        system: request.systemPrompt,
-        messages: [
-          {
-            role: 'user',
-            content: request.images?.length 
-              ? [
-                  { type: 'text', text: request.prompt },
-                  ...request.images.map(img => ({
-                    type: 'image' as const,
-                    source: {
-                      type: 'base64' as const,
-                      media_type: 'image/png' as const,
-                      data: img,
-                    },
-                  })),
-                ]
-              : request.prompt,
-          },
-        ],
-        tools: request.tools as any,
-      });
+      const response = await withRetryAndCircuit(
+        'anthropic',
+        () => this.client.messages.create({
+          model: modelConfig.apiModelId,
+          max_tokens: request.maxTokens || 4096,
+          temperature: request.temperature ?? 0.7,
+          top_p: request.topP,
+          stop_sequences: request.stopSequences,
+          system: request.systemPrompt,
+          messages: [
+            {
+              role: 'user',
+              content: request.images?.length 
+                ? [
+                    { type: 'text', text: request.prompt },
+                    ...request.images.map(img => ({
+                      type: 'image' as const,
+                      source: {
+                        type: 'base64' as const,
+                        media_type: 'image/png' as const,
+                        data: img,
+                      },
+                    })),
+                  ]
+                : request.prompt,
+            },
+          ],
+          tools: request.tools as any,
+        }),
+        { maxAttempts: this.config.maxRetries || 3, baseMs: 200, maxMs: 8_000 }
+      );
 
       const usage = {
         inputTokens: response.usage.input_tokens,

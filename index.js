@@ -63,6 +63,10 @@ export function storeMemory(id, namespace, embedding, payload, tags) {
   saveVault();
 }
 
+export function removeMemory(id) {
+  memoryMap.delete(id);
+}
+
 export function queryMemory(namespace, embedding, topK = 5) {
   return Array.from(memoryMap.values()).slice(0, topK);
 }
