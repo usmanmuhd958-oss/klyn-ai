@@ -28,6 +28,9 @@ export * from './temporal_causality.js';
 export * from './self_replication.js';
 // Phase 12: lock-free BFT consensus isolation.
 export * from './consensus_isolation.js';
+// Phase 14: production observability + artifact tooling (deploy package).
+export * from '../packages/deploy/src/observability.js';
+export * from '../packages/deploy/src/artifact.js';
 // @ts-ignore
 export * from './llm_gateway.js';
 export * from './cost_optimizer.js';

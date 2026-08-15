@@ -427,6 +427,7 @@ const PHASE9_ROUTES = new Set([
   '/v1/mesh/quarantine', '/v1/mesh/heal',
 ]);
 let phase9HandlerPromise = null;
+let gatewayV2HandlerPromise = null;
 
 function getPhase9Handler(logger) {
   if (typeof Bun === 'undefined') return null;
@@ -439,6 +440,22 @@ function getPhase9Handler(logger) {
       });
   }
   return phase9HandlerPromise;
+}
+
+// Phase 14: hardened multi-tenant gateway (signed JWT + RBAC). Its own
+// handler serves the Phase 14 routes and delegates earlier-phase routes
+// internally with an ephemeral token.
+function getGatewayV2Handler(logger) {
+  if (typeof Bun === 'undefined') return null;
+  if (!gatewayV2HandlerPromise) {
+    gatewayV2HandlerPromise = import('./api/gateway_v2.ts')
+      .then((m) => m.createGatewayV2Handler({ repoRoot: __dirname }))
+      .catch((err) => {
+        logger.error('Phase 14 gateway failed to load', { error: err.message });
+        return null;
+      });
+  }
+  return gatewayV2HandlerPromise;
 }
 
 // ─── SERVER FACTORY ─────────────────────────────────────────────────────────
@@ -534,15 +551,23 @@ function createServer(engine, deps = {}) {
       '/v1/federation/nodes', '/v1/benchmarks/run',
       '/v1/mesh/topology',
     ]);
-    if (req.method === 'GET' && PHASE_GET_ROUTES.has(pathname)) {
-      const phase9 = getPhase9Handler(logger);
-      if (!phase9) {
-        respond(res, 503, { status: 'error', message: 'Phase 9/10/11 headless API requires the Bun runtime (bun klyn_server.js)' });
+    // Phase 14 hardened surface (signed JWT): audit export, tenant registry,
+    // Prometheus metrics, OTel traces, artifact plan.
+    const PHASE14_GET_ROUTES = new Set([
+      '/v1/audit/export', '/v1/gateway/tenants',
+      '/v1/metrics/prometheus', '/v1/traces', '/v1/artifacts/plan',
+    ]);
+    if (req.method === 'GET' && (PHASE_GET_ROUTES.has(pathname) || PHASE14_GET_ROUTES.has(pathname))) {
+      // New Phase 14 routes use the signed-JWT gateway; earlier-phase routes
+      // keep their legacy static-token surface (zero breaking changes).
+      const handlerPromise = PHASE14_GET_ROUTES.has(pathname) ? getGatewayV2Handler(logger) : getPhase9Handler(logger);
+      if (!handlerPromise) {
+        respond(res, 503, { status: 'error', message: 'Phase 9-14 headless API requires the Bun runtime (bun klyn_server.js)' });
         return;
       }
-      const handler = await phase9;
+      const handler = await handlerPromise;
       if (!handler) {
-        respond(res, 503, { status: 'error', message: 'Phase 9/10/11 headless API failed to initialize' });
+        respond(res, 503, { status: 'error', message: 'Phase 9-14 headless API failed to initialize' });
         return;
       }
       const result = await handler({ method: 'GET', url: req.url, headers: req.headers });
@@ -619,6 +644,20 @@ function createServer(engine, deps = {}) {
           const handler = await phase9;
           if (!handler) {
             respond(res, 503, { status: 'error', message: 'Phase 9/10/11 headless API failed to initialize' });
+            return;
+          }
+          const result = await handler({ method: 'POST', url, headers: req.headers, body: payload });
+          respond(res, result.status, result.body);
+        } else if (url === '/v1/gateway/token') {
+          // ── PHASE 14: token issuance through the signed-JWT gateway ──
+          const gatewayV2 = getGatewayV2Handler(logger);
+          if (!gatewayV2) {
+            respond(res, 503, { status: 'error', message: 'Phase 14 gateway requires the Bun runtime (bun klyn_server.js)' });
+            return;
+          }
+          const handler = await gatewayV2;
+          if (!handler) {
+            respond(res, 503, { status: 'error', message: 'Phase 14 gateway failed to initialize' });
             return;
           }
           const result = await handler({ method: 'POST', url, headers: req.headers, body: payload });

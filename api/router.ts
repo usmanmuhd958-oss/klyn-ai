@@ -316,6 +316,35 @@ export async function handlePhase9Request(req: HeadlessRequest, deps: Phase9Deps
       return ok({ verdict, proof, root: d.quantum.root, records: d.quantum.recordCount });
     }
 
+    // ── GET /v1/audit/export — third-party verifiable audit export ─────────
+    // Full post-quantum Merkle chain + per-record non-repudiation checks in a
+    // format external auditors can verify with ZERO secrets (each record
+    // carries its own WOTS+ public key). Phase 14 capability #3.
+    if (method === 'GET' && path === '/v1/audit/export') {
+      const records = d.quantum.recordsSnapshot();
+      const verify = d.quantum.verify();
+      const perRecord = records.map((r) => ({ seq: r.seq, verify: d.quantum.verifyRecord(r.seq) }));
+      const seqParam = query.get('seq');
+      let proof: unknown = null;
+      if (seqParam !== null) {
+        const seq = Number(seqParam);
+        if (!Number.isInteger(seq) || seq < 1) return fail('VALIDATION_ERROR', 'seq must be a positive integer', 422);
+        proof = d.quantum.prove(seq);
+        if (proof === null) return fail('AUDIT_SEQ_NOT_FOUND', `no ledger record at seq ${seq}`, 404);
+      }
+      return ok({
+        format: 'klyn-quantum-audit-v1',
+        schemaVersion: 1,
+        exportAt: new Date().toISOString(),
+        root: d.quantum.root,
+        records: records.length,
+        verify,
+        perRecord,
+        proof,
+        ledger: records,
+      });
+    }
+
     // ── POST /v1/autonomous/heal — trigger a full autonomous epoch ─────────
     if (method === 'POST' && path === '/v1/autonomous/heal') {
       const payload = (req.body ?? {}) as Record<string, unknown>;
@@ -565,7 +594,7 @@ export async function handlePhase9Request(req: HeadlessRequest, deps: Phase9Deps
       return ok({ actions, pending: d.meshHealer.pending(), stats: d.meshHealer.getStats() });
     }
 
-    return fail('NOT_FOUND', `No Phase 9/10/11/12/13 route for ${method} ${path}`, 404);
+    return fail('NOT_FOUND', `No Phase 9-14 route for ${method} ${path}`, 404);
   }
 }
 
@@ -735,6 +764,12 @@ function createRouter(deps: Phase9Deps & { supabase?: any; logger?: any } = {}) 
     res.status(result.status).json(result.body);
   }));
 
+  // ── PHASE 14: hardened audit export — same core handler, same auth ────────
+  router.get('/v1/audit/export', requireToken, asyncHandler(async (req: any, res: any) => {
+    const result = await handlePhase9Request({ method: 'GET', url: req.url, headers: req.headers }, deps);
+    res.status(result.status).json(result.body);
+  }));
+
   router.post('/v1/autonomous/heal', requireToken, asyncHandler(async (req: any, res: any) => {
     const result = await handlePhase9Request({ method: 'POST', url: req.url, headers: req.headers, body: req.body }, deps);
     res.status(result.status).json(result.body);
@@ -859,5 +894,6 @@ export const PHASE10_ROUTES = ['/v1/self/audit', '/v1/self/evolve', '/v1/self/ma
 export const PHASE11_ROUTES = ['/v1/temporal/now', '/v1/temporal/rewind', '/v1/temporal/causality', '/v1/replicate/seed', '/v1/replicate/bootstrap', '/v1/replicate/sync'] as const;
 export const PHASE12_ROUTES = ['/v1/federation/nodes', '/v1/federation/sync', '/v1/benchmarks/run'] as const;
 export const PHASE13_ROUTES = ['/v1/mesh/topology', '/v1/mesh/quarantine', '/v1/mesh/heal'] as const;
+export const PHASE14_ROUTES = ['/v1/audit/export'] as const;
 export default router;
 export { router, createRouter };

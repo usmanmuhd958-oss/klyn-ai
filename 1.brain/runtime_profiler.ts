@@ -85,7 +85,16 @@ export interface RepairOutcome {
   at: number;
 }
 
+/** Phase 14 production observability hooks — Prometheus metrics + OTel-style
+ *  spans. Optional: when omitted the profiler runs exactly as before. */
+export interface ProfilerTelemetry {
+  metrics?: { inc(name: string, help: string, labels?: Record<string, string>, by?: number): void; observe(name: string, help: string, value: number, labels?: Record<string, string>): void };
+  tracer?: { startSpan(name: string, attributes?: Record<string, string | number | boolean>): { end(attributes?: Record<string, string | number | boolean>, status?: 'OK' | 'ERROR' | 'UNSET'): void } };
+}
+
 export interface ProfilerOptions {
+  /** Phase 14 production observability hooks (Prometheus + OTel spans). */
+  telemetry?: ProfilerTelemetry;
   /** Latency SLA in ms (default 200). */
   latencySlaMs?: number;
   /** Memory allocation spike threshold in MiB (default 64). */
@@ -151,6 +160,7 @@ export class RuntimeProfiler {
   private readonly gate: QualityGate;
   private readonly bus: EventBus;
   private readonly synthesize: (ctx: RepairContext) => string | Promise<string>;
+  private readonly telemetry: ProfilerTelemetry | undefined;
 
   constructor(options: ProfilerOptions = {}) {
     this.latencySlaMs = options.latencySlaMs ?? DEFAULT_LATENCY_SLA_MS;
@@ -163,6 +173,7 @@ export class RuntimeProfiler {
     this.gate = options.gate ?? new QualityGate();
     this.bus = options.bus ?? new EventBus();
     this.synthesize = options.patchSynthesizer ?? defaultPatchSynthesizer;
+    this.telemetry = options.telemetry;
   }
 
   // -------------------------------------------------------------------------
@@ -181,6 +192,10 @@ export class RuntimeProfiler {
     const fresh = list.filter((s) => (s.at ?? at) >= cutoff);
     this.samplesByRoute.set(sample.route, fresh.slice(-this.maxSamplesPerRoute));
     this.bus.publish({ type: 'profiler:sample', payload: { ...sample, at }, timestamp: at } satisfies KlynEvent);
+    // Phase 14 telemetry: latency histogram + trace span per sample.
+    this.telemetry?.metrics?.observe('klyn_route_latency_ms', 'Route latency', sample.latencyMs, { route: sample.route });
+    this.telemetry?.metrics?.inc('klyn_profiler_samples_total', 'Profiler samples recorded', { route: sample.route });
+    this.telemetry?.tracer?.startSpan('profiler.record', { route: sample.route, latencyMs: sample.latencyMs }).end({}, 'OK');
   }
 
   /** Bounded window stats for a route (single pass over retained samples). */
@@ -235,8 +250,10 @@ export class RuntimeProfiler {
    */
   async dispatchRepair(route: string): Promise<RepairOutcome> {
     const now = Date.now();
+    const span = this.telemetry?.tracer?.startSpan('profiler.repair', { route });
     const violations = this.evaluate(route);
     if (violations.length === 0) {
+      span?.end({ dispatched: false }, 'OK');
       return { route, reasons: [], dispatched: false, gateApproved: false, applied: false, rolledBack: false, at: now };
     }
 
@@ -306,6 +323,8 @@ export class RuntimeProfiler {
       error: healed.success ? undefined : healed.errors.join('; '),
     };
     this.bus.publish({ type: 'profiler:repair:outcome', payload: outcome, timestamp: outcome.at } satisfies KlynEvent);
+    this.telemetry?.metrics?.inc('klyn_repairs_total', 'Autonomous repairs dispatched', { route, applied: String(healed.applied) });
+    span?.end({ applied: healed.applied, rolledBack: healed.rolledBack }, healed.applied ? 'OK' : 'ERROR');
     return outcome;
   }
 
