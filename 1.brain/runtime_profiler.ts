@@ -344,6 +344,22 @@ export class RuntimeProfiler {
   // OBSERVABILITY
   // -------------------------------------------------------------------------
 
+  /** Route identifiers currently under observation (Phase 9 drive-pending). */
+  routes(): string[] {
+    return Array.from(this.samplesByRoute.keys()).sort();
+  }
+
+  /** File path recorded on the most recent sample for a route (Phase 9
+   *  epoch driver uses it to heal the right handler). */
+  sampleFilePath(route: string): string | null {
+    const list = this.samplesByRoute.get(route);
+    if (!list) return null;
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i].filePath) return list[i].filePath!;
+    }
+    return null;
+  }
+
   getStats(): { totalSamples: number; observedRoutes: number; repairsDispatched: number; committed: number } {
     return {
       totalSamples: this.totalSamples,

@@ -259,6 +259,34 @@ export class FleetOrchestrator {
     };
   }
 
+  /** Full snapshot of the node table (Phase 9 durable persistence). */
+  snapshotNodes(): FleetNodeState[] {
+    return Array.from(this.nodes.values()).map((n) => ({ ...n }));
+  }
+
+  /**
+   * Cold-boot restoration (Phase 9): re-register persisted node states. The
+   * table is replaced wholesale — liveness timestamps are restored as fresh
+   * (a restarted fleet re-establishes liveness on the next heartbeat) while
+   * load/error/quarantine/dead flags carry over exactly.
+   */
+  restoreNodes(states: FleetNodeState[]): void {
+    this.nodes.clear();
+    for (const state of states) {
+      if (this.nodes.size >= this.maxNodes) break;
+      this.nodes.set(state.nodeId, {
+        nodeId: state.nodeId,
+        joinedAt: state.joinedAt,
+        lastHeartbeat: Date.now(),
+        load: state.load,
+        errors: state.errors,
+        quarantined: state.quarantined,
+        quarantineReason: state.quarantineReason,
+        dead: state.dead,
+      });
+    }
+  }
+
   /** Drop all supervision state (tests, fleet teardown). */
   dispose(): void {
     this.nodes.clear();
