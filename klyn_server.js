@@ -421,6 +421,8 @@ const PHASE9_ROUTES = new Set([
   '/v1/self/audit', '/v1/self/evolve', '/v1/self/manifest', '/v1/self/rollback',
   // Phase 11 (replication)
   '/v1/replicate/seed', '/v1/replicate/bootstrap',
+  // Phase 12 (federation)
+  '/v1/federation/sync',
 ]);
 let phase9HandlerPromise = null;
 
@@ -527,6 +529,7 @@ function createServer(engine, deps = {}) {
       '/v1/self/manifest',
       '/v1/temporal/now', '/v1/temporal/rewind', '/v1/temporal/causality',
       '/v1/replicate/sync',
+      '/v1/federation/nodes', '/v1/benchmarks/run',
     ]);
     if (req.method === 'GET' && PHASE_GET_ROUTES.has(pathname)) {
       const phase9 = getPhase9Handler(logger);

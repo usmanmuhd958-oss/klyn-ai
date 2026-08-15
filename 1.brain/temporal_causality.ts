@@ -292,13 +292,16 @@ export class TemporalCausality {
   }
 
   /** Ingest a remote event: absorb its HLC stamp, append to the log, and
-   *  apply it to the state map (idempotent by event id). Returns the applied
-   *  event or null when the id is already known. */
+   *  apply it to the state map (idempotent by event id). The event's seq is
+   *  RENUMBERED to its local position so `deltaSince(seq)` and `rewind(seq)`
+   *  always mean "position in this node's log" even after merges. Returns
+   *  the applied event or null when the id is already known. */
   ingest(event: CausalEvent): CausalEvent | null {
     const hydrated = this.hydrate(event);
     if (!hydrated) return null;
     if (this.log.some((e) => e.id === hydrated.id)) return null;
     this.clock.recv(hydrated.hlc);
+    hydrated.seq = this.log.length + 1;
     this.log.push(hydrated);
     if (this.log.length > this.maxMemoryEvents) {
       this.log = this.log.slice(-this.maxMemoryEvents);
@@ -315,6 +318,37 @@ export class TemporalCausality {
       if (this.ingest(event)) applied++;
     }
     return applied;
+  }
+
+  /**
+   * Replace the ENTIRE log with a merged stream (the mesh split-brain heal
+   * path). Events are sorted into the deterministic total HLC order, local
+   * seqs are renumbered to position (so deltaSince/rewind stay meaningful),
+   * the state map is rebuilt from the merged stream, and every stamp is
+   * absorbed into the clock. Pure function of the input — both sides of a
+   * healed partition rebuild from the SAME merge, so they converge
+   * byte-exactly. Returns the merged event count.
+   */
+  rebuild(events: CausalEvent[]): number {
+    const sorted = [...events]
+      .sort((a, b) => HybridLogicalClock.compare(a.hlc, b.hlc))
+      .map((e, i) => {
+        const hydrated = this.hydrate(e);
+        if (!hydrated) return null;
+        hydrated.seq = i + 1;
+        return hydrated;
+      })
+      .filter((e): e is CausalEvent => e !== null);
+    const state = new Map<string, string>();
+    for (const event of sorted) {
+      this.clock.recv(event.hlc);
+      if (event.type === 'snapshot') state.set(event.ref, event.content);
+      else state.set(event.ref, event.output);
+    }
+    this.log = sorted;
+    this.state = state;
+    this.restored = sorted.length;
+    return sorted.length;
   }
 
   /** CRDT-style causal merge: union of two diverged logs (dedup by event id)

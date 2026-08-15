@@ -46,6 +46,8 @@ import { EpochDriver, type EpochFinding } from '../1.brain/e2e_autonomous_epoch.
 import { SelfHostingLoop } from '../1.brain/self_hosting_loop.js';
 import { TemporalCausality, HybridLogicalClock } from '../1.brain/temporal_causality.js';
 import { SelfReplicator } from '../1.brain/self_replication.js';
+import { FederatedMesh } from '../packages/swarm-mesh/src/federated_mesh.js';
+import { runLatencySuite } from '../1.brain/benchmarks/latency_suite.js';
 import { rateLimiter } from '../kernel/src/services/rate_limiter.js';
 import type { EnginePersistence } from '../kernel/src/storage/persistent_ledger.js';
 
@@ -100,6 +102,8 @@ export interface Phase9Deps {
   temporal?: TemporalCausality;
   /** Phase 11 self-replicator (seed generation + bootstrap verification). */
   replicator?: SelfReplicator;
+  /** Phase 12 federated replica swarm (peer registry + causal sync). */
+  mesh?: FederatedMesh;
   repoRoot?: string;
   /** Token override (tests). Defaults to KLYN_ADMIN_TOKEN. */
   token?: string;
@@ -109,7 +113,7 @@ export interface Phase9Deps {
 const DEFAULT_RATE_LIMIT = { windowMs: 60_000, max: 100 };
 
 /** Fill engine defaults so the surface works out of the box. */
-function resolveDeps(deps: Phase9Deps = {}): Required<Pick<Phase9Deps, 'graph' | 'profiler' | 'quantum' | 'epoch' | 'selfHosting' | 'temporal' | 'replicator'>> & Phase9Deps {
+function resolveDeps(deps: Phase9Deps = {}): Required<Pick<Phase9Deps, 'graph' | 'profiler' | 'quantum' | 'epoch' | 'selfHosting' | 'temporal' | 'replicator' | 'mesh'>> & Phase9Deps {
   const graph = deps.graph ?? new GraphQueryEngine();
   const profiler = deps.profiler ?? new RuntimeProfiler();
   const quantum = deps.quantum ?? new QuantumZkLedger('klyn-headless-master');
@@ -117,7 +121,8 @@ function resolveDeps(deps: Phase9Deps = {}): Required<Pick<Phase9Deps, 'graph' |
   const selfHosting = deps.selfHosting ?? new SelfHostingLoop({ repoRoot: deps.repoRoot ?? process.cwd(), persistence: deps.persistence });
   const temporal = deps.temporal ?? new TemporalCausality({ nodeId: process.env.KLYN_NODE_ID ?? 'klyn-headless' });
   const replicator = deps.replicator ?? new SelfReplicator();
-  return { ...deps, graph, profiler, quantum, epoch, selfHosting, temporal, replicator };
+  const mesh = deps.mesh ?? new FederatedMesh({ nodeId: temporal.stats().nodeId, temporal });
+  return { ...deps, graph, profiler, quantum, epoch, selfHosting, temporal, replicator, mesh };
 }
 
 // ---------------------------------------------------------------------------
@@ -450,7 +455,40 @@ export async function handlePhase9Request(req: HeadlessRequest, deps: Phase9Deps
       return ok({ since, to: d.temporal.seq, delta });
     }
 
-    return fail('NOT_FOUND', `No Phase 9/10/11 route for ${method} ${path}`, 404);
+    // ── PHASE 12: FEDERATED REPLICA SWARM SURFACE ───────────────────────────
+    // Live cluster view, causal sync triggers, and the live latency/SLA
+    // diagnostic suite — same token auth + rate limiting.
+
+    // ── GET /v1/federation/nodes — list active cluster peers ───────────────
+    if (method === 'GET' && path === '/v1/federation/nodes') {
+      return ok({ nodeId: d.mesh.nodeId, quorum: d.mesh.getStats().peers > 0 ? Math.max(3, d.mesh.getStats().peers) : null, stats: d.mesh.getStats(), nodes: d.mesh.nodes() });
+    }
+
+    // ── POST /v1/federation/sync — trigger causal state sync ───────────────
+    //   {}                 → broadcast bundle (delta every online peer needs)
+    //   { peer }           → catch-up delta for one peer
+    //   { peer, delta }    → ingest a peer's delta (receipt)
+    if (method === 'POST' && path === '/v1/federation/sync') {
+      const payload = (req.body ?? {}) as Record<string, unknown>;
+      const peer = String(payload.peer ?? '');
+      const delta = Array.isArray(payload.delta) ? (payload.delta as unknown[]) : null;
+      if (peer && delta !== null) {
+        const receipt = d.mesh.receiveDelta(peer, delta as Parameters<FederatedMesh['receiveDelta']>[1]);
+        return ok(receipt);
+      }
+      if (peer) {
+        return ok({ peer, delta: d.mesh.produceDelta(0), localSeq: d.mesh.getStats().localSeq, note: 'delta to push to the peer' });
+      }
+      return ok({ nodeId: d.mesh.nodeId, peers: d.mesh.onlinePeers(), delta: d.mesh.produceDelta(0), localSeq: d.mesh.getStats().localSeq });
+    }
+
+    // ── GET /v1/benchmarks/run — live latency + SLA diagnostic suite ───────
+    if (method === 'GET' && path === '/v1/benchmarks/run') {
+      const report = await runLatencySuite();
+      return ok(report);
+    }
+
+    return fail('NOT_FOUND', `No Phase 9/10/11/12 route for ${method} ${path}`, 404);
   }
 }
 
@@ -680,6 +718,23 @@ function createRouter(deps: Phase9Deps & { supabase?: any; logger?: any } = {}) 
     res.status(result.status).json(result.body);
   }));
 
+  // ── PHASE 12: Federation + benchmarks surface — same core handlers ────────
+
+  router.get('/v1/federation/nodes', requireToken, asyncHandler(async (req: any, res: any) => {
+    const result = await handlePhase9Request({ method: 'GET', url: req.url, headers: req.headers }, deps);
+    res.status(result.status).json(result.body);
+  }));
+
+  router.post('/v1/federation/sync', requireToken, asyncHandler(async (req: any, res: any) => {
+    const result = await handlePhase9Request({ method: 'POST', url: req.url, headers: req.headers, body: req.body }, deps);
+    res.status(result.status).json(result.body);
+  }));
+
+  router.get('/v1/benchmarks/run', requireToken, asyncHandler(async (req: any, res: any) => {
+    const result = await handlePhase9Request({ method: 'GET', url: req.url, headers: req.headers }, deps);
+    res.status(result.status).json(result.body);
+  }));
+
   // -------------------------------------------------------------------------
   // Global Error Handler (MUST be the last middleware)
   // -------------------------------------------------------------------------
@@ -708,5 +763,6 @@ const router = createRouter();
 export const PHASE9_ROUTES = ['/v1/graph/query', '/v1/system/metrics', '/v1/audit/verify', '/v1/autonomous/heal'] as const;
 export const PHASE10_ROUTES = ['/v1/self/audit', '/v1/self/evolve', '/v1/self/manifest', '/v1/self/rollback'] as const;
 export const PHASE11_ROUTES = ['/v1/temporal/now', '/v1/temporal/rewind', '/v1/temporal/causality', '/v1/replicate/seed', '/v1/replicate/bootstrap', '/v1/replicate/sync'] as const;
+export const PHASE12_ROUTES = ['/v1/federation/nodes', '/v1/federation/sync', '/v1/benchmarks/run'] as const;
 export default router;
 export { router, createRouter };

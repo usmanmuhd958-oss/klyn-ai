@@ -26,6 +26,8 @@ export * from './enterprise_knowledge_graph.js';
 // Phase 11: temporal causality engine + autonomous self-replication.
 export * from './temporal_causality.js';
 export * from './self_replication.js';
+// Phase 12: lock-free BFT consensus isolation.
+export * from './consensus_isolation.js';
 // @ts-ignore
 export * from './llm_gateway.js';
 export * from './cost_optimizer.js';
