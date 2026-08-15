@@ -14,6 +14,8 @@ export * from './spec_compiler.js';
 // Phase 5: cross-repo impact graph + multi-model cascade routing.
 export * from './cross_repo_graph.js';
 export * from './cascade_router.js';
+// Phase 6: autonomous red-team adversarial fuzzing.
+export * from './red_team_fuzzer.js';
 // @ts-ignore
 export * from './llm_gateway.js';
 export * from './cost_optimizer.js';
