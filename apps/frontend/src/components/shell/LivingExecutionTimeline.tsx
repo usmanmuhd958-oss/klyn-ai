@@ -54,6 +54,14 @@ export function LivingExecutionTimeline() {
               >
                 {PHASE_DESCRIPTIONS[phase]}
               </p>
+              {status === 'active' &&
+                run.tasks
+                  .filter((t) => t.phase === phase && t.status === 'running')
+                  .map((t) => (
+                    <p key={t.id} className="mt-1 text-xs text-sky-400/70">
+                      {t.agent} · {t.title}
+                    </p>
+                  ))}
             </li>
           );
         })}

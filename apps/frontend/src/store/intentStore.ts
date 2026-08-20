@@ -1,11 +1,13 @@
 import { create } from 'zustand';
 import { EXECUTION_PHASES, type ExecutionPhase, type PhaseStatus } from '../lib/phases';
+import { decomposeIntent, readyTasks, type EngineeringTask } from '../lib/taskDag';
 import { useEngineStore } from './engineStore';
 
 export interface IntentRun {
   id: string;
   intent: string;
   startedAt: number;
+  tasks: EngineeringTask[];
   phases: Record<ExecutionPhase, PhaseStatus>;
   completed: boolean;
 }
@@ -14,18 +16,22 @@ interface IntentState {
   currentRun: IntentRun | null;
   history: IntentRun[];
   submitIntent: (intent: string) => void;
-  advancePhase: () => void;
+  tick: () => void;
   reset: () => void;
 }
 
-const PHASE_DURATION_MS = 1800;
+const TICK_MS = 1400;
 
-const initialPhases = (): Record<ExecutionPhase, PhaseStatus> => {
+function derivePhases(tasks: EngineeringTask[]): Record<ExecutionPhase, PhaseStatus> {
   const phases = {} as Record<ExecutionPhase, PhaseStatus>;
-  for (const phase of EXECUTION_PHASES) phases[phase] = 'pending';
-  phases[EXECUTION_PHASES[0]] = 'active';
+  for (const phase of EXECUTION_PHASES) {
+    const phaseTasks = tasks.filter((t) => t.phase === phase);
+    if (phaseTasks.every((t) => t.status === 'done')) phases[phase] = 'done';
+    else if (phaseTasks.some((t) => t.status !== 'pending')) phases[phase] = 'active';
+    else phases[phase] = 'pending';
+  }
   return phases;
-};
+}
 
 let timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -36,52 +42,58 @@ export const useIntentStore = create<IntentState>((set, get) => ({
   submitIntent: (intent: string) => {
     if (timer) clearTimeout(timer);
 
+    let tasks = decomposeIntent(intent);
+    const ready = new Set(readyTasks(tasks).map((t) => t.id));
+    tasks = tasks.map((t) => (ready.has(t.id) ? { ...t, status: 'running' as const } : t));
     const run: IntentRun = {
       id: crypto.randomUUID(),
       intent,
       startedAt: Date.now(),
-      phases: initialPhases(),
+      tasks,
+      phases: derivePhases(tasks),
       completed: false,
     };
     set({ currentRun: run });
     useEngineStore.getState().onIntentSubmitted(intent);
+    useEngineStore.getState().onTasksChanged(tasks);
 
     const schedule = () => {
       timer = setTimeout(() => {
-        get().advancePhase();
+        get().tick();
         if (!get().currentRun?.completed) schedule();
-      }, PHASE_DURATION_MS);
+      }, TICK_MS);
     };
     schedule();
   },
 
-  advancePhase: () => {
+  tick: () => {
     const run = get().currentRun;
     if (!run || run.completed) return;
 
-    const activeIndex = EXECUTION_PHASES.findIndex((p) => run.phases[p] === 'active');
-    if (activeIndex === -1) return;
+    let tasks = run.tasks.map((t) =>
+      t.status === 'running' ? { ...t, status: 'done' as const } : t
+    );
+    const ready = new Set(readyTasks(tasks).map((t) => t.id));
+    tasks = tasks.map((t) => (ready.has(t.id) ? { ...t, status: 'running' as const } : t));
 
-    const phases = { ...run.phases };
-    const activePhase = EXECUTION_PHASES[activeIndex];
-    phases[activePhase] = 'done';
-    useEngineStore.getState().onPhaseCompleted(activePhase, run.intent);
+    const completed = tasks.every((t) => t.status === 'done');
+    const next: IntentRun = { ...run, tasks, phases: derivePhases(tasks), completed };
 
-    const next = EXECUTION_PHASES[activeIndex + 1];
-    if (next) {
-      phases[next] = 'active';
-      set({ currentRun: { ...run, phases } });
-    } else {
-      const completed = { ...run, phases, completed: true };
+    useEngineStore.getState().onTasksChanged(tasks);
+    if (completed) {
+      useEngineStore.getState().onRunCompleted(run.intent);
       set((state) => ({
-        currentRun: completed,
-        history: [completed, ...state.history].slice(0, 20),
+        currentRun: next,
+        history: [next, ...state.history].slice(0, 20),
       }));
+    } else {
+      set({ currentRun: next });
     }
   },
 
   reset: () => {
     if (timer) clearTimeout(timer);
+    useEngineStore.getState().onTasksChanged([]);
     set({ currentRun: null });
   },
 }));
