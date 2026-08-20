@@ -118,7 +118,9 @@ class KlynV52HardenedDaemonEngine {
         log(`├── [EVENT: ${eventType.toUpperCase()}] ${filename}`);
         log(`│    └── [AST HEALED] Injected Guard Header (${millis}ms | Heap: ${(mem.heapUsed / 1024 / 1024).toFixed(2)}MB)`);
       }
-    } catch (err) {}
+    } catch (err) {
+      log(`[KLYN-V5.2.1-ERROR] Guard injection failed for ${filename}: ${err.message}`);
+    }
   }
 }
 
