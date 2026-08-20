@@ -6,7 +6,14 @@ import OpenAI from 'openai';
 import type { LLMRequest, LLMResponse, StreamChunk, ProviderConfig } from '../types.ts';
 // @ts-ignore
 import { MODEL_REGISTRY } from '../config.ts';
-import { withRetryAndCircuit } from '../../kernel/backoff.js';
+import {
+  buildOpenAICompatibleMessages,
+  calculateProviderCost,
+  createProviderError,
+  DEFAULT_MAX_TOKENS,
+  DEFAULT_TEMPERATURE,
+  retryProvider,
+} from './provider_utils.ts';
 
 export class DeepSeekProvider {
   [key: string]: any;
@@ -32,24 +39,19 @@ export class DeepSeekProvider {
     const modelConfig = MODEL_REGISTRY[modelName];
     
     try {
-      const messages: any[] = [];
-      
-      if (request.systemPrompt) {
-        messages.push({ role: 'system', content: request.systemPrompt });
-      }
-      messages.push({ role: 'user', content: request.prompt });
+      const messages = buildOpenAICompatibleMessages(request, false);
 
-      const response = await withRetryAndCircuit(
+      const response = await retryProvider(
         'deepseek',
+        this.config,
         () => this.client.chat.completions.create({
           model: modelConfig.apiModelId,
           messages,
-          max_tokens: request.maxTokens || 4096,
-          temperature: request.temperature ?? 0.7,
+          max_tokens: request.maxTokens || DEFAULT_MAX_TOKENS,
+          temperature: request.temperature ?? DEFAULT_TEMPERATURE,
           top_p: request.topP,
           stop: request.stopSequences,
         }),
-        { maxAttempts: this.config.maxRetries || 3, baseMs: 200, maxMs: 8_000 }
       );
 
       const choice = response.choices[0];
@@ -59,12 +61,7 @@ export class DeepSeekProvider {
         totalTokens: response.usage?.total_tokens || 0,
       };
 
-      const cost = {
-        inputCost: (usage.inputTokens / 1_000_000) * modelConfig.costPerMToken,
-        outputCost: (usage.outputTokens / 1_000_000) * modelConfig.costPerMTokenOutput,
-        totalCost: 0,
-      };
-      cost.totalCost = cost.inputCost + cost.outputCost;
+      const cost = calculateProviderCost(usage, modelConfig);
 
       return {
         content: choice.message.content || '',
@@ -84,17 +81,13 @@ export class DeepSeekProvider {
     const modelConfig = MODEL_REGISTRY[modelName];
     
     try {
-      const messages: any[] = [];
-      if (request.systemPrompt) {
-        messages.push({ role: 'system', content: request.systemPrompt });
-      }
-      messages.push({ role: 'user', content: request.prompt });
+      const messages = buildOpenAICompatibleMessages(request, false);
 
       const stream = await this.client.chat.completions.create({
         model: modelConfig.apiModelId,
         messages,
-        max_tokens: request.maxTokens || 4096,
-        temperature: request.temperature ?? 0.7,
+        max_tokens: request.maxTokens || DEFAULT_MAX_TOKENS,
+        temperature: request.temperature ?? DEFAULT_TEMPERATURE,
         stream: true,
       });
 
@@ -114,15 +107,6 @@ export class DeepSeekProvider {
   }
 
   private handleError(error: any, modelName: string): Error {
-    const isRetryable = error.status === 429 || error.status >= 500;
-    
-    return {
-      name: 'ProviderError',
-      message: error.message || 'DeepSeek API error',
-      provider: 'deepseek',
-      model: modelName,
-      statusCode: error.status,
-      retryable: isRetryable,
-    } as any;
+    return createProviderError(error, 'deepseek', modelName, 'DeepSeek API error');
   }
 }

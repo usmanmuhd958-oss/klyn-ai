@@ -26,23 +26,7 @@ import { HybridLogicalClock, TemporalCausality, type CausalEvent } from './tempo
 import { SelfReplicator, computeSeedRootHash, type ReplicationSeed } from './self_replication.js';
 import { createPhase9Handler, createRouter, PHASE11_ROUTES } from '../api/router.js';
 import type { HeadlessRequest } from '../api/router.js';
-
-let failures = 0;
-let passes = 0;
-
-function check(name: string, condition: boolean, detail = ''): void {
-  if (condition) {
-    passes++;
-    console.log(`PASS  ${name}${detail ? `  → ${detail}` : ''}`);
-  } else {
-    failures++;
-    console.error(`FAIL  ${name}${detail ? `  → ${detail}` : ''}`);
-  }
-}
-
-function deepEqual(a: unknown, b: unknown): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
-}
+import { check, deepEqual, summary } from './smoke/harness.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1) HYBRID LOGICAL CLOCK
@@ -97,14 +81,14 @@ async function temporalSuite(): Promise<void> {
     await a.flush();
 
     const r0 = a.rewind(0);
-    check('temporal: rewind(0) is genesis (empty state)', r0.events === 0 && deepEqual(r0.state, {}), JSON.stringify(r0.state));
+    check('temporal: rewind(0) is genesis (empty state)', r0.events === 0 && deepEqual(r0.state, {}, false), JSON.stringify(r0.state));
     check('temporal: rewind(1) restores the baseline snapshot', a.rewind(1).state['src/app.ts'] === 'v0');
     check('temporal: rewind(2) restores the first mutation', a.rewind(2).state['src/app.ts'] === 'v1');
     const r4 = a.rewind(4);
     check('temporal: rewind(4) reconstructs the exact full state', r4.state['src/app.ts'] === 'v2' && r4.state['src/lib.ts'] === 'lib0', JSON.stringify(r4.state));
 
     const stats = a.stats();
-    check('temporal: log seq + tracked refs', stats.seq === 4 && deepEqual(stats.trackedRefs, ['src/app.ts', 'src/lib.ts']), JSON.stringify(stats.trackedRefs));
+    check('temporal: log seq + tracked refs', stats.seq === 4 && deepEqual(stats.trackedRefs, ['src/app.ts', 'src/lib.ts'], false), JSON.stringify(stats.trackedRefs));
     check('temporal: later events happened-before-wise after earlier ones', HybridLogicalClock.happenedBefore(a.hlcOf(1)!, a.hlcOf(4)!) && !HybridLogicalClock.happenedBefore(a.hlcOf(4)!, a.hlcOf(1)!));
 
     const delta = a.deltaSince(2);
@@ -114,14 +98,14 @@ async function temporalSuite(): Promise<void> {
     const boot = new TemporalCausality({ nodeId: 'n1', ledger });
     const restored = await boot.restore();
     check('temporal: cold boot restores every causal event', restored === 4 && boot.stats().seq === 4, `restored=${restored}`);
-    check('temporal: cold-boot state reconstruction is identical', deepEqual(boot.rewind(4).state, a.rewind(4).state));
+    check('temporal: cold-boot state reconstruction is identical', deepEqual(boot.rewind(4).state, a.rewind(4).state, false));
     check('temporal: cold-boot clock rejoins at-or-after the original HLC', boot.hlc.wall >= a.hlc.wall && boot.hlc.counter >= 0, `boot=(${boot.hlc.wall},${boot.hlc.counter}) orig=(${a.hlc.wall},${a.hlc.counter})`);
 
     // ── Causal sync: replica catches up via delta ───────────────────────────
     const b = new TemporalCausality({ nodeId: 'n2' });
     const applied = b.applyDelta(delta);
     check('temporal: replica applies the delta', applied === 2 && b.stats().seq === 2, `applied=${applied}`);
-    check('temporal: replica state equals the source at the sync point', deepEqual(b.stateSnapshot(), a.rewind(4).state));
+    check('temporal: replica state equals the source at the sync point', deepEqual(b.stateSnapshot(), a.rewind(4).state, false));
     check('temporal: re-ingesting the same delta is idempotent', b.applyDelta(delta) === 0);
 
     // ── Causal merge of diverged branches (CRDT-style) ──────────────────────
@@ -282,8 +266,7 @@ async function main(): Promise<void> {
   await temporalSuite();
   await replicationSuite();
   await apiSuite();
-  console.log(`\n=== PHASE 11 SMOKE SUMMARY: ${passes}/${passes + failures} checks passed ===`);
-  if (failures > 0) process.exit(1);
+  summary(11);
 }
 
 await main();

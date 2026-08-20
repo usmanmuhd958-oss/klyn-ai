@@ -1,15 +1,22 @@
 import * as ts from "typescript";
 import { IntelligenceLogger } from "./logger.js";
-import { ASTValidationResult, CompilerError, SemanticIssue } from "./types.js";
+import type { ASTValidationResult, CompilerError, SemanticIssue } from "./types.js";
 import { existsSync, readFileSync } from "node:fs";
 import * as fs from "node:fs";
 
+export interface ASTValidatorLogger {
+  debug(message: string, meta?: Record<string, unknown>): void;
+  info(message: string, meta?: Record<string, unknown>): void;
+  warn(message: string, meta?: Record<string, unknown>): void;
+  error(message: string, meta?: Record<string, unknown>): void;
+}
+
 export class TypeScriptASTValidator {
-  private logger: IntelligenceLogger;
+  private logger: ASTValidatorLogger;
   private compilerOptions: ts.CompilerOptions;
 
-  constructor() {
-    this.logger = new IntelligenceLogger('TypeScriptASTValidator');
+  constructor(logger: ASTValidatorLogger = new IntelligenceLogger('TypeScriptASTValidator')) {
+    this.logger = logger;
     this.compilerOptions = {
       target: ts.ScriptTarget.ES2022,
       module: ts.ModuleKind.ESNext,

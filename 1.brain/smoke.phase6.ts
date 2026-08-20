@@ -20,19 +20,7 @@ import { ReleasePipeline, bumpVersion, parseCommitMessage } from '../packages/wo
 import { ZkAudit } from '../kernel/src/security/zk_audit.js';
 import { MerkleAudit } from '../kernel/src/security/merkle_audit.js';
 import { EventBus } from '../packages/core-runtime/src/EventBus.js';
-
-let failures = 0;
-let passes = 0;
-
-function check(name: string, condition: boolean, detail = ''): void {
-  if (condition) {
-    passes++;
-    console.log(`PASS  ${name}${detail ? `  → ${detail}` : ''}`);
-  } else {
-    failures++;
-    console.error(`FAIL  ${name}${detail ? `  → ${detail}` : ''}`);
-  }
-}
+import { check, summary } from './smoke/harness.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1) AUTONOMOUS RED-TEAM ADVERSARIAL FUZZING ENGINE
@@ -263,8 +251,7 @@ async function main(): Promise<void> {
   await meshSuite();
   await prSuite();
   await zkSuite();
-  console.log(`\n=== PHASE 6 SMOKE SUMMARY: ${passes}/${passes + failures} checks passed ===`);
-  if (failures > 0) process.exit(1);
+  summary(6);
 }
 
 void main();

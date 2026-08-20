@@ -8,7 +8,6 @@
  * streaming watchers, differential sync, and intelligent memory management.
  */
 
-import { EventEmitter } from 'events';
 import { 
   readFile, 
   writeFile, 
@@ -24,6 +23,7 @@ import { join, resolve, dirname, basename, extname, relative, isAbsolute, sep } 
 import { createHash } from 'crypto';
 import { performance } from 'perf_hooks';
 import * as ts from 'typescript';
+import { TypedEventEmitter } from './typed-event-emitter.js';
 
 // ============================================================================
 // ERROR HIERARCHY
@@ -270,39 +270,6 @@ interface AIContext {
 // ============================================================================
 // TYPED EVENT EMITTER
 // ============================================================================
-
-class TypedEventEmitter<TEventMap extends Record<string, unknown>> {
-  private readonly emitter: EventEmitter;
-
-  constructor() {
-    this.emitter = new EventEmitter();
-    this.emitter.setMaxListeners(1000);
-  }
-
-  on<K extends keyof TEventMap>(event: K, handler: (payload: TEventMap[K]) => void): this {
-    this.emitter.on(event as string, handler);
-    return this;
-  }
-
-  once<K extends keyof TEventMap>(event: K, handler: (payload: TEventMap[K]) => void): this {
-    this.emitter.once(event as string, handler);
-    return this;
-  }
-
-  emit<K extends keyof TEventMap>(event: K, payload: TEventMap[K]): boolean {
-    return this.emitter.emit(event as string, payload);
-  }
-
-  off<K extends keyof TEventMap>(event: K, handler: (payload: TEventMap[K]) => void): this {
-    this.emitter.off(event as string, handler);
-    return this;
-  }
-
-  removeAllListeners(event?: keyof TEventMap): this {
-    this.emitter.removeAllListeners(event as string);
-    return this;
-  }
-}
 
 // ============================================================================
 // PATH VALIDATOR & SANITIZER

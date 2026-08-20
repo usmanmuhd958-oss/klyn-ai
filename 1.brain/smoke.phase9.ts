@@ -35,19 +35,7 @@ import { RuntimeProfiler } from './runtime_profiler.js';
 import { FleetOrchestrator } from '../packages/swarm-mesh/src/fleet_orchestrator.js';
 import { createPhase9Handler, createRouter, PHASE9_ROUTES } from '../api/router.js';
 import type { HeadlessRequest } from '../api/router.js';
-
-let failures = 0;
-let passes = 0;
-
-function check(name: string, condition: boolean, detail = ''): void {
-  if (condition) {
-    passes++;
-    console.log(`PASS  ${name}${detail ? `  → ${detail}` : ''}`);
-  } else {
-    failures++;
-    console.error(`FAIL  ${name}${detail ? `  → ${detail}` : ''}`);
-  }
-}
+import { check, summary } from './smoke/harness.js';
 
 const SIMPLE_HANDLER = `export function handler(input: string): string {
   return input;
@@ -333,8 +321,7 @@ async function main(): Promise<void> {
   await epochSuite();
   await persistenceSuite();
   await apiSuite();
-  console.log(`\n=== PHASE 9 SMOKE SUMMARY: ${passes}/${passes + failures} checks passed ===`);
-  if (failures > 0) process.exit(1);
+  summary(9);
 }
 
 void main();

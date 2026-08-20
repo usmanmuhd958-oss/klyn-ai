@@ -8,11 +8,11 @@
  * implementation, event-driven architecture, and military-grade security vault.
  */
 
-import { EventEmitter } from 'events';
 import { createCipheriv, createDecipheriv, randomBytes, pbkdf2Sync } from 'crypto';
 import { performance } from 'perf_hooks';
 import { cpus } from 'os';
 import { createRequire } from 'node:module';
+import { TypedEventEmitter } from './typed-event-emitter.js';
 const require = createRequire(import.meta.url);
 
 // ============================================================================
@@ -140,43 +140,6 @@ type KernelEventKey = keyof KernelEventMap;
 // ============================================================================
 // TYPED EVENT EMITTER WRAPPER
 // ============================================================================
-
-class TypedEventEmitter<TEventMap extends Record<string, unknown>> {
-  private readonly emitter: EventEmitter;
-
-  constructor() {
-    this.emitter = new EventEmitter();
-    this.emitter.setMaxListeners(100);
-  }
-
-  on<K extends keyof TEventMap>(event: K, handler: (payload: TEventMap[K]) => void): this {
-    this.emitter.on(event as string, handler);
-    return this;
-  }
-
-  once<K extends keyof TEventMap>(event: K, handler: (payload: TEventMap[K]) => void): this {
-    this.emitter.once(event as string, handler);
-    return this;
-  }
-
-  emit<K extends keyof TEventMap>(event: K, payload: TEventMap[K]): boolean {
-    return this.emitter.emit(event as string, payload);
-  }
-
-  off<K extends keyof TEventMap>(event: K, handler: (payload: TEventMap[K]) => void): this {
-    this.emitter.off(event as string, handler);
-    return this;
-  }
-
-  removeAllListeners(event?: keyof TEventMap): this {
-    this.emitter.removeAllListeners(event as string);
-    return this;
-  }
-
-  listenerCount(event: keyof TEventMap): number {
-    return this.emitter.listenerCount(event as string);
-  }
-}
 
 // ============================================================================
 // SECURITY VAULT (AES-256-GCM)
@@ -572,7 +535,7 @@ class KlynKernel extends TypedEventEmitter<KernelEventMap> {
   private isShutdown = false;
 
   private constructor() {
-    super();
+    super(100);
     this.initTime = Date.now();
 
     const { native, error } = NativeBindingLoader.load();

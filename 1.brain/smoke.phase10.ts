@@ -35,19 +35,7 @@ import { SelfAuditScanner, type SelfAuditFinding } from './self_audit.js';
 import { GraphQueryEngine } from './graph_query_engine.js';
 import { createPhase9Handler, createRouter, PHASE10_ROUTES } from '../api/router.js';
 import type { HeadlessRequest } from '../api/router.js';
-
-let failures = 0;
-let passes = 0;
-
-function check(name: string, condition: boolean, detail = ''): void {
-  if (condition) {
-    passes++;
-    console.log(`PASS  ${name}${detail ? `  → ${detail}` : ''}`);
-  } else {
-    failures++;
-    console.error(`FAIL  ${name}${detail ? `  → ${detail}` : ''}`);
-  }
-}
+import { check, summary } from './smoke/harness.js';
 
 function buildEngines(seed: string, ledgerDir: string) {
   const planner = new PatchPlanner();
@@ -322,8 +310,7 @@ async function main(): Promise<void> {
   await guardsSuite();
   await selfEpochSuite();
   await apiSuite();
-  console.log(`\n=== PHASE 10 SMOKE SUMMARY: ${passes}/${passes + failures} checks passed ===`);
-  if (failures > 0) process.exit(1);
+  summary(10);
 }
 
 await main();

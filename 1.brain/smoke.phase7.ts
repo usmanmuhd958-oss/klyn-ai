@@ -16,19 +16,7 @@ import { AdaptivePolicyEngine, sanitizeRules, DEFAULT_POLICY_RULES } from './ada
 import { FleetOrchestrator } from '../packages/swarm-mesh/src/fleet_orchestrator.js';
 import { EvolutionLoop } from './evolution_loop.js';
 import { P2PNode, InMemoryTransport } from '../packages/swarm-mesh/src/p2p_node.js';
-
-let failures = 0;
-let passes = 0;
-
-function check(name: string, condition: boolean, detail = ''): void {
-  if (condition) {
-    passes++;
-    console.log(`PASS  ${name}${detail ? `  → ${detail}` : ''}`);
-  } else {
-    failures++;
-    console.error(`FAIL  ${name}${detail ? `  → ${detail}` : ''}`);
-  }
-}
+import { check, summary } from './smoke/harness.js';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -284,8 +272,7 @@ async function main(): Promise<void> {
   await policySuite();
   await fleetSuite();
   await loopSuite();
-  console.log(`\n=== PHASE 7 SMOKE SUMMARY: ${passes}/${passes + failures} checks passed ===`);
-  if (failures > 0) process.exit(1);
+  summary(7);
 }
 
 void main();

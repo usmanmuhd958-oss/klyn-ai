@@ -35,33 +35,7 @@ import { AdaptivePolicyEngine } from './adaptive_policy.js';
 import type { EpochFinding } from './e2e_autonomous_epoch.js';
 import { createPhase9Handler, createRouter, PHASE13_ROUTES } from '../api/router.js';
 import type { HeadlessRequest } from '../api/router.js';
-
-let failures = 0;
-let passes = 0;
-
-function check(name: string, condition: boolean, detail = ''): void {
-  if (condition) {
-    passes++;
-    console.log(`PASS  ${name}${detail ? `  → ${detail}` : ''}`);
-  } else {
-    failures++;
-    console.error(`FAIL  ${name}${detail ? `  → ${detail}` : ''}`);
-  }
-}
-
-function deepEqual(a: unknown, b: unknown): boolean {
-  return JSON.stringify(sortDeep(a)) === JSON.stringify(sortDeep(b));
-}
-
-function sortDeep(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortDeep);
-  if (value !== null && typeof value === 'object') {
-    const out: Record<string, unknown> = {};
-    for (const key of Object.keys(value as Record<string, unknown>).sort()) out[key] = sortDeep((value as Record<string, unknown>)[key]);
-    return out;
-  }
-  return value;
-}
+import { check, deepEqual, sortDeep, summary } from './smoke/harness.js';
 
 function engine(nodeId: string, wall: number): TemporalCausality {
   return new TemporalCausality({ nodeId, clock: new HybridLogicalClock(nodeId, () => wall) });
@@ -321,8 +295,7 @@ async function main(): Promise<void> {
   await meshStorageSuite();
   await healerSuite();
   await apiSuite();
-  console.log(`\n=== PHASE 13 SMOKE SUMMARY: ${passes}/${passes + failures} checks passed ===`);
-  if (failures > 0) process.exit(1);
+  summary(13);
 }
 
 await main();

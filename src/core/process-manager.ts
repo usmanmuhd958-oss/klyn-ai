@@ -8,12 +8,12 @@
  * sandboxing, zero-copy IPC, automatic fault recovery, and comprehensive telemetry.
  */
 
-import { EventEmitter } from 'events';
 import { Worker } from 'worker_threads';
 import { cpus } from 'os';
 import { performance } from 'perf_hooks';
 import { randomBytes } from 'crypto';
 import { join } from 'path';
+import { TypedEventEmitter } from './typed-event-emitter.js';
 
 // ============================================================================
 // ERROR HIERARCHY
@@ -255,39 +255,6 @@ interface ProcessEventMap {
 // ============================================================================
 // TYPED EVENT EMITTER
 // ============================================================================
-
-class TypedEventEmitter<TEventMap extends Record<string, unknown>> {
-  private readonly emitter: EventEmitter;
-
-  constructor() {
-    this.emitter = new EventEmitter();
-    this.emitter.setMaxListeners(1000);
-  }
-
-  on<K extends keyof TEventMap>(event: K, handler: (payload: TEventMap[K]) => void): this {
-    this.emitter.on(event as string, handler);
-    return this;
-  }
-
-  once<K extends keyof TEventMap>(event: K, handler: (payload: TEventMap[K]) => void): this {
-    this.emitter.once(event as string, handler);
-    return this;
-  }
-
-  emit<K extends keyof TEventMap>(event: K, payload: TEventMap[K]): boolean {
-    return this.emitter.emit(event as string, payload);
-  }
-
-  off<K extends keyof TEventMap>(event: K, handler: (payload: TEventMap[K]) => void): this {
-    this.emitter.off(event as string, handler);
-    return this;
-  }
-
-  removeAllListeners(event?: keyof TEventMap): this {
-    this.emitter.removeAllListeners(event as string);
-    return this;
-  }
-}
 
 // ============================================================================
 // ZERO-COPY IPC MESSAGE ENCODER/DECODER

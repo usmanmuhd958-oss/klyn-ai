@@ -15,19 +15,7 @@ import { SandboxPool, WorkerSandbox, ADD_WASM } from '../packages/self-healing-r
 import { CascadeRouter } from './cascade_router.js';
 import { E2EVirtualizer } from '../packages/workflow-engine/src/e2e_virtualizer.js';
 import { EventBus } from '../packages/core-runtime/src/EventBus.js';
-
-let failures = 0;
-let passes = 0;
-
-function check(name: string, condition: boolean, detail = ''): void {
-  if (condition) {
-    passes++;
-    console.log(`PASS  ${name}${detail ? `  → ${detail}` : ''}`);
-  } else {
-    failures++;
-    console.error(`FAIL  ${name}${detail ? `  → ${detail}` : ''}`);
-  }
-}
+import { check, summary } from './smoke/harness.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1) CROSS-REPOSITORY AST SYMBOL & IMPACT PROPAGATION ENGINE
@@ -262,8 +250,7 @@ async function main(): Promise<void> {
   await sandboxSuite();
   await cascadeSuite();
   await e2eSuite();
-  console.log(`\n=== PHASE 5 SMOKE SUMMARY: ${passes}/${passes + failures} checks passed ===`);
-  if (failures > 0) process.exit(1);
+  summary(5);
 }
 
 void main();

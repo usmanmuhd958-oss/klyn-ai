@@ -20,19 +20,7 @@ import { compileIntent, deriveTable, validateIntent } from './spec_compiler.js';
 import { MerkleAudit, sha256, hashPair, GENESIS_ROOT } from '../kernel/src/security/merkle_audit.js';
 import { LWWRegisterCRDT } from '../packages/workflow-engine/src/crdt_sync.js';
 import { EventBus } from '../packages/core-runtime/src/EventBus.js';
-
-let failures = 0;
-let passes = 0;
-
-function check(name: string, condition: boolean, detail = ''): void {
-  if (condition) {
-    passes++;
-    console.log(`PASS  ${name}${detail ? `  → ${detail}` : ''}`);
-  } else {
-    failures++;
-    console.error(`FAIL  ${name}${detail ? `  → ${detail}` : ''}`);
-  }
-}
+import { check, summary } from './smoke/harness.js';
 
 function fixture(root: string, files: Record<string, string>): string {
   const dir = mkdtempSync(join(tmpdir(), 'klyn-p4-'));
@@ -324,8 +312,7 @@ async function main(): Promise<void> {
   specCompilerSuite();
   await merkleSuite();
   crdtSuite();
-  console.log(`\n=== PHASE 4 SMOKE SUMMARY: ${passes}/${passes + failures} checks passed ===`);
-  if (failures > 0) process.exit(1);
+  summary(4);
 }
 
 void main();

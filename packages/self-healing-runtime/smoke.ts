@@ -23,19 +23,7 @@ import { AgentSwarm } from '../../1.brain/swarm/AgentSwarm.js';
 import { AgentOrchestrator } from '../../1.brain/swarm/AgentOrchestrator.js';
 import { EventBus } from '../core-runtime/src/EventBus.js';
 import { PatchPlanner } from '../../1.brain/patch_planner.js';
-
-let failures = 0;
-let passes = 0;
-
-function check(name: string, condition: boolean, detail = ''): void {
-  if (condition) {
-    passes++;
-    console.log(`PASS  ${name}${detail ? `  → ${detail}` : ''}`);
-  } else {
-    failures++;
-    console.error(`FAIL  ${name}${detail ? `  → ${detail}` : ''}`);
-  }
-}
+import { check, summary } from '../../1.brain/smoke/harness.js';
 
 function fixture(root: string, files: Record<string, string>): string {
   const dir = mkdtempSync(join(tmpdir(), 'klyn-p3-'));
@@ -319,8 +307,7 @@ async function main(): Promise<void> {
   await healingLoopSuite();
   await orchestratorSuite();
   qualityGateSuite();
-  console.log(`\n=== PHASE 3 SMOKE SUMMARY: ${passes}/${passes + failures} checks passed ===`);
-  if (failures > 0) process.exit(1);
+  summary(3);
 }
 
 void main();
