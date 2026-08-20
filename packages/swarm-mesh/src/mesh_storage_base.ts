@@ -4,8 +4,8 @@
 //
 // Phase 13 capability #2. Gives the federated mesh (Phase 12) a DURABLE
 // memory: peer topology, per-peer reputation, and the HLC vector clock
-// survive process restarts on the Phase 9 append-only JSON-L ledger, so a
-// cold-booted node can re-discover its cluster and catch up instantly:
+// survive process restarts on any Phase 9 append-only ledger (JSON-L or
+// SQLite), so a cold-booted node can re-discover its cluster instantly:
 //
 //   const storage = new MeshStorage(new JsonlLedger('./data/mesh'));
 //   await storage.persistTopology(mesh.nodes());          // topology snapshot
@@ -27,7 +27,7 @@
 //                       suspicion) feeding the consensus isolation engine.
 //   mesh_vector_clock — the cluster's HLC watermark; restore returns the max.
 //
-// Append-only JSON-L per stream, torn-tail tolerant, zero new dependencies.
+// Append-only per stream, torn-tail tolerant, zero new dependencies.
 // =============================================================================
 import { FederatedMesh, type FederatedNode } from './federated_mesh.js';
 import { TemporalCausality, type CausalEvent, type HlcTime } from '../../../1.brain/temporal_causality.js';

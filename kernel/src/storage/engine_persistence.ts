@@ -3,18 +3,17 @@
 // File: kernel/src/storage/engine_persistence.ts
 //
 // Phase 9 capability #2. Replaces in-memory-only state for the operational
-// engines with durable, append-only, JSON-L persistence so the OS retains
-// learned experiences, adaptive policies, post-quantum audit roots, and fleet
+// engines with durable, append-only persistence so the OS retains learned
+// experiences, adaptive policies, post-quantum audit roots, and fleet
 // supervision state across process restarts:
-//
-//   const ledger = new JsonlLedger('./data/klyn-ledger');
-//   await ledger.append('quantum', { type: 'mutation', kind, ref, input, output, meta });
-//   const events = await ledger.readAll('quantum');
 //
 //   const persistence = new EnginePersistence(ledger);
 //   await persistence.persistQuantumMutation(qz, 'patch', ref, input, output, meta);
 //   const qz2 = new QuantumZkLedger(seed);          // cold boot
 //   await persistence.restoreQuantum(qz2);          // replay → IDENTICAL roots
+//
+// Storage-agnostic: any append-only store satisfying EngineLedger works —
+// JSON-L (JsonlLedger) and SQLite (SqliteLedger) both back the same adapters.
 //
 // Cold-boot restoration is REPLAY-BASED for engines whose state is a pure
 // function of an event stream (QuantumZkLedger, ExperienceLearner,
@@ -22,11 +21,6 @@
 // replay byte-exact, so historical Merkle/PQ roots and proofs reproduce
 // identically) and SNAPSHOT-BASED for engines with mutable supervision state
 // (FleetOrchestrator — liveness timestamps are restored as fresh).
-//
-// Append-only JSON-L per stream: one JSON object per line, appended with
-// fs.appendFile (crash-safe: a torn final line is skipped on replay). No
-// external database, no new dependencies — fits Termux, CI, and headless
-// runs. Memory-bounded by the caller; files are plain text for auditability.
 // =============================================================================
 import { QuantumZkLedger } from '../security/quantum_zk.js';
 import type { ExperienceLearner } from '../../../1.brain/experience_learner.js';
