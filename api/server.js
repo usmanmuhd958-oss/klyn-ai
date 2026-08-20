@@ -98,10 +98,12 @@ const server = http.createServer(async (req, res) => {
     try {
       const { username, password } = JSON.parse(body || '{}');
 
-      // Constant-time comparison to prevent timing attacks
+      // Constant-time comparison to prevent timing attacks. Comparing
+      // fixed-length digests avoids the length-mismatch throw in
+      // timingSafeEqual, which would otherwise leak password length.
       const pwMatch = crypto.timingSafeEqual(
-        Buffer.from(password || ''),
-        Buffer.from(ADMIN_PASSWORD)
+        crypto.createHash('sha256').update(String(password || '')).digest(),
+        crypto.createHash('sha256').update(ADMIN_PASSWORD).digest()
       );
       const userMatch = username === 'admin';
 
