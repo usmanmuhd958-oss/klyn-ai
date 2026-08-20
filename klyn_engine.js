@@ -29,7 +29,9 @@ function updateMetricsStore(updater) {
   if (fs.existsSync(metricsFile)) {
     try {
       store = { ...store, ...JSON.parse(fs.readFileSync(metricsFile, 'utf8')) };
-    } catch (e) {}
+    } catch (err) {
+      console.warn(`[KLYN-METRICS] Unreadable metrics store ${metricsFile} (${err.message}) — counters restart from zero.`);
+    }
   }
 
   updater(store);
@@ -126,7 +128,9 @@ class QuantumASTCacheEngine {
         for (const [key, val] of Object.entries(raw)) {
           this.memoryCache.set(key, val);
         }
-      } catch (e) {}
+      } catch (err) {
+        console.warn(`[AST-CACHE] Unreadable cache ${cacheFile} (${err.message}) — starting with an empty cache.`);
+      }
     }
   }
 
@@ -176,7 +180,9 @@ class GitEdgeSyncEngine {
         const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 19);
         const commitMsg = customMessage || `[KLYN-NEURAL-SYNC] Auto-commit at ${timestamp}`;
         execSync(`git commit -m "${commitMsg.replace(/"/g, '\\"')}"`, { cwd: this.rootDir });
-      } catch (err) {}
+      } catch (err) {
+        console.error(`[KLYN-NEURAL-SYNC] Background git sync failed: ${err.message}`);
+      }
     });
   }
 }
@@ -306,7 +312,11 @@ if (command === 'task') {
     console.log("[ERROR] Usage: node klyn_engine.js task \"<task description>\"");
     process.exit(1);
   }
-  new MultiAgentNeuralPipeline(workDir).executeTask(taskPrompt);
+  new MultiAgentNeuralPipeline(workDir).executeTask(taskPrompt).catch((err) => {
+    console.error(`[PIPELINE FAILED] ${err.message}`);
+    console.error(err.stack);
+    process.exit(1);
+  });
 } else if (command === 'test') {
   console.log("======================================================================");
   console.log("         KLYN OS v6.4.0 AUTONOMOUS SELF-HEALING TEST RUNNER          ");
@@ -318,7 +328,8 @@ if (command === 'task') {
     console.log(" No auto-generated test suites detected.");
   } else {
     let totalHealed = 0;
-    
+    const failedFiles = [];
+
     for (const file of testFiles) {
       const targetModuleName = file.replace(/^test_/, '');
       const targetModulePath = path.join(workDir, targetModuleName);
@@ -354,8 +365,9 @@ if (command === 'task') {
       console.log(`▶ Executing ${file}...`);
       try {
         execSync(`node ${file}`, { stdio: 'inherit', cwd: workDir });
-      } catch (e) {
-        console.error(`✖ Test execution failed for ${file}`);
+      } catch (err) {
+        console.error(`✖ Test execution failed for ${file}: ${err.message}`);
+        failedFiles.push(file);
       }
     }
 
@@ -363,6 +375,13 @@ if (command === 'task') {
       updateMetricsStore(s => { s.totalFilesHealed = (s.totalFilesHealed || 0) + totalHealed; });
       console.log("----------------------------------------------------------------------");
       console.log(`[SELF-HEALING COMPLETE] Auto-repaired ${totalHealed} legacy test suite(s).`);
+    }
+
+    // A failing suite must fail the process — otherwise CI reads a red run as green.
+    if (failedFiles.length > 0) {
+      console.error("----------------------------------------------------------------------");
+      console.error(`[TEST RUNNER] ${failedFiles.length} suite(s) failed: ${failedFiles.join(', ')}`);
+      process.exitCode = 1;
     }
   }
   console.log("======================================================================");
