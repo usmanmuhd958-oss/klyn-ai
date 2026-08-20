@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { ExecutionPhase } from '../lib/phases';
+import type { AgentRole, EngineeringTask } from '../lib/taskDag';
 
 export interface TwinModule {
   id: string;
@@ -15,10 +15,13 @@ export interface ArchitectureMemoryEntry {
   timestamp: number;
 }
 
-export interface DecisionMemoryEntry {
+export interface ArchitectureDecisionRecord {
   id: string;
+  title: string;
   decision: string;
-  rationale: string;
+  justification: string;
+  constraints: string[];
+  status: 'proposed' | 'accepted' | 'superseded';
   timestamp: number;
 }
 
@@ -32,21 +35,26 @@ export interface PredictiveSignal {
 export interface AgentDescriptor {
   id: string;
   name: string;
-  role: string;
+  role: AgentRole;
+  description: string;
   status: 'idle' | 'working';
+  currentTask: string | null;
 }
 
 interface EngineState {
   digitalTwin: TwinModule[];
   architectureMemory: ArchitectureMemoryEntry[];
-  decisionMemory: DecisionMemoryEntry[];
+  decisionMemory: ArchitectureDecisionRecord[];
   predictiveSignals: PredictiveSignal[];
   agents: AgentDescriptor[];
   deepModeOpen: boolean;
   activeAgentCount: () => number;
   setDeepMode: (open: boolean) => void;
+  recordAdr: (adr: Omit<ArchitectureDecisionRecord, 'id' | 'timestamp'>) => void;
+  synthesizeConnection: (sourceId: string, targetId: string) => void;
   onIntentSubmitted: (intent: string) => void;
-  onPhaseCompleted: (phase: ExecutionPhase, intent: string) => void;
+  onTasksChanged: (tasks: EngineeringTask[]) => void;
+  onRunCompleted: (intent: string) => void;
 }
 
 const seedTwin: TwinModule[] = [
@@ -59,18 +67,11 @@ const seedTwin: TwinModule[] = [
 ];
 
 const seedAgents: AgentDescriptor[] = [
-  { id: 'architect', name: 'Architect', role: 'System design', status: 'idle' },
-  { id: 'builder', name: 'Builder', role: 'Code synthesis', status: 'idle' },
-  { id: 'verifier', name: 'Verifier', role: 'Testing & QA', status: 'idle' },
-  { id: 'shipper', name: 'Shipper', role: 'Deployment', status: 'idle' },
+  { id: 'architect', name: 'Architect', role: 'planner', description: 'System design & decomposition', status: 'idle', currentTask: null },
+  { id: 'builder', name: 'Builder', role: 'builder', description: 'Code synthesis', status: 'idle', currentTask: null },
+  { id: 'verifier', name: 'Verifier', role: 'validator', description: 'Constraint & behavior validation', status: 'idle', currentTask: null },
+  { id: 'shipper', name: 'Shipper', role: 'shipper', description: 'Delivery orchestration', status: 'idle', currentTask: null },
 ];
-
-const AGENT_FOR_NEXT_PHASE: Partial<Record<ExecutionPhase, string>> = {
-  Thinking: 'architect',
-  Planning: 'builder',
-  Building: 'verifier',
-  Testing: 'shipper',
-};
 
 export const useEngineStore = create<EngineState>((set, get) => ({
   digitalTwin: seedTwin,
@@ -87,42 +88,71 @@ export const useEngineStore = create<EngineState>((set, get) => ({
 
   setDeepMode: (open) => set({ deepModeOpen: open }),
 
-  onIntentSubmitted: (intent) =>
+  recordAdr: (adr) =>
     set((state) => ({
-      agents: state.agents.map((a) =>
-        a.id === AGENT_FOR_NEXT_PHASE.Thinking ? { ...a, status: 'working' } : a
-      ),
       decisionMemory: [
-        {
-          id: crypto.randomUUID(),
-          decision: `Accepted intent: "${intent}"`,
-          rationale: 'Intent matched active project scope and safety policy',
-          timestamp: Date.now(),
-        },
+        { ...adr, id: crypto.randomUUID(), timestamp: Date.now() },
         ...state.decisionMemory,
       ].slice(0, 50),
     })),
 
-  onPhaseCompleted: (phase, intent) =>
-    set((state) => {
-      const nextAgentId = AGENT_FOR_NEXT_PHASE[phase];
-      const agents = state.agents.map((a) => {
-        if (!nextAgentId) return { ...a, status: 'idle' as const };
-        return { ...a, status: a.id === nextAgentId ? ('working' as const) : ('idle' as const) };
-      });
+  synthesizeConnection: (sourceId, targetId) => {
+    const twin = get().digitalTwin;
+    const source = twin.find((m) => m.id === sourceId);
+    const target = twin.find((m) => m.id === targetId);
+    if (!source || !target || sourceId === targetId) return;
+    if (source.dependsOn.includes(targetId)) return;
 
-      const architectureMemory =
-        phase === 'Learning'
-          ? [
-              {
-                id: crypto.randomUUID(),
-                summary: `Learned from "${intent}": execution graph archived to memory`,
-                timestamp: Date.now(),
-              },
-              ...state.architectureMemory,
-            ].slice(0, 50)
-          : state.architectureMemory;
+    set((state) => ({
+      digitalTwin: state.digitalTwin.map((m) =>
+        m.id === sourceId ? { ...m, dependsOn: [...m.dependsOn, targetId] } : m
+      ),
+    }));
+    get().recordAdr({
+      title: `Link ${source.name} → ${target.name}`,
+      decision: `Synthesized integration from ${source.name} to ${target.name}`,
+      justification: 'Connection drawn on Engineering Canvas; code synthesis orchestrated to bind the modules',
+      constraints: ['No circular dependency introduced', 'Interface contract preserved'],
+      status: 'accepted',
+    });
+  },
 
-      return { agents, architectureMemory };
+  onIntentSubmitted: (intent) =>
+    get().recordAdr({
+      title: `Intent: ${intent}`,
+      decision: `Accepted intent "${intent}" for autonomous decomposition`,
+      justification: 'Intent matched active project scope and safety policy',
+      constraints: ['Blast radius bounded to affected modules', 'All changes validated before ship'],
+      status: 'accepted',
     }),
+
+  onTasksChanged: (tasks) =>
+    set((state) => ({
+      agents: state.agents.map((agent) => {
+        const running = tasks.find((t) => t.status === 'running' && t.agent === agent.role);
+        return running
+          ? { ...agent, status: 'working' as const, currentTask: running.title }
+          : { ...agent, status: 'idle' as const, currentTask: null };
+      }),
+    })),
+
+  onRunCompleted: (intent) => {
+    set((state) => ({
+      architectureMemory: [
+        {
+          id: crypto.randomUUID(),
+          summary: `Learned from "${intent}": execution DAG archived to memory`,
+          timestamp: Date.now(),
+        },
+        ...state.architectureMemory,
+      ].slice(0, 50),
+    }));
+    get().recordAdr({
+      title: `Outcome: ${intent}`,
+      decision: `Fulfilled "${intent}" via multi-agent DAG execution`,
+      justification: 'All tasks validated in sandbox before delivery; outcome archived for future constraint reasoning',
+      constraints: ['ADR supersedable by future intents'],
+      status: 'accepted',
+    });
+  },
 }));

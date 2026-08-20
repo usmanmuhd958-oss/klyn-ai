@@ -8,9 +8,11 @@ import {
   type Node,
   type Edge,
   type NodeMouseHandler,
+  type OnConnect,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useEngineStore } from '../../store/engineStore';
+import { useIntentStore } from '../../store/intentStore';
 import { NodeInspector } from './NodeInspector';
 
 const moduleStyle = (health: number) => ({
@@ -22,14 +24,14 @@ const moduleStyle = (health: number) => ({
   padding: 10,
 });
 
-const agentStyle = {
+const agentStyle = (working: boolean) => ({
   background: '#0c1512',
   color: '#a7f3d0',
-  border: '1px solid #10b98144',
+  border: `1px solid ${working ? '#10b981aa' : '#10b98144'}`,
   borderRadius: 999,
   fontSize: 11,
   padding: 8,
-};
+});
 
 const memoryStyle = {
   background: '#0f0d15',
@@ -40,11 +42,25 @@ const memoryStyle = {
   padding: 8,
 };
 
+const taskStyle = (status: 'pending' | 'running' | 'done') => ({
+  background: '#0a0f14',
+  color: status === 'pending' ? '#52525b' : status === 'running' ? '#7dd3fc' : '#94a3b8',
+  border: `1px solid ${
+    status === 'running' ? '#38bdf8aa' : status === 'done' ? '#47556955' : '#27272a'
+  }`,
+  borderRadius: 8,
+  fontSize: 10,
+  padding: 6,
+  width: 170,
+});
+
 export function EngineeringCanvas() {
   const digitalTwin = useEngineStore((s) => s.digitalTwin);
   const agents = useEngineStore((s) => s.agents);
   const architectureMemory = useEngineStore((s) => s.architectureMemory);
   const decisionMemory = useEngineStore((s) => s.decisionMemory);
+  const synthesizeConnection = useEngineStore((s) => s.synthesizeConnection);
+  const run = useIntentStore((s) => s.currentRun);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const { nodes, edges } = useMemo(() => {
@@ -59,8 +75,12 @@ export function EngineeringCanvas() {
       nodes.push({
         id: `agent-${agent.id}`,
         position: { x: 880, y: 40 + i * 90 },
-        data: { label: `${agent.name} ${agent.status === 'working' ? '●' : '○'}` },
-        style: agentStyle,
+        data: {
+          label: `${agent.name} ${agent.status === 'working' ? '●' : '○'}${
+            agent.currentTask ? ` ${agent.currentTask}` : ''
+          }`,
+        },
+        style: agentStyle(agent.status === 'working'),
       });
     });
 
@@ -73,7 +93,7 @@ export function EngineeringCanvas() {
     nodes.push({
       id: 'memory-decision',
       position: { x: 360, y: 420 },
-      data: { label: `Decision Memory · ${decisionMemory.length} entries` },
+      data: { label: `ADR Ledger · ${decisionMemory.length} records` },
       style: memoryStyle,
     });
 
@@ -100,10 +120,37 @@ export function EngineeringCanvas() {
       });
     });
 
+    if (run) {
+      run.tasks.forEach((task, i) => {
+        nodes.push({
+          id: `task-${task.id}`,
+          position: { x: 80 + (i % 5) * 200, y: 560 + Math.floor(i / 5) * 90 },
+          data: { label: `${task.title} · ${task.agent}` },
+          style: taskStyle(task.status),
+        });
+      });
+      run.tasks.forEach((task) => {
+        task.dependsOn.forEach((dep) => {
+          edges.push({
+            id: `task-${dep}->task-${task.id}`,
+            source: `task-${dep}`,
+            target: `task-${task.id}`,
+            animated: task.status === 'running',
+            style: { stroke: '#38bdf833' },
+          });
+        });
+      });
+    }
+
     return { nodes, edges };
-  }, [digitalTwin, agents, architectureMemory.length, decisionMemory.length]);
+  }, [digitalTwin, agents, architectureMemory.length, decisionMemory.length, run]);
 
   const onNodeClick: NodeMouseHandler = (_, node) => setSelectedId(node.id);
+  const onConnect: OnConnect = (connection) => {
+    if (connection.source && connection.target) {
+      synthesizeConnection(connection.source, connection.target);
+    }
+  };
 
   return (
     <div className="flex h-full w-full">
@@ -112,6 +159,7 @@ export function EngineeringCanvas() {
           nodes={nodes}
           edges={edges}
           onNodeClick={onNodeClick}
+          onConnect={onConnect}
           fitView
           proOptions={{ hideAttribution: true }}
           colorMode="dark"
