@@ -1,6 +1,7 @@
 #!/bin/bash
 # ── 1. Environment setup ───────────────────────────────────────────────────────
-export KLYN_MASTER_SECRET="edf7408c50da26afccb518861a39d4cbdfbc6a909185"
+# KLYN_MASTER_SECRET must be provided by the operator (never commit secrets).
+: "${KLYN_MASTER_SECRET:?KLYN_MASTER_SECRET must be set in the environment}"
 export KLYN_LOG_LEVEL="info"
 export NODE_ENV="production"
 
