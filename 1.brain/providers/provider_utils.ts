@@ -1,3 +1,7 @@
+/**
+ * LLM Provider Utilities
+ */
+
 import type { LLMRequest, ProviderConfig } from '../types.ts';
 import { withRetryAndCircuit } from '../../kernel/backoff.js';
 
@@ -21,7 +25,7 @@ export function calculateProviderCost(usage: ProviderUsage, modelConfig: Provide
   return { inputCost, outputCost, totalCost: inputCost + outputCost };
 }
 
-export function providerRetryOptions(config: ProviderConfig) {
+function providerRetryOptions(config: ProviderConfig) {
   return { maxAttempts: config.maxRetries || 3, baseMs: 200, maxMs: 8_000 };
 }
 

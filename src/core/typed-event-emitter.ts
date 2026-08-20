@@ -1,3 +1,12 @@
+/**
+ * @fileoverview Klyn AI OS - Typed Event Emitter
+ * @module core/typed-event-emitter
+ * @author Klyn Systems Architecture Team
+ * @license Proprietary
+ *
+ * Generic event emitter with typed event payloads and listener accounting.
+ */
+
 import { EventEmitter } from 'events';
 
 export class TypedEventEmitter<TEventMap extends Record<string, unknown>> {
