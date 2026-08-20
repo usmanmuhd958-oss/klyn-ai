@@ -6,7 +6,13 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { LLMRequest, LLMResponse, StreamChunk, ProviderConfig } from '../types.ts';
 // @ts-ignore
 import { MODEL_REGISTRY } from '../config.ts';
-import { withRetryAndCircuit } from '../../kernel/backoff.js';
+import {
+  calculateProviderCost,
+  createProviderError,
+  DEFAULT_MAX_TOKENS,
+  DEFAULT_TEMPERATURE,
+  retryProvider,
+} from './provider_utils.ts';
 
 export class AnthropicProvider {
   [key: string]: any;
@@ -30,12 +36,13 @@ export class AnthropicProvider {
     const modelConfig = MODEL_REGISTRY[modelName];
     
     try {
-      const response = await withRetryAndCircuit(
+      const response = await retryProvider(
         'anthropic',
+        this.config,
         () => this.client.messages.create({
           model: modelConfig.apiModelId,
-          max_tokens: request.maxTokens || 4096,
-          temperature: request.temperature ?? 0.7,
+          max_tokens: request.maxTokens || DEFAULT_MAX_TOKENS,
+          temperature: request.temperature ?? DEFAULT_TEMPERATURE,
           top_p: request.topP,
           stop_sequences: request.stopSequences,
           system: request.systemPrompt,
@@ -59,7 +66,6 @@ export class AnthropicProvider {
           ],
           tools: request.tools as any,
         }),
-        { maxAttempts: this.config.maxRetries || 3, baseMs: 200, maxMs: 8_000 }
       );
 
       const usage = {
@@ -68,12 +74,7 @@ export class AnthropicProvider {
         totalTokens: response.usage.input_tokens + response.usage.output_tokens,
       };
 
-      const cost = {
-        inputCost: (usage.inputTokens / 1_000_000) * modelConfig.costPerMToken,
-        outputCost: (usage.outputTokens / 1_000_000) * modelConfig.costPerMTokenOutput,
-        totalCost: 0,
-      };
-      cost.totalCost = cost.inputCost + cost.outputCost;
+      const cost = calculateProviderCost(usage, modelConfig);
 
       return {
         content: response.content.map((c) => c.type === 'text' ? c.text : '').join(''),
@@ -102,8 +103,8 @@ export class AnthropicProvider {
     try {
       const stream = await this.client.messages.create({
         model: modelConfig.apiModelId,
-        max_tokens: request.maxTokens || 4096,
-        temperature: request.temperature ?? 0.7,
+        max_tokens: request.maxTokens || DEFAULT_MAX_TOKENS,
+        temperature: request.temperature ?? DEFAULT_TEMPERATURE,
         messages: [{ role: 'user', content: request.prompt }],
         system: request.systemPrompt,
         stream: true,
@@ -130,15 +131,6 @@ export class AnthropicProvider {
   }
 
   private handleError(error: any, modelName: string): Error {
-    const isRetryable = error.status === 429 || error.status >= 500;
-    
-    return {
-      name: 'ProviderError',
-      message: error.message || 'Anthropic API error',
-      provider: 'anthropic',
-      model: modelName,
-      statusCode: error.status,
-      retryable: isRetryable,
-    } as any;
+    return createProviderError(error, 'anthropic', modelName, 'Anthropic API error');
   }
 }

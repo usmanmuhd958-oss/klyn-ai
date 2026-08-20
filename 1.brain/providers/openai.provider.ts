@@ -6,7 +6,14 @@ import OpenAI from 'openai';
 import type { LLMRequest, LLMResponse, StreamChunk, ProviderConfig } from '../types.ts';
 // @ts-ignore
 import { MODEL_REGISTRY } from '../config.ts';
-import { withRetryAndCircuit } from '../../kernel/backoff.js';
+import {
+  buildOpenAICompatibleMessages,
+  calculateProviderCost,
+  createProviderError,
+  DEFAULT_MAX_TOKENS,
+  DEFAULT_TEMPERATURE,
+  retryProvider,
+} from './provider_utils.ts';
 
 export class OpenAIProvider {
   [key: string]: any;
@@ -32,37 +39,20 @@ export class OpenAIProvider {
     const modelConfig = MODEL_REGISTRY[modelName];
     
     try {
-      const messages: any[] = [];
-      
-      if (request.systemPrompt) {
-        messages.push({ role: 'system', content: request.systemPrompt });
-      }
+      const messages = buildOpenAICompatibleMessages(request);
 
-      messages.push({
-        role: 'user',
-        content: request.images?.length
-          ? [
-              { type: 'text', text: request.prompt },
-              ...request.images.map(img => ({
-                type: 'image_url',
-                image_url: { url: img.startsWith('http') ? img : `data:image/png;base64,${img}` },
-              })),
-            ]
-          : request.prompt,
-      });
-
-      const response = await withRetryAndCircuit(
+      const response = await retryProvider(
         'openai',
+        this.config,
         () => this.client.chat.completions.create({
           model: modelConfig.apiModelId,
           messages,
-          max_tokens: request.maxTokens || 4096,
-          temperature: request.temperature ?? 0.7,
+          max_tokens: request.maxTokens || DEFAULT_MAX_TOKENS,
+          temperature: request.temperature ?? DEFAULT_TEMPERATURE,
           top_p: request.topP,
           stop: request.stopSequences,
           tools: request.tools as any,
         }),
-        { maxAttempts: this.config.maxRetries || 3, baseMs: 200, maxMs: 8_000 }
       );
 
       const choice = response.choices[0];
@@ -72,12 +62,7 @@ export class OpenAIProvider {
         totalTokens: response.usage?.total_tokens || 0,
       };
 
-      const cost = {
-        inputCost: (usage.inputTokens / 1_000_000) * modelConfig.costPerMToken,
-        outputCost: (usage.outputTokens / 1_000_000) * modelConfig.costPerMTokenOutput,
-        totalCost: 0,
-      };
-      cost.totalCost = cost.inputCost + cost.outputCost;
+      const cost = calculateProviderCost(usage, modelConfig);
 
       return {
         content: choice.message.content || '',
@@ -102,17 +87,13 @@ export class OpenAIProvider {
     const modelConfig = MODEL_REGISTRY[modelName];
     
     try {
-      const messages: any[] = [];
-      if (request.systemPrompt) {
-        messages.push({ role: 'system', content: request.systemPrompt });
-      }
-      messages.push({ role: 'user', content: request.prompt });
+      const messages = buildOpenAICompatibleMessages(request);
 
       const stream = await this.client.chat.completions.create({
         model: modelConfig.apiModelId,
         messages,
-        max_tokens: request.maxTokens || 4096,
-        temperature: request.temperature ?? 0.7,
+        max_tokens: request.maxTokens || DEFAULT_MAX_TOKENS,
+        temperature: request.temperature ?? DEFAULT_TEMPERATURE,
         stream: true,
       });
 
@@ -132,15 +113,6 @@ export class OpenAIProvider {
   }
 
   private handleError(error: any, modelName: string): Error {
-    const isRetryable = error.status === 429 || error.status >= 500;
-    
-    return {
-      name: 'ProviderError',
-      message: error.message || 'OpenAI API error',
-      provider: 'openai',
-      model: modelName,
-      statusCode: error.status,
-      retryable: isRetryable,
-    } as any;
+    return createProviderError(error, 'openai', modelName, 'OpenAI API error');
   }
 }

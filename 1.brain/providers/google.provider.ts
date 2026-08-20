@@ -6,7 +6,13 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { LLMRequest, LLMResponse, StreamChunk, ProviderConfig } from '../types.ts';
 // @ts-ignore
 import { MODEL_REGISTRY } from '../config.ts';
-import { withRetryAndCircuit } from '../../kernel/backoff.js';
+import {
+  calculateProviderCost,
+  createProviderError,
+  DEFAULT_MAX_TOKENS,
+  DEFAULT_TEMPERATURE,
+  retryProvider,
+} from './provider_utils.ts';
 
 export class GoogleProvider {
   [key: string]: any;
@@ -29,18 +35,18 @@ export class GoogleProvider {
         systemInstruction: request.systemPrompt,
       });
 
-      const result = await withRetryAndCircuit(
+      const result = await retryProvider(
         'google',
+        this.config,
         () => model.generateContent({
           contents: [{ role: 'user', parts: [{ text: request.prompt }] }],
           generationConfig: {
-            maxOutputTokens: request.maxTokens || 4096,
-            temperature: request.temperature ?? 0.7,
+            maxOutputTokens: request.maxTokens || DEFAULT_MAX_TOKENS,
+            temperature: request.temperature ?? DEFAULT_TEMPERATURE,
             topP: request.topP,
             stopSequences: request.stopSequences,
           },
         }),
-        { maxAttempts: this.config.maxRetries || 3, baseMs: 200, maxMs: 8_000 }
       );
 
       const response = result.response;
@@ -56,12 +62,7 @@ export class GoogleProvider {
         totalTokens: response.usageMetadata?.totalTokenCount || 0,
       };
 
-      const cost = {
-        inputCost: (usage.inputTokens / 1_000_000) * modelConfig.costPerMToken,
-        outputCost: (usage.outputTokens / 1_000_000) * modelConfig.costPerMTokenOutput,
-        totalCost: 0,
-      };
-      cost.totalCost = cost.inputCost + cost.outputCost;
+      const cost = calculateProviderCost(usage, modelConfig);
 
       return {
         content: text,
@@ -90,8 +91,8 @@ export class GoogleProvider {
       const result = await model.generateContentStream({
         contents: [{ role: 'user', parts: [{ text: request.prompt }] }],
         generationConfig: {
-          maxOutputTokens: request.maxTokens || 4096,
-          temperature: request.temperature ?? 0.7,
+          maxOutputTokens: request.maxTokens || DEFAULT_MAX_TOKENS,
+          temperature: request.temperature ?? DEFAULT_TEMPERATURE,
         },
       });
 
@@ -115,15 +116,6 @@ export class GoogleProvider {
   }
 
   private handleError(error: any, modelName: string): Error {
-    const isRetryable = error.status === 429 || error.status >= 500;
-    
-    return {
-      name: 'ProviderError',
-      message: error.message || 'Google API error',
-      provider: 'google',
-      model: modelName,
-      statusCode: error.status,
-      retryable: isRetryable,
-    } as any;
+    return createProviderError(error, 'google', modelName, 'Google API error');
   }
 }

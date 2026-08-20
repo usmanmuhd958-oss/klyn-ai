@@ -24,19 +24,7 @@ import { QuantumZkLedger, deriveWotsKeyPair, wotsSign, wotsVerify } from '../ker
 import { EdgeProvisioner } from '../packages/swarm-mesh/src/edge_provisioner.js';
 import { FleetOrchestrator } from '../packages/swarm-mesh/src/fleet_orchestrator.js';
 import { EventBus } from '../packages/core-runtime/src/EventBus.js';
-
-let failures = 0;
-let passes = 0;
-
-function check(name: string, condition: boolean, detail = ''): void {
-  if (condition) {
-    passes++;
-    console.log(`PASS  ${name}${detail ? `  → ${detail}` : ''}`);
-  } else {
-    failures++;
-    console.error(`FAIL  ${name}${detail ? `  → ${detail}` : ''}`);
-  }
-}
+import { check, summary } from './smoke/harness.js';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -355,8 +343,7 @@ async function main(): Promise<void> {
   knowledgeSuite();
   quantumSuite();
   await edgeSuite();
-  console.log(`\n=== PHASE 8 SMOKE SUMMARY: ${passes}/${passes + failures} checks passed ===`);
-  if (failures > 0) process.exit(1);
+  summary(8);
 }
 
 void main();
