@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+:root {
+  --background:#090D16;
+  --cyan:#00F2FE;
+  --blue:#4FACFE;
+}
+
+body {
+  background:#090D16;
+  color:white;
+  overflow:hidden;
+}
+
+.glass {
+  background:rgba(15,23,42,.55);
+  backdrop-filter:blur(20px);
+  border:1px solid rgba(0,242,254,.2);
+}
