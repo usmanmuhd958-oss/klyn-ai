@@ -650,7 +650,9 @@ function createRouter(deps: Phase9Deps & { supabase?: any; logger?: any } = {}) 
 
   // Security middlewares
   router.use(helmet());
-  router.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
+  // CORS is opt-in: cross-origin access stays disabled unless the operator
+  // explicitly configures an allowed origin.
+  router.use(cors({ origin: process.env.CORS_ORIGIN || false }));
 
   // Rate limiting on every route: the kernel limiter is dependency-free,
   // sweeps expired buckets, bounds per-bucket memory, and validates

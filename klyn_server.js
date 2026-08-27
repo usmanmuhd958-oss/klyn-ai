@@ -482,13 +482,17 @@ function createServer(engine, deps = {}) {
     return requireAuth(req, res);
   };
 
-  const server = http.createServer((req, res) => {
+  const server = http.createServer(async (req, res) => {
     // Request accounting (cheap, per-route counter for /metrics)
     const route = req.url || '/';
     requestCounters.set(route, (requestCounters.get(route) || 0) + 1);
 
     res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Access-Control-Allow-Origin', process.env.CORS_ORIGIN || '*');
+    // CORS is opt-in: cross-origin access is disabled unless the operator
+    // explicitly configures an allowed origin.
+    if (process.env.CORS_ORIGIN) {
+      res.setHeader('Access-Control-Allow-Origin', process.env.CORS_ORIGIN);
+    }
 
     // ── GET: metrics (authenticated Prometheus-style) ──
     if (req.method === 'GET' && req.url === '/metrics') {
@@ -600,6 +604,8 @@ function createServer(engine, deps = {}) {
         const url = req.url || '';
 
         if (url === '/v1/context') {
+          // Returns indexed source code — never expose the codebase publicly.
+          if (!requireWriteAuth(req, res)) return;
           const contextBlocks = engine.getEnrichedContext(payload.prompt || '', 3);
           respond(res, 200, {
             status: 'success',
@@ -632,6 +638,8 @@ function createServer(engine, deps = {}) {
             respond(res, 422, { status: 'heal_failed', details: result });
           }
         } else if (url === '/v1/impact') {
+          // Exposes the workspace dependency graph — auth required.
+          if (!requireWriteAuth(req, res)) return;
           const result = await engine.analyzeImpact(payload.file || '');
           respond(res, 200, { status: 'analyzed', details: result });
         } else if (PHASE9_ROUTES.has(url)) {

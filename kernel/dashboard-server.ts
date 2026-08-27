@@ -17,7 +17,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 
 // ─── DASHBOARD HTML ──────────────────────────────────────────
-function buildDashboardHTML(apiToken) {
+function buildDashboardHTML() {
     return /* html */`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -286,7 +286,14 @@ function buildDashboardHTML(apiToken) {
 
 <script>
   // ── CONFIG ────────────────────────────────────────────────
-  const API_TOKEN = '${apiToken || ''}';
+  // The API token is never embedded in the served HTML. The operator
+  // provides it once in the browser and it is kept in sessionStorage.
+  const API_TOKEN = sessionStorage.getItem('KLYN_API_TOKEN')
+    || (() => {
+        const t = prompt('Enter KLYN_API_TOKEN (leave blank if auth is disabled)') || '';
+        if (t) sessionStorage.setItem('KLYN_API_TOKEN', t);
+        return t;
+      })();
   const API_BASE  = 'http://127.0.0.1:9000';
   const SSE_URL   = '/api/events';
 
@@ -585,7 +592,6 @@ class DashboardServer {
     async #handle(req, res) {
         const url = req.url.split('?')[0];
 
-        (res as any).setHeader('Access-Control-Allow-Origin', '*');
         (res as any).setHeader('X-Powered-By', 'KLYN-AI-OS');
 
         // SSE endpoint
@@ -595,7 +601,7 @@ class DashboardServer {
 
         // Dashboard HTML
         if (url === '/' || url === '/dashboard') {
-            const html = buildDashboardHTML(this.#apiToken);
+            const html = buildDashboardHTML();
             (res as any).writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
             return (res as any).end(html);
         }
