@@ -19,13 +19,21 @@ class EvolutionEngine {
       const tf = `${targetFile}.${evoId}.tmp`;
       fs.writeFileSync(tf, patchContent);
       fs.renameSync(tf, targetFile);
+      let committed = true;
+      let commitError = null;
       try {
         // @ts-ignore
         await new Promise((r, x) => exec(`cd "${ROOT}" && git add -A && git commit -m "EVOLUTION: ${evoId} - ${reason}"`, { timeout: 10000 }, (e) => e ? x(e) : r()));
-      } catch (e) {}
-      this.history.push({ evoId, targetFile, reason, requesterId, ts: Date.now() });
-      log(`[${evoId}] Evolution successful`);
-      return { evolutionId: evoId, status: 'COMPLETED' };
+      } catch (e) {
+        // The patch is already on disk, so the evolution stands, but an
+        // uncommitted mutation is not reproducible and must be surfaced.
+        committed = false;
+        commitError = e.message;
+        log(`[${evoId}] Patch applied but git commit failed: ${e.message}`);
+      }
+      this.history.push({ evoId, targetFile, reason, requesterId, ts: Date.now(), committed, commitError });
+      log(`[${evoId}] Evolution successful${committed ? '' : ' (uncommitted)'}`);
+      return { evolutionId: evoId, status: 'COMPLETED', committed, commitError };
     } catch (e) { log(`[${evoId}] Evolution failed: ${e.message}`); throw e; }
   }
   getHistory() { return this.history; }
