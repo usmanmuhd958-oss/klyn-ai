@@ -29,6 +29,9 @@ jobs:
             npx tsc --noEmit || true
           fi
 
+      - name: Run unit tests with coverage
+        run: npm run test:coverage
+
       - name: Run Native Rust Engine Diagnostics
         run: |
           if [ -d "native/kernel_core" ]; then
