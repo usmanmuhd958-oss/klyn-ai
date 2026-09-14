@@ -2,13 +2,21 @@ name: Klyn OS CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
+
+permissions:
+  contents: read
 
 jobs:
   health:
     runs-on: ubuntu-latest
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -19,28 +27,44 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: npm
+
+      - name: Validate required CI secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY JWT_SECRET ADMIN_PASSWORD)
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Required CI secret $name is not configured."
+              exit 1
+            fi
+          done
 
       - name: Install dependencies
-        run: npm ci || npm install
+        run: npm ci
 
       - name: Validate TypeScript build
         run: |
+          set -euo pipefail
           if [ -f "tsconfig.json" ]; then
-            npx tsc --noEmit || true
+            npx tsc --noEmit
+          else
+            echo "::error::Root tsconfig.json is missing."
+            exit 1
           fi
 
       - name: Run Native Rust Engine Diagnostics
         run: |
+          set -euo pipefail
           if [ -d "native/kernel_core" ]; then
             cd native/kernel_core
-            cargo check || true
+            cargo check
           fi
 
-      - name: Run Stabilizer Script (If present)
-        env:
-          JWT_SECRET: klyn-royal-secret
-          ADMIN_PASSWORD: klyn
+      - name: Run Stabilizer Script
         run: |
+          set -euo pipefail
           if [ -f "tools/stabilize_klyn_os.sh" ]; then
             bash tools/stabilize_klyn_os.sh
           else

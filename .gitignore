@@ -2,22 +2,25 @@
 # KLYN AI OS Enterprise Ignore
 # ===============================
 
-# Runtime logs
-*.log
-klyn-runtime.log
-
-# Dependencies
-node_modules/
-
-# Build outputs
+# Build outputs & cache
+.next/
 dist/
 build/
-target/
+.turbo/
+node_modules/
+*.log
 
 # Environment secrets
 .env
+.env.local
 .env.*
 !.env.example
+
+# Runtime logs
+klyn-runtime.log
+
+# Native build outputs
+target/
 
 # Backups
 backups/
