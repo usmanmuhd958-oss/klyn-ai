@@ -7,6 +7,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.12.5",
+    "@supabase/supabase-js": "^2.112.4",
     "@xyflow/react": "^12.3.0",
     "framer-motion": "^11.0.0",
     "lucide-react": "^0.468.0",
