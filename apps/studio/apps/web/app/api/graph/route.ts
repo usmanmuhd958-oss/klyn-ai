@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 
-import { getAuthenticatedUser, verifyProjectOwnership } from "../../../lib/auth/server";
+import {
+  getAuthenticatedUser,
+  verifyProjectOwnership,
+} from "../../../lib/auth/server";
 import { supabaseAdmin } from "../../../lib/db/client";
 
 interface GraphNode {
@@ -86,25 +89,18 @@ function validateGraph(body: unknown): body is GraphRequest {
 }
 
 async function authorizeProject(projectId: string) {
-  const auth = await getAuthenticatedUser();
+  const user = await getAuthenticatedUser();
 
-  if (!auth.user) {
+  if (!user) {
     return NextResponse.json(
       { error: "Authentication required" },
       { status: 401 }
     );
   }
 
-  const ownership = await verifyProjectOwnership(projectId, auth.user.id);
+  const owned = await verifyProjectOwnership(user.id, projectId);
 
-  if (!ownership.authorized) {
-    if (ownership.reason === "DATABASE_ERROR") {
-      return NextResponse.json(
-        { error: "Unable to authorize project" },
-        { status: 500 }
-      );
-    }
-
+  if (!owned) {
     return NextResponse.json(
       { error: "Project access denied" },
       { status: 403 }
