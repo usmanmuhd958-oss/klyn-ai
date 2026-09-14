@@ -1,10 +1,7 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+import { getAuthenticatedUser, verifyProjectOwnership } from "../../../lib/auth/server";
+import { supabaseAdmin } from "../../../lib/db/client";
 
 interface ArtifactRequest {
   projectId: string;
@@ -18,17 +15,61 @@ function validateArtifact(body: unknown): body is ArtifactRequest {
   if (typeof body !== "object" || body === null) {
     return false;
   }
+
   const data = body as Record<string, unknown>;
   return (
     typeof data.projectId === "string" &&
+    data.projectId.length > 0 &&
     typeof data.filename === "string" &&
+    data.filename.length > 0 &&
     typeof data.language === "string" &&
-    typeof data.content === "string"
+    data.language.length > 0 &&
+    typeof data.content === "string" &&
+    (data.agentSource === undefined || typeof data.agentSource === "string")
   );
+}
+
+async function authorizeProject(projectId: string) {
+  const auth = await getAuthenticatedUser();
+
+  if (!auth.user) {
+    return {
+      response: NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 }
+      ),
+      userId: null,
+    };
+  }
+
+  const ownership = await verifyProjectOwnership(projectId, auth.user.id);
+
+  if (!ownership.authorized) {
+    if (ownership.reason === "DATABASE_ERROR") {
+      return {
+        response: NextResponse.json(
+          { error: "Unable to authorize project" },
+          { status: 500 }
+        ),
+        userId: null,
+      };
+    }
+
+    return {
+      response: NextResponse.json(
+        { error: "Project access denied" },
+        { status: 403 }
+      ),
+      userId: null,
+    };
+  }
+
+  return { response: null, userId: auth.user.id };
 }
 
 /**
  * Stores generated AI artifacts.
+ * Project access is verified against the authenticated user before writing.
  */
 export async function POST(request: Request) {
   try {
@@ -41,7 +82,12 @@ export async function POST(request: Request) {
       );
     }
 
-    const { data, error } = await supabase
+    const authorization = await authorizeProject(body.projectId);
+    if (authorization.response) {
+      return authorization.response;
+    }
+
+    const { data, error } = await supabaseAdmin
       .from("artifacts")
       .insert({
         project_id: body.projectId,
@@ -68,7 +114,7 @@ export async function POST(request: Request) {
 }
 
 /**
- * Loads artifacts for a project.
+ * Loads artifacts for a project after ownership verification.
  */
 export async function GET(request: Request) {
   try {
@@ -82,7 +128,12 @@ export async function GET(request: Request) {
       );
     }
 
-    const { data, error } = await supabase
+    const authorization = await authorizeProject(projectId);
+    if (authorization.response) {
+      return authorization.response;
+    }
+
+    const { data, error } = await supabaseAdmin
       .from("artifacts")
       .select("*")
       .eq("project_id", projectId);
@@ -93,6 +144,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json(data);
   } catch (error) {
+    console.error("Artifact load error", error);
     return NextResponse.json(
       { error: "Unable to load artifacts" },
       { status: 500 }
