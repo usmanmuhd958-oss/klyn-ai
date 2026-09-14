@@ -1,26 +1,34 @@
-image: node:18
+image: node:22
 
 stages:
-  - test
+  - verify
   - audit
-  - health
 
-unit_tests:
-  stage: test
+variables:
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+
+before_script:
+  - corepack enable
+  - corepack prepare pnpm@11.24.0 --activate
+  - pnpm --version
+
+workspace_verify:
+  stage: verify
   script:
-    - bash scripts/run_tests.sh
+    - set -eu
+    - test -f pnpm-workspace.yaml
+    - test -f pnpm-lock.yaml
+    - test -f turbo.json
+    - test -f apps/backend/package.json
+    - pnpm install --frozen-lockfile
+    - pnpm typecheck
+    - pnpm build
+    - pnpm test
 
 code_audit:
   stage: audit
   before_script:
-    - apt-get update && apt-get install -y shellcheck
+    - apt-get update
+    - apt-get install -y --no-install-recommends shellcheck
   script:
     - bash scripts/ai_code_review.sh
-
-health_check:
-  stage: health
-  script:
-    - npm install
-    - node api/server.js &
-    - sleep 3
-    - node scripts/health_check.js
