@@ -1,22 +1,12 @@
-export type AIProvider = "openai" | "anthropic" | "gemini";
-
-export interface ModelRequest {
-  provider: AIProvider;
-  model: string;
-  input: string;
-  maxOutputTokens?: number;
-}
-
-export interface ModelResponse {
-  provider: AIProvider;
-  model: string;
-  output: string;
-  usage?: {
-    inputTokens?: number;
-    outputTokens?: number;
-  };
-}
-
-export interface AIEngine {
-  generate(request: ModelRequest): Promise<ModelResponse>;
-}
+export type { ProviderName, ProviderRequest, ProviderResponse, ProviderUsage, ProviderAdapter, StreamChunk } from "./providers/types.js";
+export { ProviderError } from "./providers/http.js";
+export { OpenAIAdapter } from "./providers/openai.js";
+export { AnthropicAdapter } from "./providers/anthropic.js";
+export { GeminiAdapter } from "./providers/gemini.js";
+export { AIProviderRouter } from "./router.js";
+export { streamToSSE, sseHeaders } from "./sse.js";
+export type { RouteTarget, RouterOptions, Telemetry } from "./router.js";
+export { AgentSwarmCoordinator } from "./swarm/coordinator.js";
+export type { AgentTask, AgentResult, SwarmOptions } from "./swarm/coordinator.js";
+export { EphemeralContext } from "./memory/context.js";
+export type { ContextMessage } from "./memory/context.js";
