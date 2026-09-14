@@ -5,6 +5,7 @@ export { ProviderError } from "./providers/http.js";
 export { OpenAIAdapter } from "./providers/openai.js";
 export { AnthropicAdapter } from "./providers/anthropic.js";
 export { GeminiAdapter } from "./providers/gemini.js";
+export { ReplicateAdapter } from "./providers/replicate.js";
 export { UniversalChatAdapter, createUniversalAdapter } from "./providers/universal.js";
 export type { UniversalProviderConfig } from "./providers/universal.js";
 export { AIProviderRouter } from "./router.js";
