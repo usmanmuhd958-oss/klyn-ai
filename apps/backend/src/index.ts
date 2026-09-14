@@ -1,4 +1,5 @@
 import express from "express";
+import { health, readiness } from "./api/health.js";
 import { loadEnv } from "./config/env.js";
 
 const env = loadEnv();
@@ -7,17 +8,8 @@ const app = express();
 app.disable("x-powered-by");
 app.use(express.json({ limit: "1mb" }));
 
-app.get("/health", (_req, res) => {
-  res.status(200).json({
-    status: "ok",
-    service: "klyn-backend",
-    version: "5.0.0"
-  });
-});
-
-app.get("/ready", (_req, res) => {
-  res.status(200).json({ status: "ready" });
-});
+app.get("/health", health);
+app.get("/ready", readiness);
 
 const server = app.listen(env.PORT, env.HOST, () => {
   console.log(`Klyn backend listening on http://${env.HOST}:${env.PORT}`);
