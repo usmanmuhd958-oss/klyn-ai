@@ -1,13 +1,9 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+import { supabaseAdmin } from "../../../lib/db/client";
+import { getAuthenticatedUser } from "../../../lib/auth/server";
 
 interface CreateProjectRequest {
-  userId: string;
   name: string;
   description?: string;
 }
@@ -16,18 +12,29 @@ function validateProject(body: unknown): body is CreateProjectRequest {
   if (typeof body !== "object" || body === null) {
     return false;
   }
+
   const data = body as Record<string, unknown>;
   return (
-    typeof data.userId === "string" &&
     typeof data.name === "string" &&
-    data.name.length > 0
+    data.name.trim().length > 0 &&
+    (data.description === undefined || typeof data.description === "string")
   );
 }
 
 /**
  * Creates a new Klyn project.
+ * Identity is always derived from the authenticated server-side session.
  */
 export async function POST(request: Request) {
+  const auth = await getAuthenticatedUser();
+
+  if (!auth.user) {
+    return NextResponse.json(
+      { error: "Authentication required" },
+      { status: 401 }
+    );
+  }
+
   try {
     const body = await request.json();
 
@@ -38,12 +45,12 @@ export async function POST(request: Request) {
       );
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from("projects")
       .insert({
-        user_id: body.userId,
-        name: body.name,
-        description: body.description ?? null,
+        user_id: auth.user.id,
+        name: body.name.trim(),
+        description: body.description?.trim() || null,
       })
       .select()
       .single();
