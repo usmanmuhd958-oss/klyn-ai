@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 
-import { getAuthenticatedUser, verifyProjectOwnership } from "../../../lib/auth/server";
+import {
+  getAuthenticatedUser,
+  verifyProjectOwnership,
+} from "../../../lib/auth/server";
 import { supabaseAdmin } from "../../../lib/db/client";
 
 interface ArtifactRequest {
@@ -11,60 +14,73 @@ interface ArtifactRequest {
   agentSource?: string;
 }
 
+interface DeleteArtifactRequest {
+  projectId: string;
+  artifactId: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 function validateArtifact(body: unknown): body is ArtifactRequest {
-  if (typeof body !== "object" || body === null) {
+  if (!isRecord(body)) {
     return false;
   }
 
-  const data = body as Record<string, unknown>;
   return (
-    typeof data.projectId === "string" &&
-    data.projectId.length > 0 &&
-    typeof data.filename === "string" &&
-    data.filename.length > 0 &&
-    typeof data.language === "string" &&
-    data.language.length > 0 &&
-    typeof data.content === "string" &&
-    (data.agentSource === undefined || typeof data.agentSource === "string")
+    typeof body.projectId === "string" &&
+    body.projectId.length > 0 &&
+    typeof body.filename === "string" &&
+    body.filename.length > 0 &&
+    typeof body.language === "string" &&
+    body.language.length > 0 &&
+    typeof body.content === "string" &&
+    (body.agentSource === undefined || typeof body.agentSource === "string")
+  );
+}
+
+function validateDeleteArtifact(
+  body: unknown
+): body is DeleteArtifactRequest {
+  if (!isRecord(body)) {
+    return false;
+  }
+
+  return (
+    typeof body.projectId === "string" &&
+    body.projectId.length > 0 &&
+    typeof body.artifactId === "string" &&
+    body.artifactId.length > 0
   );
 }
 
 async function authorizeProject(projectId: string) {
-  const auth = await getAuthenticatedUser();
+  const user = await getAuthenticatedUser();
 
-  if (!auth.user) {
+  if (!user) {
     return {
+      userId: null,
       response: NextResponse.json(
         { error: "Authentication required" },
         { status: 401 }
       ),
-      userId: null,
     };
   }
 
-  const ownership = await verifyProjectOwnership(projectId, auth.user.id);
+  const owned = await verifyProjectOwnership(user.id, projectId);
 
-  if (!ownership.authorized) {
-    if (ownership.reason === "DATABASE_ERROR") {
-      return {
-        response: NextResponse.json(
-          { error: "Unable to authorize project" },
-          { status: 500 }
-        ),
-        userId: null,
-      };
-    }
-
+  if (!owned) {
     return {
+      userId: null,
       response: NextResponse.json(
         { error: "Project access denied" },
         { status: 403 }
       ),
-      userId: null,
     };
   }
 
-  return { response: null, userId: auth.user.id };
+  return { userId: user.id, response: null };
 }
 
 /**
@@ -147,6 +163,54 @@ export async function GET(request: Request) {
     console.error("Artifact load error", error);
     return NextResponse.json(
       { error: "Unable to load artifacts" },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * Deletes an artifact only after project ownership is verified.
+ */
+export async function DELETE(request: Request) {
+  try {
+    const body = await request.json();
+
+    if (!validateDeleteArtifact(body)) {
+      return NextResponse.json(
+        { error: "Invalid delete payload" },
+        { status: 400 }
+      );
+    }
+
+    const authorization = await authorizeProject(body.projectId);
+    if (authorization.response) {
+      return authorization.response;
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from("artifacts")
+      .delete()
+      .eq("id", body.artifactId)
+      .eq("project_id", body.projectId)
+      .select("id")
+      .maybeSingle();
+
+    if (error) {
+      throw error;
+    }
+
+    if (!data) {
+      return NextResponse.json(
+        { error: "Artifact not found" },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({ success: true, id: data.id });
+  } catch (error) {
+    console.error("Artifact deletion error", error);
+    return NextResponse.json(
+      { error: "Unable to delete artifact" },
       { status: 500 }
     );
   }
