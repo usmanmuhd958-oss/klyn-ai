@@ -11,6 +11,9 @@
     "test": "node --test"
   },
   "dependencies": {
+    "@klyn/ai-engine": "workspace:*",
+    "@klyn/database": "workspace:*",
+    "@klyn/execution-runtime": "workspace:*",
     "express": "^5.2.1",
     "zod": "^4.1.8"
   },
