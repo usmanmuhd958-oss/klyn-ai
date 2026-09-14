@@ -4,7 +4,7 @@ import { NextResponse, type NextRequest } from "next/server";
 const publicRoutes = ["/login", "/auth"];
 
 function isPublicRoute(pathname: string) {
-  return pathname === "/" && false || publicRoutes.some(
+  return publicRoutes.some(
     (route) => pathname === route || pathname.startsWith(`${route}/`)
   );
 }
@@ -27,7 +27,6 @@ export async function middleware(request: NextRequest) {
       setAll(cookiesToSet) {
         cookiesToSet.forEach(({ name, value, options }) => {
           request.cookies.set(name, value);
-          response = NextResponse.next({ request });
           response.cookies.set(name, value, options);
         });
       },
