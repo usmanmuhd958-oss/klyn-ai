@@ -1,4 +1,4 @@
-export type ProviderName = "openai" | "anthropic" | "gemini";
+export type ProviderName = "openai" | "anthropic" | "gemini" | "deepseek" | "openrouter" | "groq" | "together" | "fireworks" | "replicate" | "mistral" | "cohere" | "ollama" | "vllm" | "lmstudio" | "custom";
 
 export interface ProviderRequest {
   model: string;
@@ -10,10 +10,7 @@ export interface ProviderRequest {
   responseFormat?: "text" | "json";
 }
 
-export interface ProviderUsage {
-  inputTokens?: number;
-  outputTokens?: number;
-}
+export interface ProviderUsage { inputTokens?: number; outputTokens?: number; }
 
 export interface ProviderResponse {
   provider: ProviderName;
@@ -23,12 +20,7 @@ export interface ProviderResponse {
   requestId?: string;
 }
 
-export interface StreamChunk {
-  provider: ProviderName;
-  model: string;
-  text: string;
-  done?: boolean;
-}
+export interface StreamChunk { provider: ProviderName; model: string; text: string; done?: boolean; }
 
 export interface ProviderAdapter {
   readonly name: ProviderName;
