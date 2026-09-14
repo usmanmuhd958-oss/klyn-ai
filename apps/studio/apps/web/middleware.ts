@@ -1,11 +1,21 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const publicRoutes = ["/login", "/auth"];
+const protectedPrefixes = ["/studio", "/workspace", "/projects", "/settings"];
+const publicPrefixes = ["/login", "/auth"];
 
 function isPublicRoute(pathname: string) {
-  return publicRoutes.some(
+  return publicPrefixes.some(
     (route) => pathname === route || pathname.startsWith(`${route}/`)
+  );
+}
+
+function isProtectedRoute(pathname: string) {
+  return (
+    pathname === "/" ||
+    protectedPrefixes.some(
+      (route) => pathname === route || pathname.startsWith(`${route}/`)
+    )
   );
 }
 
@@ -37,7 +47,7 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (!user && !isPublicRoute(request.nextUrl.pathname)) {
+  if (!user && isProtectedRoute(request.nextUrl.pathname)) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
     loginUrl.searchParams.set("next", request.nextUrl.pathname);
@@ -46,6 +56,10 @@ export async function middleware(request: NextRequest) {
 
   if (user && request.nextUrl.pathname === "/login") {
     return NextResponse.redirect(new URL("/", request.url));
+  }
+
+  if (!user && !isPublicRoute(request.nextUrl.pathname)) {
+    return response;
   }
 
   return response;
