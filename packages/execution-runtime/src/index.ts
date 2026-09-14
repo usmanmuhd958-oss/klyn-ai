@@ -20,3 +20,6 @@ export interface ExecutionResult {
 export interface ExecutionRuntime {
   execute(request: ExecutionRequest): Promise<ExecutionResult>;
 }
+
+export { DEFAULT_SANDBOX_POLICY, HardenedExecutionRuntime } from "./sandbox.js";
+export type { IsolatedSandboxRunner, SandboxPolicy } from "./sandbox.js";
