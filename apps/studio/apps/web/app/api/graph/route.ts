@@ -1,31 +1,121 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+import { getAuthenticatedUser, verifyProjectOwnership } from "../../../lib/auth/server";
+import { supabaseAdmin } from "../../../lib/db/client";
+
+interface GraphNode {
+  id: string;
+  type?: string;
+  position?: {
+    x: number;
+    y: number;
+  };
+  data?: Record<string, unknown>;
+}
+
+interface GraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  data?: Record<string, unknown>;
+}
 
 interface GraphRequest {
   projectId: string;
-  nodes: Array<any>;
-  edges: Array<any>;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function validateGraph(body: unknown): body is GraphRequest {
-  if (typeof body !== "object" || body === null) {
+  if (!isRecord(body)) {
     return false;
   }
-  const data = body as Record<string, unknown>;
-  return (
-    typeof data.projectId === "string" &&
-    Array.isArray(data.nodes) &&
-    Array.isArray(data.edges)
-  );
+
+  if (
+    typeof body.projectId !== "string" ||
+    body.projectId.length === 0 ||
+    !Array.isArray(body.nodes) ||
+    !Array.isArray(body.edges)
+  ) {
+    return false;
+  }
+
+  const validNodes = body.nodes.every((node) => {
+    if (!isRecord(node) || typeof node.id !== "string" || node.id.length === 0) {
+      return false;
+    }
+
+    if (node.type !== undefined && typeof node.type !== "string") {
+      return false;
+    }
+
+    if (!isRecord(node.position)) {
+      return false;
+    }
+
+    return (
+      typeof node.position.x === "number" &&
+      Number.isFinite(node.position.x) &&
+      typeof node.position.y === "number" &&
+      Number.isFinite(node.position.y) &&
+      (node.data === undefined || isRecord(node.data))
+    );
+  });
+
+  const validEdges = body.edges.every((edge) => {
+    if (
+      !isRecord(edge) ||
+      typeof edge.id !== "string" ||
+      edge.id.length === 0 ||
+      typeof edge.source !== "string" ||
+      edge.source.length === 0 ||
+      typeof edge.target !== "string" ||
+      edge.target.length === 0
+    ) {
+      return false;
+    }
+
+    return edge.data === undefined || isRecord(edge.data);
+  });
+
+  return validNodes && validEdges;
+}
+
+async function authorizeProject(projectId: string) {
+  const auth = await getAuthenticatedUser();
+
+  if (!auth.user) {
+    return NextResponse.json(
+      { error: "Authentication required" },
+      { status: 401 }
+    );
+  }
+
+  const ownership = await verifyProjectOwnership(projectId, auth.user.id);
+
+  if (!ownership.authorized) {
+    if (ownership.reason === "DATABASE_ERROR") {
+      return NextResponse.json(
+        { error: "Unable to authorize project" },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json(
+      { error: "Project access denied" },
+      { status: 403 }
+    );
+  }
+
+  return null;
 }
 
 /**
- * Persists complete spatial graph state.
+ * Persists complete spatial graph state after project ownership verification.
  */
 export async function POST(request: Request) {
   try {
@@ -38,12 +128,17 @@ export async function POST(request: Request) {
       );
     }
 
+    const authorizationResponse = await authorizeProject(body.projectId);
+    if (authorizationResponse) {
+      return authorizationResponse;
+    }
+
     const nodeRows = body.nodes.map((node) => ({
       project_id: body.projectId,
       node_id: node.id,
       node_type: node.type ?? "default",
-      position_x: node.position.x,
-      position_y: node.position.y,
+      position_x: node.position!.x,
+      position_y: node.position!.y,
       data_json: node.data ?? {},
     }));
 
@@ -56,17 +151,27 @@ export async function POST(request: Request) {
     }));
 
     if (nodeRows.length > 0) {
-      const nodeResult = await supabase.from("spatial_nodes").upsert(nodeRows, {
-        onConflict: "project_id,node_id",
-      });
-      if (nodeResult.error) throw nodeResult.error;
+      const nodeResult = await supabaseAdmin
+        .from("spatial_nodes")
+        .upsert(nodeRows, {
+          onConflict: "project_id,node_id",
+        });
+
+      if (nodeResult.error) {
+        throw nodeResult.error;
+      }
     }
 
     if (edgeRows.length > 0) {
-      const edgeResult = await supabase.from("spatial_edges").upsert(edgeRows, {
-        onConflict: "project_id,edge_id",
-      });
-      if (edgeResult.error) throw edgeResult.error;
+      const edgeResult = await supabaseAdmin
+        .from("spatial_edges")
+        .upsert(edgeRows, {
+          onConflict: "project_id,edge_id",
+        });
+
+      if (edgeResult.error) {
+        throw edgeResult.error;
+      }
     }
 
     return NextResponse.json({
@@ -84,7 +189,7 @@ export async function POST(request: Request) {
 }
 
 /**
- * Loads complete graph state.
+ * Loads complete graph state after project ownership verification.
  */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -97,18 +202,40 @@ export async function GET(request: Request) {
     );
   }
 
-  const nodes = await supabase
-    .from("spatial_nodes")
-    .select("*")
-    .eq("project_id", projectId);
+  try {
+    const authorizationResponse = await authorizeProject(projectId);
+    if (authorizationResponse) {
+      return authorizationResponse;
+    }
 
-  const edges = await supabase
-    .from("spatial_edges")
-    .select("*")
-    .eq("project_id", projectId);
+    const [nodes, edges] = await Promise.all([
+      supabaseAdmin
+        .from("spatial_nodes")
+        .select("*")
+        .eq("project_id", projectId),
+      supabaseAdmin
+        .from("spatial_edges")
+        .select("*")
+        .eq("project_id", projectId),
+    ]);
 
-  return NextResponse.json({
-    nodes: nodes.data ?? [],
-    edges: edges.data ?? [],
-  });
+    if (nodes.error || edges.error) {
+      console.error("Graph load failed", nodes.error ?? edges.error);
+      return NextResponse.json(
+        { error: "Unable to load graph" },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      nodes: nodes.data ?? [],
+      edges: edges.data ?? [],
+    });
+  } catch (error) {
+    console.error("Graph load failed", error);
+    return NextResponse.json(
+      { error: "Unable to load graph" },
+      { status: 500 }
+    );
+  }
 }
