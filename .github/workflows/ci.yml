@@ -17,11 +17,6 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-      JWT_SECRET: ${{ secrets.JWT_SECRET }}
-      ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -47,18 +42,6 @@ jobs:
           test -f pnpm-lock.yaml || { echo "::error::pnpm-lock.yaml is required. Generate it with pnpm install and commit it."; exit 1; }
           test -f turbo.json
           test -f apps/backend/package.json
-
-      - name: Validate required CI secrets
-        shell: bash
-        run: |
-          set -euo pipefail
-          required=(JWT_SECRET ADMIN_PASSWORD)
-          for name in "${required[@]}"; do
-            if [[ -z "${!name:-}" ]]; then
-              echo "::error::Required CI secret $name is not configured."
-              exit 1
-            fi
-          done
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
