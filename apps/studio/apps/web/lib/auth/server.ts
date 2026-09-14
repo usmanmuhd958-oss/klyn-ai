@@ -4,17 +4,13 @@ import type { User } from "@supabase/supabase-js";
 
 import { supabaseAdmin } from "../db/client";
 
-export type AuthenticatedUserResult =
-  | { user: User; error: null }
-  | { user: null; error: "UNAUTHENTICATED" | "AUTHENTICATION_FAILED" };
-
 /**
  * Resolve the authenticated Supabase user from the server-managed session.
  *
  * Security invariant: callers must never accept a user id supplied by the
  * request body, query string, or other client-controlled input as identity.
  */
-export async function getAuthenticatedUser(): Promise<AuthenticatedUserResult> {
+export async function getAuthenticatedUser(): Promise<User | null> {
   try {
     const cookieStore = await cookies();
 
@@ -33,8 +29,7 @@ export async function getAuthenticatedUser(): Promise<AuthenticatedUserResult> {
               });
             } catch {
               // Route handlers may not always expose a mutable cookie store.
-              // Authentication itself remains valid; middleware is responsible
-              // for refreshing session cookies when applicable.
+              // The auth lookup itself remains valid.
             }
           },
         },
@@ -48,37 +43,28 @@ export async function getAuthenticatedUser(): Promise<AuthenticatedUserResult> {
 
     if (error) {
       console.error("Authentication lookup failed", error);
-      return { user: null, error: "AUTHENTICATION_FAILED" };
+      return null;
     }
 
-    if (!user) {
-      return { user: null, error: "UNAUTHENTICATED" };
-    }
-
-    return { user, error: null };
+    return user ?? null;
   } catch (error) {
     console.error("Authentication primitive failed", error);
-    return { user: null, error: "AUTHENTICATION_FAILED" };
+    return null;
   }
 }
 
-export type ProjectAuthorizationResult =
-  | { authorized: true }
-  | { authorized: false; reason: "NOT_FOUND_OR_FORBIDDEN" | "DATABASE_ERROR" };
-
 /**
- * Verify that the authenticated user owns the requested project.
+ * Verify that an authenticated user owns the requested project.
  *
- * This intentionally uses the server-only service-role client for the final
- * ownership check. The project id remains untrusted until this query proves
- * the relationship between project_id and authenticated user_id.
+ * Security invariant: project ownership is established only by the server-side
+ * query WHERE projects.id = projectId AND projects.user_id = userId.
  */
 export async function verifyProjectOwnership(
-  projectId: string,
-  userId: string
-): Promise<ProjectAuthorizationResult> {
-  if (!projectId || !userId) {
-    return { authorized: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
+  userId: string,
+  projectId: string
+): Promise<boolean> {
+  if (!userId || !projectId) {
+    return false;
   }
 
   try {
@@ -91,16 +77,12 @@ export async function verifyProjectOwnership(
 
     if (error) {
       console.error("Project ownership check failed", error);
-      return { authorized: false, reason: "DATABASE_ERROR" };
+      return false;
     }
 
-    if (!data) {
-      return { authorized: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
-    }
-
-    return { authorized: true };
+    return data !== null;
   } catch (error) {
     console.error("Project ownership primitive failed", error);
-    return { authorized: false, reason: "DATABASE_ERROR" };
+    return false;
   }
 }
