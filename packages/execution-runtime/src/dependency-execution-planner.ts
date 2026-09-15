@@ -11,8 +11,8 @@ export interface DependencyPlanResult<T = unknown> {
   readonly outputs: Readonly<Record<string, T>>;
 }
 
-export class DependencyExecutionPlanner<TTask extends PlannedTask = PlannedTask> {
-  async execute(tasks: readonly TTask[], options: { maxConcurrency?: number; signal?: AbortSignal } = {}): Promise<DependencyPlanResult> {
+export class DependencyExecutionPlanner<T = unknown, TTask extends PlannedTask<T> = PlannedTask<T>> {
+  async execute(tasks: readonly TTask[], options: { maxConcurrency?: number; signal?: AbortSignal } = {}): Promise<DependencyPlanResult<T>> {
     const byId = new Map(tasks.map((task) => [task.id, task] as const));
     for (const task of tasks) for (const dependency of task.dependsOn ?? []) if (!byId.has(dependency)) throw new Error(`Unknown dependency ${dependency} for task ${task.id}`);
     const indegree = new Map<string, number>();
