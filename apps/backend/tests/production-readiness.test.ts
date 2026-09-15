@@ -1,4 +1,5 @@
 import { strict as assert } from "node:assert";
+import { performance } from "node:perf_hooks";
 import { test } from "node:test";
 import { KernelHealthController, verifyProductionReadiness } from "../src/kernel-health.js";
 import { RouterPipeline, type RouterProvider } from "@klyn/ai-engine";
