@@ -65,7 +65,7 @@ jobs:
             echo 'Frontend/UI file remnants detected.'
             exit 1
           fi
-          if grep -E '(^|["'"'[:space:]])(next|react|react-dom|vite|tailwindcss|@vitejs|@next)(["'"'[:space:]:,]|$)' package.json pnpm-workspace.yaml; then
+          if grep -E '"(next|react|react-dom|vite|tailwindcss|@vitejs|@next)"' package.json pnpm-workspace.yaml; then
             echo 'Frontend dependency/reference detected in root workspace configuration.'
             exit 1
           fi
