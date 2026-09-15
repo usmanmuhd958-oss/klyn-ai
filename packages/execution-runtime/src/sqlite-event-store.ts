@@ -23,16 +23,16 @@ export class SqliteAgentEventStore implements AgentEventStore {
     return store;
   }
 
-  async append(event: Omit<AgentEvent, "sequence">): Promise<AgentEvent> {
+  async append<T>(input: Omit<AgentEvent<T>, "id" | "sequence" | "timestamp">): Promise<AgentEvent<T>> {
     return this.withLock(async () => {
-      const sequence = this.nextSequence(event.treeId, event.agentId);
-      const persisted = { ...event, sequence } as AgentEvent;
+      const sequence = this.nextSequence(input.treeId, input.agentId);
+      const event: AgentEvent<T> = { ...input, id: crypto.randomUUID(), sequence, timestamp: Date.now() };
       this.db.run("BEGIN IMMEDIATE");
       try {
-        this.insert(persisted);
+        this.insert(event);
         this.db.run("COMMIT");
         await this.persist();
-        return persisted;
+        return event;
       } catch (error) {
         this.db.run("ROLLBACK");
         throw error;
@@ -40,7 +40,7 @@ export class SqliteAgentEventStore implements AgentEventStore {
     });
   }
 
-  read(treeId: string, agentId?: string): AgentEvent[] {
+  async read(treeId: string, agentId?: string): Promise<readonly AgentEvent[]> {
     const params: SqlValue[] = agentId === undefined ? [treeId] : [treeId, agentId];
     const sql = agentId === undefined
       ? "SELECT * FROM events WHERE tree_id=? ORDER BY timestamp, sequence"
@@ -48,19 +48,19 @@ export class SqliteAgentEventStore implements AgentEventStore {
     return this.rows(sql, params).map((row) => this.toEvent(row));
   }
 
-  snapshot(treeId: string, agentId: string): AgentState | undefined {
+  async snapshot(treeId: string, agentId: string): Promise<AgentState> {
     const row = this.rows("SELECT tree_id, agent_id, values_json, version FROM agent_state WHERE tree_id=? AND agent_id=?", [treeId, agentId])[0];
-    if (!row) return undefined;
+    if (!row) return { treeId, agentId, values: {}, version: 0 };
     return { treeId: String(row.tree_id), agentId: String(row.agent_id), values: JSON.parse(String(row.values_json)), version: Number(row.version) };
   }
 
-  replay(treeId: string, agentId: string): AgentState | undefined {
+  async replay(treeId: string, agentId: string): Promise<AgentState> {
     return this.snapshot(treeId, agentId);
   }
 
   async setValue(treeId: string, agentId: string, key: string, value: unknown): Promise<AgentState> {
     return this.withLock(async () => {
-      const current = this.snapshot(treeId, agentId) ?? { treeId, agentId, values: {}, version: 0 };
+      const current = await this.snapshot(treeId, agentId);
       const next: AgentState = { ...current, values: { ...current.values, [key]: value }, version: current.version + 1 };
       const event: AgentEvent = {
         id: `${treeId}:${agentId}:checkpoint:${next.version}`,
@@ -75,7 +75,9 @@ export class SqliteAgentEventStore implements AgentEventStore {
       try {
         this.insert(event);
         this.db.run("INSERT INTO agent_state (tree_id, agent_id, values_json, version) VALUES (?, ?, ?, ?) ON CONFLICT(tree_id, agent_id) DO UPDATE SET values_json=excluded.values_json, version=excluded.version", [treeId, agentId, JSON.stringify(next.values), next.version]);
-        this.db.run("COMMIT"); await this.persist(); return next;
+        this.db.run("COMMIT");
+        await this.persist();
+        return next;
       } catch (error) { this.db.run("ROLLBACK"); throw error; }
     });
   }
