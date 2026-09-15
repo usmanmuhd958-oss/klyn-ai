@@ -1,7 +1,47 @@
-import type { ConsensusDecision, ConsensusProposal, ConsensusVote } from "../../../packages/cognitive-engine/src/consensus/AgentConsensusEngine.js";
-import type { DeadlockCycle, DependencyEdge } from "../../../packages/cognitive-engine/src/consensus/DeadlockDetector.js";
-import type { RecoveryResult, RecoveryState } from "../../../packages/cognitive-engine/src/consensus/SelfHealingStateResolver.js";
 import type { CrossAgentKnowledgeBus, VectorSearchResult } from "@klyn/ai-engine";
+
+export interface ConsensusProposal<T> {
+  readonly term: number;
+  readonly revision: number;
+  readonly state: T;
+}
+
+export interface ConsensusVote<T> {
+  readonly nodeId: string;
+  readonly term: number;
+  readonly revision: number;
+  readonly state: T;
+}
+
+export interface ConsensusDecision<T> {
+  readonly term: number;
+  readonly revision: number;
+  readonly quorum: number;
+  readonly voters: readonly string[];
+  readonly state: Readonly<T>;
+}
+
+export interface DependencyEdge {
+  readonly waiter: string;
+  readonly holder: string;
+  readonly resource?: string;
+}
+
+export interface DeadlockCycle {
+  readonly participants: readonly string[];
+  readonly edges: readonly DependencyEdge[];
+}
+
+export interface RecoveryState<T = unknown> {
+  readonly revision: number;
+  readonly value: T;
+}
+
+export interface RecoveryResult {
+  readonly victim: string;
+  readonly released: readonly string[];
+  readonly rewound: boolean;
+}
 
 export interface MasterEventBus {
   publish(topic: string, payload: unknown): Promise<unknown>;
