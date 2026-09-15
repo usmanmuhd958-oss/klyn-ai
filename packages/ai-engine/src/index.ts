@@ -48,3 +48,16 @@ export type {
   GoalDecomposerErrorCode,
 } from "./types/goal-decomposition.types.js";
 export { GoalDecomposerError } from "./types/goal-decomposition.types.js";
+export { PlannerBridge } from "./orchestrator/planner-bridge.js";
+export type {
+  ExecutableTask,
+  ExecutableTaskBatch,
+  PlannerBridgeErrorCode,
+  PlannerBridgeInputPlan,
+  PlannerBridgeOptions,
+  PlannerBridgeResult,
+  PlannerBridgeStateUpdate,
+  PlannerRuntimeTaskState,
+  PlannerTaskStatus,
+} from "./types/planner-bridge.types.js";
+export { PlannerBridgeError } from "./types/planner-bridge.types.js";
