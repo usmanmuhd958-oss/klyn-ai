@@ -7,7 +7,7 @@ describe("ProcessSandboxManager", () => {
   it("runs without a shell and redacts secret-like output", async () => {
     const sandbox = new ProcessSandboxManager();
     const result = await sandbox.execute({
-      command: process.execPath,
+      command: "node",
       args: ["-e", "console.log('Bearer abcdefghijklmnop'); console.error('api_key=supersecret')"],
       cwd: process.cwd(),
       env: { PATH: process.env.PATH, API_TOKEN: "not-child-visible" },
@@ -24,7 +24,7 @@ describe("ProcessSandboxManager", () => {
   it("terminates a process that exceeds the execution deadline", async () => {
     const sandbox = new ProcessSandboxManager();
     const result = await sandbox.execute({
-      command: process.execPath,
+      command: "node",
       args: ["-e", "setTimeout(() => {}, 5000)"],
       cwd: process.cwd(),
       timeoutMs: 100,
