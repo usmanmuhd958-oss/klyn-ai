@@ -25,6 +25,8 @@ const METHOD_NOT_FOUND = -32601;
 const INVALID_PARAMS = -32602;
 const INTERNAL_ERROR = -32603;
 
+type ClosableServer = Server & { closeAllConnections(): void };
+
 /** Newline-delimited JSON-RPC 2.0 transport for a local Klyn agent service. */
 export class JsonRpcAgentIpcTransport implements AgentIpcTransport {
   private readonly pending = new Map<JsonRpcId, { resolve: (value: AgentExecutionResponse) => void; reject: (error: Error) => void }>();
@@ -183,7 +185,7 @@ export async function startJsonRpcAgentIpcServer(
 
 /** Deterministically stops the RPC server and immediately tears down active sockets. */
 export async function closeJsonRpcAgentIpcServer(server: Server): Promise<void> {
-  server.closeAllConnections();
+  (server as ClosableServer).closeAllConnections();
   await new Promise<void>((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()));
   });
