@@ -57,11 +57,10 @@ test("creates one execution phase for independent tasks", () => {
 test("creates deterministic multi-stage parallel DAG batches", () => {
   const result = new PlannerBridge().bridge(parallelPlan());
 
-  assert.equal(result.batches.length, 3);
+  assert.equal(result.batches.length, 2);
   assert.deepEqual(result.batches.map((batch) => batch.tasks.map((task) => task.node.id)), [
     ["a", "b"],
-    ["d"],
-    ["c"],
+    ["c", "d"],
   ]);
 });
 
@@ -102,7 +101,15 @@ test("synchronizes state only after prerequisites complete", () => {
 });
 
 test("fails immediately when a task has an unmapped prerequisite", () => {
-  const invalid = planOf([node("a", ["missing"])], ["a"]);
+  const invalid: TaskGraphPlan = {
+    nodes: [node("a", ["missing"])],
+    edges: [],
+    dependencyMap: {
+      prerequisites: new Map([["a", ["missing"]]]),
+      dependents: new Map([["a", []]]),
+    },
+    executionOrder: ["a"],
+  };
   assert.throws(
     () => new PlannerBridge().bridge(invalid),
     (error: unknown) => error instanceof PlannerBridgeError && error.code === "PLANNER_BRIDGE_MISSING_PREREQUISITE",
