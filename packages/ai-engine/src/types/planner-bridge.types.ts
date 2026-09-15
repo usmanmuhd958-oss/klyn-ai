@@ -1,4 +1,4 @@
-import type { TaskGraphPlan, TaskGraphNode } from "./task-graph.types.js";
+import type { TaskGraphNode } from "./task-graph.types.js";
 
 export type PlannerTaskStatus =
   | "pending"
@@ -11,7 +11,6 @@ export type PlannerTaskStatus =
 export interface PlannerBridgeOptions {
   readonly executionId?: string;
   readonly namespace?: string;
-  readonly failOnUnmappedPrerequisite?: boolean;
 }
 
 export interface ExecutableTask {
@@ -38,7 +37,6 @@ export interface PlannerRuntimeTaskState {
 export interface PlannerBridgeResult {
   readonly executionId: string;
   readonly namespace: string;
-  readonly goal: string;
   readonly batches: readonly ExecutableTaskBatch[];
   readonly taskStates: ReadonlyMap<string, PlannerRuntimeTaskState>;
   readonly executionOrder: readonly string[];
@@ -65,5 +63,3 @@ export interface PlannerBridgeStateUpdate {
   readonly taskId: string;
   readonly status: PlannerTaskStatus;
 }
-
-export type PlannerBridgeInputPlan = TaskGraphPlan;
