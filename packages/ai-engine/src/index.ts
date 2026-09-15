@@ -29,3 +29,14 @@ export { DistributedEventBridge, InMemoryDurableEventTransport } from "./distrib
 export type { DistributedEvent, EventDelivery, DurableEventTransport, EventBusLike, DistributedEventBridgeOptions } from "./distributed-event-transport.js";
 export { ContextEmbeddingEngine, DeterministicEmbeddingProvider, VectorMemoryIndex, CrossAgentKnowledgeBus, cosineSimilarity } from "./vector-memory.js";
 export type { EmbeddingProvider, EmbeddingRecord, VectorSearchResult, KnowledgeItem } from "./vector-memory.js";
+export { TaskGraphPlanner } from "./planner/task-graph-planner.js";
+export type {
+  ExecutionDependencyMap,
+  PlannerConstraint,
+  TaskEdge,
+  TaskGraphNode,
+  TaskGraphPlan,
+  TaskGraphPlanRequest,
+  TaskGraphPlannerErrorCode,
+} from "./types/task-graph.types.js";
+export { TaskGraphPlannerError } from "./types/task-graph.types.js";
