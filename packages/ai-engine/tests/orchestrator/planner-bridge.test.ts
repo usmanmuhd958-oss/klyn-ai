@@ -54,7 +54,7 @@ test("enforces the exact canonical lifecycle", () => {
 
 test("rejects dependent execution until prerequisites are completed", () => {
   const result = new PlannerBridge().bridge(linearPlan());
-  assert.throws(() => new PlannerBridge().synchronizeState(result, { taskId: "b", status: "queued", expectedStateVersion: 1 }), (error: unknown) => error instanceof PlannerBridgeError && error.code === "PLANNER_BRIDGE_MISSING_PREREQUISITE");
+  assert.throws(() => new PlannerBridge().synchronizeState(result, { taskId: "b", status: "executing", expectedStateVersion: 1 }), (error: unknown) => error instanceof PlannerBridgeError && error.code === "PLANNER_BRIDGE_MISSING_PREREQUISITE");
 });
 
 test("replaces immutable snapshots without mutating the source", () => {
@@ -79,9 +79,13 @@ test("rejects stale competing snapshots deterministically", async () => {
     Promise.resolve().then(() => bridge.synchronizeState(initial, { taskId: "a", status: "queued", expectedStateVersion: 1 })),
   ]);
   assert.equal(results.filter((result) => result.status === "fulfilled").length, 2);
+  assert.equal(results.filter((result) => result.status === "rejected").length, 0);
   const first = results[0];
   assert.equal(first.status, "fulfilled");
-  assert.throws(() => bridge.synchronizeState(initial, { taskId: "a", status: "executing", expectedStateVersion: 1 }), (error: unknown) => error instanceof PlannerBridgeError && error.code === "PLANNER_BRIDGE_STALE_STATE");
+  if (first.status === "fulfilled") {
+    assert.equal(first.value.taskStates.get("a")?.stateVersion, 2);
+    assert.throws(() => bridge.synchronizeState(first.value, { taskId: "a", status: "executing", expectedStateVersion: 1 }), (error: unknown) => error instanceof PlannerBridgeError && error.code === "PLANNER_BRIDGE_STALE_STATE");
+  }
 });
 
 test("rejects malformed plans", () => {
