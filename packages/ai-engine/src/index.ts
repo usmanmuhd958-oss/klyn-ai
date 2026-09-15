@@ -36,7 +36,7 @@ export { GoalDecompositionEngine } from "./planner/goal-decomposition-engine.js"
 export type { DecomposedTaskNode, GoalDecompositionRequest, GoalDecompositionResult, GoalDecomposerErrorCode } from "./types/goal-decomposition.types.js";
 export { GoalDecomposerError } from "./types/goal-decomposition.types.js";
 export { PlannerBridge } from "./orchestrator/planner-bridge.js";
-export type { ExecutableTask, ExecutableTaskBatch, ImmutableTaskStateStore, PlannerBridgeErrorCode, PlannerBridgeOptions, PlannerBridgeResult, PlannerBridgeStateUpdate, PlannerRuntimeTaskState, PlannerTaskStatus } from "./types/planner-bridge.types.js";
+export type { ExecutableTask, ExecutableTaskBatch, PlannerBridgeErrorCode, PlannerBridgeOptions, PlannerBridgeResult, PlannerBridgeStateUpdate, PlannerRuntimeTaskState, PlannerTaskStatus } from "./types/planner-bridge.types.js";
 export { PlannerBridgeError, ImmutableTaskStateStore } from "./types/planner-bridge.types.js";
 export { SpatialBus } from "./runtime/spatial-bus.js";
 export { SupabasePlannerStateStore } from "./runtime/supabase-planner-state-store.js";
