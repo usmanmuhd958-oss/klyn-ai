@@ -41,7 +41,6 @@ export class PlannerBridge {
     return Object.freeze({
       executionId,
       namespace,
-      goal: plan.nodes.length > 0 ? plan.nodes[0]!.metadata?.goal?.toString() ?? "" : "",
       batches: Object.freeze(batches),
       taskStates,
       executionOrder: Object.freeze(plan.executionOrder.slice()),
@@ -135,7 +134,7 @@ export class PlannerBridge {
         throw new PlannerBridgeError("PLANNER_BRIDGE_CYCLE", "No executable task remains; the plan is cyclic or blocked.");
       }
 
-      const tasks = ready.map((id) => {
+      const tasks: ExecutableTask[] = ready.map((id) => {
         const node = nodeMap.get(id);
         if (node === undefined) {
           throw new PlannerBridgeError("PLANNER_BRIDGE_MISSING_NODE", `Execution queue references an unknown task: ${id}`);
