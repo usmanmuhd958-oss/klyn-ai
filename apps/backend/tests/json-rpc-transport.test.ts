@@ -5,7 +5,7 @@ import { JsonRpcAgentIpcTransport, startJsonRpcAgentIpcServer } from "../src/ipc
 
 test("JSON-RPC IPC round trip over loopback", async () => {
   const service = {
-    execute: async (req: any) => ({
+    execute: async (req: { executionId: string }) => ({
       executionId: req.executionId,
       result: { exitCode: 0, stdout: "ok", stderr: "", durationMs: 1 },
     }),
