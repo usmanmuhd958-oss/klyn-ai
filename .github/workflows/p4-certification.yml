@@ -1,0 +1,61 @@
+name: Klyn P4 Backend Swarm Certification
+
+on:
+  push:
+    branches:
+      - p4/backend-agent-swarm-runtime
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: klyn-p4-certification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v4
+        with:
+          ref: p4/backend-agent-swarm-runtime
+          fetch-depth: 1
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+          run_install: false
+      - name: Validate toolchain
+        run: |
+          set -euo pipefail
+          node --version
+          pnpm --version
+          test "$(pnpm --version)" = "11.24.0"
+      - name: Frozen Install Gate
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck Gate
+        run: pnpm typecheck
+      - name: Build Gate
+        run: pnpm build
+      - name: Test Gate
+        run: pnpm test
+      - name: Lint Gate
+        run: pnpm lint
+      - name: Lockfile SHA-256
+        run: sha256sum pnpm-lock.yaml
+      - name: Frontend exclusion audit
+        run: |
+          set -euo pipefail
+          ! find . -path './node_modules' -prune -o -path './.git' -prune -o -type f \( -name '*.tsx' -o -name '*.jsx' \) -print | grep -E '(apps|packages)/' || true
+          test ! -d apps/frontend
+          test ! -d apps/studio
+          test ! -d apps/web
+      - name: Certification marker
+        run: echo "P4 backend-only candidate"
