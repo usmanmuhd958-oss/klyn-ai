@@ -88,9 +88,9 @@ test("phase 8.7 evicts silent nodes and reassigns each orphan task once", async 
   const monitor = new NodeHeartbeatMonitor({ reassign: async (taskId: string) => { reassigned.push(taskId); } }, { nodeTimeoutMs: 100, evictionGraceMs: 50, now: () => now });
   monitor.join("node-a");
   now += 151;
-  assert.deepEqual(monitor.observe([{ taskId: "t1", nodeId: "node-a" }]), ["node-a"]);
+  assert.deepEqual(monitor.observe(), ["node-a"]);
   assert.equal(monitor.getNode("node-a")?.status, "evicted");
-  await monitor.reassignOrphans([{ taskId: "t1", nodeId: "node-a" }, { taskId: "t2", nodeId: "node-a" }]);
-  await monitor.reassignOrphans([{ taskId: "t1", nodeId: "node-a" }]);
+  await monitor.reconcile([{ taskId: "t1", nodeId: "node-a" }, { taskId: "t2", nodeId: "node-a" }]);
+  await monitor.reconcile([{ taskId: "t1", nodeId: "node-a" }]);
   assert.deepEqual(reassigned, ["t1", "t2"]);
 });
