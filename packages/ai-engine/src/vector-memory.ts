@@ -32,7 +32,7 @@ export function cosineSimilarity(a: readonly number[], b: readonly number[]): nu
   }
   const left = normalize(a);
   const right = normalize(b);
-  return left.reduce((sum, value, index) => sum + value * right[index], 0);
+  return left.reduce((sum, value, index) => sum + value * (right[index] ?? 0), 0);
 }
 
 /** Deterministic local encoder for tests and deployments without a model provider. */
@@ -42,13 +42,14 @@ export class DeterministicEmbeddingProvider implements EmbeddingProvider {
   }
 
   async embed(text: string): Promise<readonly number[]> {
-    const vector = new Array<number>(this.dimension).fill(0);
+    const vector: number[] = new Array(this.dimension).fill(0);
     const normalized = text.normalize("NFKC").toLowerCase();
     for (let index = 0; index < normalized.length; index += 1) {
       const code = normalized.charCodeAt(index);
-      vector[(code + index) % this.dimension] += 1 + (code % 7) / 7;
+      const position = (code + index) % this.dimension;
+      vector[position] = (vector[position] ?? 0) + 1 + (code % 7) / 7;
     }
-    if (vector.every((value) => value === 0)) vector[0] = 1;
+    if (vector[0] === 0) vector[0] = 1;
     return normalize(vector);
   }
 }
