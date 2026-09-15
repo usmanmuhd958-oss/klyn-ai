@@ -35,7 +35,6 @@ jobs:
           run_install: false
 
       - name: Generate canonical lockfile
-        if: ${{ !hashFiles('pnpm-lock.yaml') }}
         run: |
           corepack enable
           corepack prepare pnpm@11.24.0 --activate
@@ -52,12 +51,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git diff --quiet -- pnpm-lock.yaml; then
-            echo "pnpm-lock.yaml already committed; nothing to commit."
+          if git ls-files --error-unmatch pnpm-lock.yaml >/dev/null 2>&1 && git diff --quiet -- pnpm-lock.yaml; then
+            echo "pnpm-lock.yaml already committed and unchanged; nothing to commit."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add pnpm-lock.yaml
+          git diff --cached --quiet && { echo "No lockfile changes staged."; exit 0; }
           git commit -m "chore(workspace): generate canonical pnpm lockfile"
           git push origin HEAD:p2/agent-swarm-runtime-hardening
