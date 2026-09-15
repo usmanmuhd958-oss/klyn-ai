@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { SecretMasker } from "./secret-masker.js";
 
@@ -10,6 +10,8 @@ export interface ProcessSandboxRequest {
   allowedEnv?: readonly string[];
   timeoutMs?: number;
   memoryMb?: number;
+  maxCpuMs?: number;
+  maxFileDescriptors?: number;
   maxOutputBytes?: number;
   fenceKey?: string;
   ownerId?: string;
@@ -29,6 +31,8 @@ export interface ProcessSandboxPolicy {
   maxTimeoutMs: number;
   maxMemoryMb: number;
   maxOutputBytes: number;
+  maxCpuMs?: number;
+  maxFileDescriptors?: number;
   allowedCommands: ReadonlySet<string>;
 }
 
@@ -36,6 +40,8 @@ export const DEFAULT_PROCESS_SANDBOX_POLICY: ProcessSandboxPolicy = {
   maxTimeoutMs: 30_000,
   maxMemoryMb: 512,
   maxOutputBytes: 1_000_000,
+  maxCpuMs: 30_000,
+  maxFileDescriptors: 256,
   allowedCommands: new Set(["node", "python", "python3", "deno", "bun", "cargo", "rustc"]),
 };
 
@@ -62,6 +68,8 @@ export class ProcessSandboxManager {
 
     const timeoutMs = Math.min(request.timeoutMs ?? this.policy.maxTimeoutMs, this.policy.maxTimeoutMs);
     const memoryMb = Math.min(request.memoryMb ?? this.policy.maxMemoryMb, this.policy.maxMemoryMb);
+    const maxCpuMs = Math.min(request.maxCpuMs ?? this.policy.maxCpuMs ?? this.policy.maxTimeoutMs, this.policy.maxCpuMs ?? this.policy.maxTimeoutMs);
+    const maxFileDescriptors = Math.min(request.maxFileDescriptors ?? this.policy.maxFileDescriptors ?? 256, this.policy.maxFileDescriptors ?? 256);
     const maxOutputBytes = Math.min(request.maxOutputBytes ?? this.policy.maxOutputBytes, this.policy.maxOutputBytes);
     const env = this.secretMasker.maskEnvironment(request.env ?? process.env, request.allowedEnv ?? []);
     const started = Date.now();
@@ -110,19 +118,24 @@ export class ProcessSandboxManager {
       child.stdout?.on("data", (chunk: Buffer) => append("stdout", chunk));
       child.stderr?.on("data", (chunk: Buffer) => append("stderr", chunk));
 
-      const memoryTimer = globalThis.setInterval(() => {
-        const rss = child.pid ? this.readResidentMemoryBytes(child.pid) : 0;
+      const resourceTimer = globalThis.setInterval(() => {
+        if (!child.pid) return;
+        const rss = this.readResidentMemoryBytes(child.pid);
+        const cpuMs = this.readCpuTimeMs(child.pid);
+        const descriptors = this.readFileDescriptorCount(child.pid);
         if (rss > memoryMb * 1024 * 1024) {
           memoryExceeded = true;
           this.terminate(child);
+          return;
         }
+        if (cpuMs > maxCpuMs || descriptors > maxFileDescriptors) this.terminate(child);
       }, 100);
 
       const finish = (error?: Error): void => {
         if (settled) return;
         settled = true;
         globalThis.clearTimeout(timeoutTimer);
-        globalThis.clearInterval(memoryTimer);
+        globalThis.clearInterval(resourceTimer);
         if (fenceKey && ownerId) this.releaseFence(fenceKey, ownerId);
         if (error) {
           reject(error);
@@ -189,6 +202,27 @@ export class ProcessSandboxManager {
       const status = readFileSync(`/proc/${pid}/status`, "utf8");
       const match = /VmRSS:\s+(\d+)\s+kB/.exec(status);
       return match ? Number(match[1]) * 1024 : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  private readCpuTimeMs(pid: number): number {
+    if (process.platform !== "linux") return 0;
+    try {
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      const fields = stat.trim().split(" ");
+      const ticks = Number(fields[13] ?? 0) + Number(fields[14] ?? 0);
+      return (ticks / 100) * 1000;
+    } catch {
+      return 0;
+    }
+  }
+
+  private readFileDescriptorCount(pid: number): number {
+    if (process.platform !== "linux") return 0;
+    try {
+      return readdirSync(`/proc/${pid}/fd`).length;
     } catch {
       return 0;
     }
