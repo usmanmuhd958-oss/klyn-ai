@@ -72,7 +72,7 @@ jobs:
         run: timeout --signal=TERM --kill-after=15s 300s pnpm --filter @klyn/ai-engine test
 
       - name: Lint Gate
-        run: timeout --signal=TERM --kill-after=15s 300s pnpm --filter @klyn/ai-engine lint
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm --filter @klyn/ai-engine exec eslint "src/**/*.ts" "tests/**/*.ts" --max-warnings 0
 
       - name: Backend Scope Audit
         shell: bash
