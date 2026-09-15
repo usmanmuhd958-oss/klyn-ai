@@ -64,7 +64,7 @@ jobs:
           set -euo pipefail
           mapfile -d '' brain_files < <(find 1.brain -type f -name '*.ts' -print0)
           test "${#brain_files[@]}" -gt 0
-          pnpm exec tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --skipLibCheck "${brain_files[@]}"
+          pnpm exec tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --moduleDetection force --types node --skipLibCheck "${brain_files[@]}"
 
       - name: Build
         run: pnpm build
@@ -79,6 +79,5 @@ jobs:
         shell: bash
         run: sha256sum pnpm-lock.yaml
 
-      # P3.7 certification marker
       - name: Certification marker
         run: echo "P3.7 cloud audit"
