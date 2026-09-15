@@ -51,6 +51,7 @@ export class DistributedEventBridge {
       timestamp: Date.now(),
       payload,
     });
+    this.seen.add(event.id);
     await this.options.transport.publish(event);
     return event;
   }
