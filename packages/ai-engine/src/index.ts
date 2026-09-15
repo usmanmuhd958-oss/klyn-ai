@@ -9,6 +9,8 @@ export { ReplicateAdapter } from "./providers/replicate.js";
 export { UniversalChatAdapter, createUniversalAdapter } from "./providers/universal.js";
 export type { UniversalProviderConfig } from "./providers/universal.js";
 export { AIProviderRouter } from "./router.js";
+export { ProviderCircuitBreaker, ProviderCircuitOpenError } from "./circuit-breaker.js";
+export type { CircuitBreakerOptions } from "./circuit-breaker.js";
 export { streamToSSE, sseHeaders } from "./sse.js";
 export type { RouteTarget, RouterOptions, Telemetry } from "./router.js";
 export { AgentSwarmCoordinator } from "./swarm/coordinator.js";
