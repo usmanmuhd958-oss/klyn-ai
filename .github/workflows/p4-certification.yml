@@ -4,13 +4,16 @@ on:
   push:
     branches:
       - p4/backend-agent-swarm-runtime
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: klyn-p4-certification-${{ github.ref }}
+  group: klyn-p4-certification-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -53,7 +56,6 @@ jobs:
       - name: Frontend exclusion audit
         run: |
           set -euo pipefail
-          ! find . -path './node_modules' -prune -o -path './.git' -prune -o -type f \( -name '*.tsx' -o -name '*.jsx' \) -print | grep -E '(apps|packages)/' || true
           test ! -d apps/frontend
           test ! -d apps/studio
           test ! -d apps/web
