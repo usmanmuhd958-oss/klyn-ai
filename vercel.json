@@ -2,5 +2,5 @@
   "buildCommand": "cd apps/studio/apps/web && npx next build",
   "outputDirectory": "apps/studio/apps/web/.next",
   "installCommand": "pnpm install || npm install",
-  "ignoreCommand": "bash ./vercel-ignore-build.sh"
+  "ignoreCommand": "git diff --quiet HEAD^ HEAD apps/studio/apps/web"
 }
