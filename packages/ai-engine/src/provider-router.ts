@@ -33,17 +33,17 @@ export class RouterPipeline {
         const started = performance.now();
         try {
           const response = CompletionResponseSchema.parse(await target.adapter.generate({ ...request, model: target.model }));
-          this.recordLatency(target.provider, performance.now() - started);
           this.recordUsage(response);
           if (schema) { let value: unknown; try { value = JSON.parse(response.output); } catch { throw new Error("Provider returned invalid JSON for structured output"); } schema.parse(value); }
           return response;
         } catch (error) {
-          this.recordLatency(target.provider, performance.now() - started);
           this.metrics.failures++;
           this.metrics.failureRate = this.metrics.failures / this.metrics.attempts;
           lastError = error; if (!isRetryable(error)) throw error;
           if (retry === this.policy.maxRetriesPerProvider) break;
           this.metrics.retries++; await sleep(backoff(retry, this.policy, Math.random), request.signal);
+        } finally {
+          this.recordLatency(target.provider, performance.now() - started);
         }
       }
     }
