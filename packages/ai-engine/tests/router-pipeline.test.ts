@@ -8,7 +8,7 @@ import type { ProviderAdapter, ProviderRequest, ProviderResponse, StreamChunk } 
 class Stub implements ProviderAdapter {
   constructor(readonly name: ProviderAdapter["name"], private readonly run: (r: ProviderRequest) => ProviderResponse | Error) {}
   async generate(r: ProviderRequest): Promise<ProviderResponse> { const v = this.run(r); if (v instanceof Error) throw v; return v; }
-  async *stream(_r: ProviderRequest): AsyncIterable<StreamChunk> { yield* []; }
+  async *stream(r: ProviderRequest): AsyncIterable<StreamChunk> { void r; yield* []; }
 }
 const response = (provider: ProviderAdapter["name"], model: string, output: string): ProviderResponse => ({ provider, model, output, usage: { inputTokens: 10, outputTokens: 5 } });
 
