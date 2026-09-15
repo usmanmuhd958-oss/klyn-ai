@@ -26,6 +26,12 @@ export const AgentExecutionResponseSchema = z.object({
   }).strict(),
 }).strict();
 
+export const AgentEventEnvelopeSchema = z.object({
+  executionId: z.string().min(1).max(256),
+  type: z.enum(["token", "progress", "checkpoint", "completed", "failed", "cancelled"]),
+  payload: z.unknown(),
+}).strict();
+
 export const JsonRpcRequestSchema = z.object({
   jsonrpc: z.literal("2.0"),
   id: JsonRpcIdSchema,
