@@ -13,3 +13,4 @@ export * from "./LearningEngine.js";
 export * from "./ExperienceMemory.js";
 export * from "./CognitiveLoop.js";
 export * from "./swarm/DagOrchestrator.js";
+export * from "./swarm/ReadyQueue.js";
