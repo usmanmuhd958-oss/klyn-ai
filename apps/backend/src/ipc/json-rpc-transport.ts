@@ -43,13 +43,12 @@ export class JsonRpcAgentIpcTransport implements AgentIpcTransport {
   }
 
   call(request: AgentExecutionRequest): Promise<AgentExecutionResponse> {
-    const validatedRequest = AgentExecutionRequestSchema.parse(request);
     const id = this.nextId++;
-    jsonLogger.info("rpc_request", { id, method: "execute", executionId: validatedRequest.executionId });
-
     return new Promise<AgentExecutionResponse>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
       try {
+        const validatedRequest = AgentExecutionRequestSchema.parse(request);
+        jsonLogger.info("rpc_request", { id, method: "execute", executionId: validatedRequest.executionId });
+        this.pending.set(id, { resolve, reject });
         const socket = this.ensureSocket();
         socket.write(`${JSON.stringify({ jsonrpc: "2.0", id, method: "execute", params: validatedRequest })}\n`);
       } catch (error) {
@@ -147,10 +146,7 @@ export async function startJsonRpcAgentIpcServer(
   service: AgentSandboxService,
   options: { host?: string; port?: number; socketPath?: string } = {},
 ): Promise<Server> {
-  const sockets = new Set<Socket>();
   const server = createServer((socket) => {
-    sockets.add(socket);
-    socket.once("close", () => sockets.delete(socket));
     socket.on("error", (error) => {
       jsonLogger.error("rpc_socket_error", { error: error.message });
     });
