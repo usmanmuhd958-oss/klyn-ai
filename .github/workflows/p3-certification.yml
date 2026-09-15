@@ -34,6 +34,15 @@ jobs:
           version: 11.24.0
           run_install: false
 
+      - name: Validate runtime toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version
+          pnpm --version
+          test "$(node --version)" = "v22.23.2"
+          test "$(pnpm --version)" = "11.24.0"
+
       - name: Validate workspace contract
         shell: bash
         run: |
@@ -62,6 +71,6 @@ jobs:
         shell: bash
         run: sha256sum pnpm-lock.yaml
 
-      # P3.6 certification trigger marker
+      # P3.7 certification trigger marker
       - name: Certification marker
-        run: echo "P3.6 cloud audit"
+        run: echo "P3.7 cloud audit"
