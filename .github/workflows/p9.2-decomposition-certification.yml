@@ -64,7 +64,19 @@ jobs:
           pnpm install --offline --frozen-lockfile || pnpm install --prefer-offline --frozen-lockfile
 
       - name: TypeScript Gate
-        run: timeout --signal=TERM --kill-after=15s 300s pnpm --filter @klyn/ai-engine typecheck
+        shell: bash
+        run: |
+          set +e
+          timeout --signal=TERM --kill-after=15s 300s pnpm --filter @klyn/ai-engine typecheck > /tmp/klyn-tsc.log 2>&1
+          code=$?
+          {
+            echo "## AI Engine TypeScript Diagnostics"
+            echo '```text'
+            cat /tmp/klyn-tsc.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/klyn-tsc.log
+          exit "$code"
 
       - name: Build Gate
         run: timeout --signal=TERM --kill-after=15s 300s pnpm --filter @klyn/ai-engine build
