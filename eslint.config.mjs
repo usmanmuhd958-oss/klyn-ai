@@ -14,7 +14,7 @@ const runtimeGlobals = {
 };
 
 export default tseslint.config(
-  { ignores: ["**/dist/**", "**/node_modules/**", "**/.next/**", "**/coverage/**"] },
+  { ignores: ["**/dist/**", "**/node_modules/**", "**/.next/**", "**/coverage/**", "**/src/**/*.js"] },
   {
     languageOptions: {
       globals: runtimeGlobals,
