@@ -19,7 +19,7 @@ export interface NodeHeartbeatMonitorOptions {
   readonly now?: () => number;
 }
 
-/** Tracks node liveness and emits exactly-once reassignment callbacks per eviction observation. */
+/** Tracks node liveness and provides deterministic orphan-task reconciliation after eviction. */
 export class NodeHeartbeatMonitor {
   private readonly nodes = new Map<string, ClusterNode>();
   private readonly orphaned = new Set<string>();
@@ -55,7 +55,7 @@ export class NodeHeartbeatMonitor {
     if (current) this.nodes.set(nodeId, { ...current, status: "evicted" });
   }
 
-  observe(tasks: readonly OrphanTask[]): readonly string[] {
+  observe(): readonly string[] {
     const now = this.now();
     const evicted: string[] = [];
     for (const [nodeId, node] of this.nodes) {
@@ -70,6 +70,11 @@ export class NodeHeartbeatMonitor {
       evicted.push(nodeId);
     }
     return Object.freeze(evicted);
+  }
+
+  async reconcile(tasks: readonly OrphanTask[]): Promise<readonly string[]> {
+    this.observe();
+    return this.reassignOrphans(tasks);
   }
 
   async reassignOrphans(tasks: readonly OrphanTask[]): Promise<readonly string[]> {
