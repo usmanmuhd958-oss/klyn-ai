@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import { readFile, rename, writeFile } from "node:fs/promises";
-import initSqlJs, { type Database, type SqlJsStatic } from "sql.js";
+import initSqlJs, { type Database, type SqlJsStatic, type SqlValue } from "sql.js";
 import type { AgentEvent, AgentEventStore, AgentState } from "./agent-state.js";
 
 const require = createRequire(import.meta.url);
@@ -18,48 +18,59 @@ export class SqliteAgentEventStore implements AgentEventStore {
     try { bytes = new Uint8Array(await readFile(path)); } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-    const store = new SqliteAgentEventStore(new SQL.Database(bytes), path);
+    const store = new SqliteAgentEventStore(bytes ? new SQL.Database(bytes) : new SQL.Database(), path);
     store.initialize();
-    await store.persist();
     return store;
   }
 
-  async append<T>(input: Omit<AgentEvent<T>, "id" | "sequence" | "timestamp">): Promise<AgentEvent<T>> {
+  async append(event: Omit<AgentEvent, "sequence">): Promise<AgentEvent> {
     return this.withLock(async () => {
-      const event: AgentEvent<T> = { ...input, id: crypto.randomUUID(), sequence: this.nextSequence(input.treeId, input.agentId), timestamp: Date.now() };
+      const sequence = this.nextSequence(event.treeId, event.agentId);
+      const persisted = { ...event, sequence } as AgentEvent;
       this.db.run("BEGIN IMMEDIATE");
       try {
-        this.insert(event);
-        this.db.run("COMMIT"); await this.persist(); return event;
-      } catch (error) { this.db.run("ROLLBACK"); throw error; }
+        this.insert(persisted);
+        this.db.run("COMMIT");
+        await this.persist();
+        return persisted;
+      } catch (error) {
+        this.db.run("ROLLBACK");
+        throw error;
+      }
     });
   }
 
-  async read(treeId: string, agentId?: string): Promise<readonly AgentEvent[]> {
-    const sql = agentId ? "SELECT * FROM events WHERE tree_id = ? AND agent_id = ? ORDER BY sequence" : "SELECT * FROM events WHERE tree_id = ? ORDER BY timestamp, sequence";
-    return this.rows(sql, agentId ? [treeId, agentId] : [treeId]).map((row) => this.toEvent(row));
+  read(treeId: string, agentId?: string): AgentEvent[] {
+    const params: SqlValue[] = agentId === undefined ? [treeId] : [treeId, agentId];
+    const sql = agentId === undefined
+      ? "SELECT * FROM events WHERE tree_id=? ORDER BY timestamp, sequence"
+      : "SELECT * FROM events WHERE tree_id=? AND agent_id=? ORDER BY timestamp, sequence";
+    return this.rows(sql, params).map((row) => this.toEvent(row));
   }
 
-  async snapshot(treeId: string, agentId: string): Promise<AgentState> {
-    const row = this.rows("SELECT values_json, version FROM agent_state WHERE tree_id = ? AND agent_id = ?", [treeId, agentId])[0];
-    return row ? { treeId, agentId, values: JSON.parse(String(row.values_json)), version: Number(row.version) } : this.replay(treeId, agentId);
+  snapshot(treeId: string, agentId: string): AgentState | undefined {
+    const row = this.rows("SELECT tree_id, agent_id, values_json, version FROM agent_state WHERE tree_id=? AND agent_id=?", [treeId, agentId])[0];
+    if (!row) return undefined;
+    return { treeId: String(row.tree_id), agentId: String(row.agent_id), values: JSON.parse(String(row.values_json)), version: Number(row.version) };
   }
 
-  async replay(treeId: string, agentId: string): Promise<AgentState> {
-    const values: Record<string, unknown> = {}; let version = 0;
-    for (const event of await this.read(treeId, agentId)) {
-      if (event.type !== "checkpoint") continue;
-      const payload = event.payload as { key?: string; value?: unknown };
-      if (typeof payload.key === "string") { values[payload.key] = payload.value; version++; }
-    }
-    return { treeId, agentId, values, version };
+  replay(treeId: string, agentId: string): AgentState | undefined {
+    return this.snapshot(treeId, agentId);
   }
 
   async setValue(treeId: string, agentId: string, key: string, value: unknown): Promise<AgentState> {
     return this.withLock(async () => {
-      const previous = await this.snapshot(treeId, agentId);
-      const next: AgentState = { treeId, agentId, values: { ...previous.values, [key]: value }, version: previous.version + 1 };
-      const event: AgentEvent = { id: crypto.randomUUID(), treeId, agentId, sequence: this.nextSequence(treeId, agentId), type: "checkpoint", timestamp: Date.now(), payload: { key, value } };
+      const current = this.snapshot(treeId, agentId) ?? { treeId, agentId, values: {}, version: 0 };
+      const next: AgentState = { ...current, values: { ...current.values, [key]: value }, version: current.version + 1 };
+      const event: AgentEvent = {
+        id: `${treeId}:${agentId}:checkpoint:${next.version}`,
+        treeId,
+        agentId,
+        sequence: this.nextSequence(treeId, agentId),
+        type: "checkpoint",
+        timestamp: Date.now(),
+        payload: { key, value, version: next.version },
+      };
       this.db.run("BEGIN IMMEDIATE");
       try {
         this.insert(event);
@@ -79,7 +90,7 @@ export class SqliteAgentEventStore implements AgentEventStore {
   }
   private nextSequence(treeId: string, agentId: string): number { return Number(this.rows("SELECT COALESCE(MAX(sequence),0) AS sequence FROM events WHERE tree_id=? AND agent_id=?", [treeId, agentId])[0]?.sequence ?? 0) + 1; }
   private insert(event: AgentEvent): void { this.db.run("INSERT INTO events (id,tree_id,agent_id,sequence,type,timestamp,payload) VALUES (?,?,?,?,?,?,?)", [event.id,event.treeId,event.agentId,event.sequence,event.type,event.timestamp,JSON.stringify(event.payload)]); }
-  private rows(sql: string, params: unknown[] = []): SqlRow[] { const statement = this.db.prepare(sql); try { statement.bind(params); const out: SqlRow[]=[]; while(statement.step()) out.push(statement.getAsObject() as SqlRow); return out; } finally { statement.free(); } }
+  private rows(sql: string, params: SqlValue[] = []): SqlRow[] { const statement = this.db.prepare(sql); try { statement.bind(params); const out: SqlRow[]=[]; while(statement.step()) out.push(statement.getAsObject() as SqlRow); return out; } finally { statement.free(); } }
   private toEvent(row: SqlRow): AgentEvent { return { id:String(row.id), treeId:String(row.tree_id), agentId:String(row.agent_id), sequence:Number(row.sequence), type:row.type as AgentEvent["type"], timestamp:Number(row.timestamp), payload:JSON.parse(String(row.payload)) }; }
   private async persist(): Promise<void> { const temp=`${this.path}.tmp-${process.pid}`; await writeFile(temp, Buffer.from(this.db.export())); await rename(temp,this.path); }
   private async withLock<T>(operation:()=>Promise<T>): Promise<T> { const previous=this.lock; let release!:()=>void; this.lock=new Promise((resolve)=>{release=resolve;}); await previous; try{return await operation();} finally{release();} }
