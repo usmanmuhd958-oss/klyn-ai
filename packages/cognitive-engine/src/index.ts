@@ -4,7 +4,6 @@ export * from "./GoalManager.js";
 export * from "./PlanningEngine.js";
 export * from "./ReflectionEngine.js";
 export * from "./SelfModel.js";
-
 export * from "./WorldModel.js";
 export * from "./ReasoningEngine.js";
 export * from "./DecisionEngine.js";
@@ -13,3 +12,4 @@ export * from "./CuriosityEngine.js";
 export * from "./LearningEngine.js";
 export * from "./ExperienceMemory.js";
 export * from "./CognitiveLoop.js";
+export * from "./swarm/DagOrchestrator.js";
