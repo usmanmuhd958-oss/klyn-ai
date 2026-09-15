@@ -88,7 +88,6 @@ export class ProcessSandboxManager {
       let timedOut = false;
       let memoryExceeded = false;
       let settled = false;
-      let memoryTimer: ReturnType<typeof globalThis.setInterval> | undefined;
       const timeoutTimer = globalThis.setTimeout(() => {
         timedOut = true;
         this.terminate(child);
@@ -111,7 +110,7 @@ export class ProcessSandboxManager {
       child.stdout?.on("data", (chunk: Buffer) => append("stdout", chunk));
       child.stderr?.on("data", (chunk: Buffer) => append("stderr", chunk));
 
-      memoryTimer = globalThis.setInterval(() => {
+      const memoryTimer = globalThis.setInterval(() => {
         const rss = child.pid ? this.readResidentMemoryBytes(child.pid) : 0;
         if (rss > memoryMb * 1024 * 1024) {
           memoryExceeded = true;
@@ -123,7 +122,7 @@ export class ProcessSandboxManager {
         if (settled) return;
         settled = true;
         globalThis.clearTimeout(timeoutTimer);
-        if (memoryTimer !== undefined) globalThis.clearInterval(memoryTimer);
+        globalThis.clearInterval(memoryTimer);
         if (fenceKey && ownerId) this.releaseFence(fenceKey, ownerId);
         if (error) {
           reject(error);
