@@ -4,6 +4,7 @@ import { loadEnv } from "./config/env.js";
 
 export * from "./ipc/agent-service.js";
 export * from "./ipc/json-rpc-transport.js";
+export * from "./supabase/execution-ledger-sync.js";
 
 const env = loadEnv();
 const app = express();
