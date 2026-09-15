@@ -1,0 +1,128 @@
+name: P9.2 Goal Decomposition Certification
+
+on:
+  push:
+    branches: [p9.1/task-graph-planner]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: read
+
+concurrency:
+  group: p9.2-decomposition-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NODE_OPTIONS: --unhandled-rejections=strict
+      PNPM_VERSION: 11.24.0
+      P9_2_BASE_SHA: ce0dd50c163aa5ab7509bafc789023d01e80c1bf
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Verify runtime
+        run: |
+          set -euo pipefail
+          node --version
+          pnpm --version
+          test "$(node --version | cut -d. -f1)" = "v20"
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+
+      - name: Warm pnpm store
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm config set store-dir "$HOME/.pnpm-store"
+          pnpm fetch --prefer-offline --frozen-lockfile || pnpm fetch --frozen-lockfile
+
+      - name: Offline-first frozen install
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm install --offline --frozen-lockfile || pnpm install --prefer-offline --frozen-lockfile
+
+      - name: TypeScript Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm --filter @klyn/ai-engine typecheck
+
+      - name: Build Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm --filter @klyn/ai-engine build
+
+      - name: Test Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm --filter @klyn/ai-engine test
+
+      - name: Lint Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm --filter @klyn/ai-engine lint
+
+      - name: Backend Scope Audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main --depth=1
+          git diff --name-only "$P9_2_BASE_SHA"...HEAD > /tmp/klyn-p92-files.txt
+          if grep -E '(^|/)(apps/frontend|apps/studio|apps/web|packages/frontend)(/|$)|\.(tsx|jsx|css|scss|sass|html)$' /tmp/klyn-p92-files.txt; then
+            echo "Frontend or UI files detected in the Phase 9.2 scope."
+            exit 1
+          fi
+          cat /tmp/klyn-p92-files.txt
+
+      - name: Phase 9.2 Wiring Audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f packages/ai-engine/src/planner/goal-decomposition-engine.ts
+          test -f packages/ai-engine/src/types/goal-decomposition.types.ts
+          test -f packages/ai-engine/tests/planner/goal-decomposition-engine.test.ts
+          grep -q 'GoalDecompositionEngine' packages/ai-engine/src/index.ts
+          grep -q 'GoalDecomposerError' packages/ai-engine/src/index.ts
+          grep -q 'GoalDecompositionRequest' packages/ai-engine/src/index.ts
+          grep -q 'TaskGraphPlanRequest' packages/ai-engine/src/types/goal-decomposition.types.ts
+
+      - name: Type Safety Audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -R -nE '\bany\b|@ts-ignore|@ts-nocheck' packages/ai-engine/src/planner/goal-decomposition-engine.ts packages/ai-engine/src/types/goal-decomposition.types.ts packages/ai-engine/tests/planner/goal-decomposition-engine.test.ts; then
+            echo "Forbidden TypeScript escape hatches detected."
+            exit 1
+          fi
+
+      - name: Workflow Language Audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -nP '[^\x00-\x7F]' .github/workflows/p9.2-decomposition-certification.yml; then
+            echo "Non-English or non-ASCII workflow text detected."
+            exit 1
+          fi
+
+  certification-report:
+    if: github.event_name == 'pull_request'
+    needs: certify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish certification summary
+        run: |
+          echo "P9.2 decomposition certification gates completed successfully."
+          echo "Goal decomposition is deterministic, typed, tested, and wired to TaskGraphPlanRequest."
+          echo "CI uses cached pnpm dependencies with offline-first installation and a network fallback."
