@@ -55,7 +55,7 @@ export class FallbackRouter {
     }
     throw new Error(`All configured AI providers failed: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
   }
-  snapshot(): Readonly<FallbackTelemetry> { return structuredClone(this.telemetry); }
+  snapshot(): Readonly<FallbackTelemetry> { return JSON.parse(JSON.stringify(this.telemetry)) as FallbackTelemetry; }
   private async sleep(ms: number, signal?: AbortSignal): Promise<void> {
     if (!ms) return;
     await new Promise<void>((resolve, reject) => {
