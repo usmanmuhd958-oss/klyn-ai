@@ -7,9 +7,13 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: p5-certification-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   certify:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
