@@ -23,7 +23,6 @@ jobs:
       NODE_OPTIONS: --unhandled-rejections=strict
       PNPM_VERSION: 11.24.0
       NODE_VERSION: '22'
-      P9_2_BASE_SHA: ce0dd50c163aa5ab7509bafc789023d01e80c1bf
     steps:
       - name: Checkout candidate
         uses: actions/checkout@v4
@@ -39,8 +38,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
 
       - name: Verify runtime
         run: |
@@ -73,59 +70,62 @@ jobs:
         run: timeout --signal=TERM --kill-after=15s 300s pnpm --filter @klyn/ai-engine test
 
       - name: Lint Gate
-        run: timeout --signal=TERM --kill-after=15s 300s pnpm --filter @klyn/ai-engine lint
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm --filter @klyn/ai-engine exec eslint "src/**/*.ts" "tests/**/*.ts" --ignore-pattern "**/*.d.ts" --max-warnings 0
 
       - name: Backend Scope Audit
         shell: bash
         run: |
           set -euo pipefail
           git fetch origin main --depth=1
-          git diff --name-only "$P9_2_BASE_SHA"...HEAD > /tmp/klyn-p92-files.txt
+          BASE_SHA="$(git merge-base HEAD origin/main)"
+          test -n "$BASE_SHA"
+          git diff --name-only "$BASE_SHA"...HEAD > /tmp/klyn-p92-files.txt
           if grep -E '(^|/)(apps/frontend|apps/studio|apps/web|packages/frontend)(/|$)|\.(tsx|jsx|css|scss|sass|html)$' /tmp/klyn-p92-files.txt; then
-            echo "Frontend or UI files detected in the Phase 9.2 scope."
+            echo "Frontend or UI files detected in the backend scope."
             exit 1
           fi
           cat /tmp/klyn-p92-files.txt
 
-      - name: Phase 9.2 Wiring Audit
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f packages/ai-engine/src/planner/goal-decomposition-engine.ts
-          test -f packages/ai-engine/src/types/goal-decomposition.types.ts
-          test -f packages/ai-engine/tests/planner/goal-decomposition-engine.test.ts
-          grep -q 'GoalDecompositionEngine' packages/ai-engine/src/index.ts
-          grep -q 'GoalDecomposerError' packages/ai-engine/src/index.ts
-          grep -q 'GoalDecompositionRequest' packages/ai-engine/src/index.ts
-          grep -q 'TaskGraphPlanRequest' packages/ai-engine/src/types/goal-decomposition.types.ts
-
-      - name: Phase 9.3 PlannerBridge Wiring Audit
+      - name: Phase 9 Wiring Audit
         shell: bash
         run: |
           set -euo pipefail
           test -f packages/ai-engine/src/orchestrator/planner-bridge.ts
+          test -f packages/ai-engine/src/runtime/spatial-bus.ts
+          test -f packages/ai-engine/src/runtime/supabase-planner-state-store.ts
           test -f packages/ai-engine/src/types/planner-bridge.types.ts
-          test -f packages/ai-engine/tests/orchestrator/planner-bridge.test.ts
-          grep -q 'PlannerBridge' packages/ai-engine/src/index.ts
-          grep -q 'PlannerRuntimeTaskState' packages/ai-engine/src/index.ts
-          grep -q 'PLANNER_BRIDGE_MISSING_PREREQUISITE' packages/ai-engine/src/types/planner-bridge.types.ts
-          grep -q 'synchronizeState' packages/ai-engine/src/orchestrator/planner-bridge.ts
+          test -f packages/ai-engine/src/types/planner-persistence.types.ts
+          test -f packages/ai-engine/src/types/spatial-bus.types.ts
+          grep -q 'pending' packages/ai-engine/src/types/planner-bridge.types.ts
+          grep -q 'queued' packages/ai-engine/src/types/planner-bridge.types.ts
+          grep -q 'executing' packages/ai-engine/src/types/planner-bridge.types.ts
+          grep -q 'SupabasePlannerStateStore' packages/ai-engine/src/index.ts
+          grep -q 'ImmutableTaskStateStore' packages/ai-engine/src/index.ts
 
       - name: Type Safety Audit
         shell: bash
         run: |
           set -euo pipefail
-          if grep -R -nE '(:[[:space:]]*any\b|[[:space:]]as[[:space:]]+any\b|<any>|Array<[[:space:]]*any[[:space:]]*>)|@ts-ignore|@ts-nocheck' packages/ai-engine/src/planner/goal-decomposition-engine.ts packages/ai-engine/src/types/goal-decomposition.types.ts packages/ai-engine/tests/planner/goal-decomposition-engine.test.ts packages/ai-engine/src/orchestrator/planner-bridge.ts packages/ai-engine/src/types/planner-bridge.types.ts packages/ai-engine/tests/orchestrator/planner-bridge.test.ts; then
-            echo "Forbidden TypeScript escape hatches detected."
+          if grep -R -nE '(:[[:space:]]*any\b|[[:space:]]as[[:space:]]+any\b|<any>|Array<[[:space:]]*any[[:space:]]*>)|@ts-ignore|@ts-nocheck' packages/ai-engine/src packages/ai-engine/tests; then
+            echo "Forbidden TypeScript escape hatches detected in ai-engine."
             exit 1
           fi
+
+      - name: Lifecycle and persistence audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -R -nE '"ready"|"running"' packages/ai-engine/src/types/planner-bridge.types.ts packages/ai-engine/src/orchestrator/planner-bridge.ts packages/ai-engine/src/runtime/spatial-bus.ts
+          grep -q 'state_version' supabase/migrations/20260915210000_planner_execution_cas_and_timestamps.sql
+          grep -q 'planner_execution_states_version_guard' supabase/migrations/20260915210000_planner_execution_cas_and_timestamps.sql
+          grep -q 'updated_at' supabase/migrations/20260915210000_planner_execution_cas_and_timestamps.sql
 
       - name: Workflow Language Audit
         shell: bash
         run: |
           set -euo pipefail
           if grep -nP '[^\x00-\x7F]' .github/workflows/p9.2-decomposition-certification.yml; then
-            echo "Non-English or non-ASCII workflow text detected."
+            echo "Non-ASCII workflow text detected."
             exit 1
           fi
 
@@ -136,6 +136,4 @@ jobs:
     steps:
       - name: Publish certification summary
         run: |
-          echo "P9.2 and P9.3 planner certification gates completed successfully."
-          echo "Goal decomposition and PlannerBridge are deterministic, typed, tested, and publicly exported."
-          echo "CI uses Node 22 with cached pnpm dependencies and offline-first installation with a network fallback."
+          echo "Planner execution hardening gates completed successfully."

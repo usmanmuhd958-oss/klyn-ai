@@ -1,5 +1,6 @@
 import type { TaskGraphPlan, TaskGraphNode } from "../types/task-graph.types.js";
 import {
+  ImmutableTaskStateStore,
   PlannerBridgeError,
   type ExecutableTask,
   type ExecutableTaskBatch,
@@ -10,7 +11,7 @@ import {
   type PlannerTaskStatus,
 } from "../types/planner-bridge.types.js";
 
-const TERMINAL_STATUSES = new Set<PlannerTaskStatus>(["completed", "failed", "blocked"]);
+const TERMINAL_STATUSES = new Set<PlannerTaskStatus>(["completed", "failed"]);
 
 export class PlannerBridge {
   public constructor(private readonly options: PlannerBridgeOptions = {}) {}
@@ -22,19 +23,23 @@ export class PlannerBridge {
     const namespace = this.options.namespace ?? "klyn";
     const nodeMap = new Map<string, TaskGraphNode>(plan.nodes.map((node) => [node.id, node]));
     const batches = this.buildBatches(plan, nodeMap);
-    const taskStates = new Map<string, PlannerRuntimeTaskState>();
+    const states: Array<readonly [string, PlannerRuntimeTaskState]> = [];
 
     for (const batch of batches) {
       for (const task of batch.tasks) {
-        taskStates.set(task.node.id, Object.freeze({
-          taskId: task.node.id,
-          status: task.prerequisites.length === 0 ? "ready" : "pending",
-          phase: batch.phase,
-          prerequisites: Object.freeze(task.prerequisites.slice()),
-          completedPrerequisites: Object.freeze([]),
-          executionId,
-          namespace,
-        }));
+        states.push([
+          task.node.id,
+          {
+            taskId: task.node.id,
+            status: "pending",
+            phase: batch.phase,
+            prerequisites: task.prerequisites,
+            completedPrerequisites: [],
+            executionId,
+            namespace,
+            stateVersion: 1,
+          },
+        ]);
       }
     }
 
@@ -42,7 +47,7 @@ export class PlannerBridge {
       executionId,
       namespace,
       batches: Object.freeze(batches),
-      taskStates,
+      taskStates: new ImmutableTaskStateStore(states),
       executionOrder: Object.freeze(plan.executionOrder.slice()),
     });
   }
@@ -59,19 +64,28 @@ export class PlannerBridge {
       );
     }
 
-    this.validateTransition(current, update.status, result.taskStates);
+    if (current.stateVersion !== update.expectedStateVersion) {
+      throw new PlannerBridgeError(
+        "PLANNER_BRIDGE_STALE_STATE",
+        `Stale planner state for ${update.taskId}: expected version ${update.expectedStateVersion}, current version ${current.stateVersion}`,
+      );
+    }
+
+    this.validateTransition(current, update.status, result.taskStates.values());
     const completedPrerequisites = current.prerequisites.filter(
       (prerequisite) => result.taskStates.get(prerequisite)?.status === "completed",
     );
-    const nextState = Object.freeze({
+    const nextState: PlannerRuntimeTaskState = {
       ...current,
       status: update.status,
-      completedPrerequisites: Object.freeze(completedPrerequisites),
-    });
-    const nextStates = new Map(result.taskStates);
-    nextStates.set(update.taskId, nextState);
+      completedPrerequisites,
+      stateVersion: current.stateVersion + 1,
+    };
 
-    return Object.freeze({ ...result, taskStates: nextStates });
+    return Object.freeze({
+      ...result,
+      taskStates: result.taskStates.withState(update.taskId, nextState),
+    });
   }
 
   private validatePlan(plan: TaskGraphPlan): void {
@@ -142,9 +156,13 @@ export class PlannerBridge {
         const prerequisites = plan.dependencyMap.prerequisites.get(id) ?? [];
         const dependents = plan.dependencyMap.dependents.get(id) ?? [];
         return Object.freeze({
-          node,
-          prerequisites: Object.freeze(prerequisites.slice()),
-          dependents: Object.freeze(dependents.slice()),
+          node: Object.freeze({
+            ...node,
+            dependencies: Object.freeze([...node.dependencies]),
+            constraints: Object.freeze([...node.constraints]),
+          }),
+          prerequisites: Object.freeze([...prerequisites]),
+          dependents: Object.freeze([...dependents]),
         });
       });
 
@@ -162,31 +180,34 @@ export class PlannerBridge {
   private validateTransition(
     current: PlannerRuntimeTaskState,
     next: PlannerTaskStatus,
-    states: ReadonlyMap<string, PlannerRuntimeTaskState>,
+    states: readonly PlannerRuntimeTaskState[],
   ): void {
     if (current.status === next) return;
     if (TERMINAL_STATUSES.has(current.status)) {
       throw new PlannerBridgeError("PLANNER_BRIDGE_INVALID_STATE", `Task ${current.taskId} is already terminal.`);
     }
 
-    if (next === "ready" || next === "running") {
+    if (next === "executing") {
       const unresolved = current.prerequisites.filter(
-        (prerequisite) => states.get(prerequisite)?.status !== "completed",
+        (prerequisite) => states.find((state) => state.taskId === prerequisite)?.status !== "completed",
       );
       if (unresolved.length > 0) {
         throw new PlannerBridgeError(
           "PLANNER_BRIDGE_MISSING_PREREQUISITE",
-          `Task ${current.taskId} cannot enter ${next}; prerequisites remain incomplete: ${unresolved.join(", ")}`,
+          `Task ${current.taskId} cannot enter executing; prerequisites remain incomplete: ${unresolved.join(", ")}`,
         );
       }
     }
 
-    const allowed: ReadonlyMap<PlannerTaskStatus, readonly PlannerTaskStatus[]> = new Map([
-      ["pending", ["ready", "blocked", "failed"]],
-      ["ready", ["running", "blocked", "failed"]],
-      ["running", ["completed", "blocked", "failed"]],
-    ]);
-    if (!(allowed.get(current.status) ?? []).includes(next)) {
+    const allowed: Readonly<Record<PlannerTaskStatus, readonly PlannerTaskStatus[]>> = {
+      pending: ["queued"],
+      queued: ["executing", "failed"],
+      executing: ["completed", "failed"],
+      completed: [],
+      failed: [],
+    };
+
+    if (!allowed[current.status].includes(next)) {
       throw new PlannerBridgeError(
         "PLANNER_BRIDGE_INVALID_STATE",
         `Invalid task state transition: ${current.status} -> ${next}`,

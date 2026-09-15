@@ -30,33 +30,17 @@ export type { DistributedEvent, EventDelivery, DurableEventTransport, EventBusLi
 export { ContextEmbeddingEngine, DeterministicEmbeddingProvider, VectorMemoryIndex, CrossAgentKnowledgeBus, cosineSimilarity } from "./vector-memory.js";
 export type { EmbeddingProvider, EmbeddingRecord, VectorSearchResult, KnowledgeItem } from "./vector-memory.js";
 export { TaskGraphPlanner } from "./planner/task-graph-planner.js";
-export type {
-  ExecutionDependencyMap,
-  PlannerConstraint,
-  TaskEdge,
-  TaskGraphNode,
-  TaskGraphPlan,
-  TaskGraphPlanRequest,
-  TaskGraphPlannerErrorCode,
-} from "./types/task-graph.types.js";
+export type { ExecutionDependencyMap, PlannerConstraint, TaskEdge, TaskGraphNode, TaskGraphPlan, TaskGraphPlanRequest, TaskGraphPlannerErrorCode } from "./types/task-graph.types.js";
 export { TaskGraphPlannerError } from "./types/task-graph.types.js";
 export { GoalDecompositionEngine } from "./planner/goal-decomposition-engine.js";
-export type {
-  DecomposedTaskNode,
-  GoalDecompositionRequest,
-  GoalDecompositionResult,
-  GoalDecomposerErrorCode,
-} from "./types/goal-decomposition.types.js";
+export type { DecomposedTaskNode, GoalDecompositionRequest, GoalDecompositionResult, GoalDecomposerErrorCode } from "./types/goal-decomposition.types.js";
 export { GoalDecomposerError } from "./types/goal-decomposition.types.js";
 export { PlannerBridge } from "./orchestrator/planner-bridge.js";
-export type {
-  ExecutableTask,
-  ExecutableTaskBatch,
-  PlannerBridgeErrorCode,
-  PlannerBridgeOptions,
-  PlannerBridgeResult,
-  PlannerBridgeStateUpdate,
-  PlannerRuntimeTaskState,
-  PlannerTaskStatus,
-} from "./types/planner-bridge.types.js";
-export { PlannerBridgeError } from "./types/planner-bridge.types.js";
+export type { ExecutableTask, ExecutableTaskBatch, PlannerBridgeErrorCode, PlannerBridgeOptions, PlannerBridgeResult, PlannerBridgeStateUpdate, PlannerRuntimeTaskState, PlannerTaskStatus } from "./types/planner-bridge.types.js";
+export { PlannerBridgeError, ImmutableTaskStateStore } from "./types/planner-bridge.types.js";
+export { SpatialBus } from "./runtime/spatial-bus.js";
+export { SupabasePlannerStateStore } from "./runtime/supabase-planner-state-store.js";
+export { SpatialBusError } from "./types/spatial-bus.types.js";
+export { PlannerStateConflictError } from "./types/planner-persistence.types.js";
+export type { SpatialBusErrorCode, SpatialBusEvent, SpatialBusEventType, SpatialCanvasNodeState, SpatialExecutionBusOptions, SpatialExecutionInput, SpatialNodeStatus, SpatialRuntimeListener, SpatialRuntimeStream, SpatialTaskExecutor } from "./types/spatial-bus.types.js";
+export type { PlannerStateCompareAndSwapInput, PlannerStatePersistence, PlannerStatePersistenceConfig, PlannerStatePersistenceRow } from "./types/planner-persistence.types.js";
