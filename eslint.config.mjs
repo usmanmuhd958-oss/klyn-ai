@@ -12,6 +12,8 @@ const runtimeGlobals = {
   process: "readonly",
   setTimeout: "readonly",
   clearTimeout: "readonly",
+  setInterval: "readonly",
+  clearInterval: "readonly",
 };
 
 export default tseslint.config(
