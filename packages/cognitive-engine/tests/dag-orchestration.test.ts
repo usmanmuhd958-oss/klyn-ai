@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { DagValidationError, SwarmDagOrchestrator } from "../src/swarm/DagOrchestrator.js";
 
-test("topological sort is deterministic and detects cycles at validation time", () => {
+test("topological sort is deterministic and detects cycles at validation time", async () => {
   const dag = new SwarmDagOrchestrator()
     .addTask({ id: "z", agentId: "agent-z", input: null, dependsOn: ["a"], run: async () => "z" })
     .addTask({ id: "a", agentId: "agent-a", input: null, run: async () => "a" })
@@ -15,7 +15,7 @@ test("topological sort is deterministic and detects cycles at validation time", 
     .addTask({ id: "b", agentId: "b", input: null, dependsOn: ["a"], run: async () => 2 });
 
   assert.throws(() => cyclic.validate(), DagValidationError);
-  assert.throws(() => cyclic.execute(), DagValidationError);
+  await assert.rejects(cyclic.execute(), DagValidationError);
 });
 
 test("independent agents execute in parallel up to maxConcurrency and children wait for parents", async () => {
