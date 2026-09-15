@@ -1,0 +1,63 @@
+name: Klyn P3 Certification
+
+on:
+  push:
+    branches:
+      - p2/agent-swarm-runtime-hardening
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: klyn-p3-certification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+          run_install: false
+
+      - name: Validate workspace contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s pnpm-workspace.yaml
+          test -s pnpm-lock.yaml
+          test -s turbo.json
+          test -s apps/backend/package.json
+
+      - name: Frozen Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Test
+        run: pnpm test
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Lockfile SHA-256
+        shell: bash
+        run: sha256sum pnpm-lock.yaml
