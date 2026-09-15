@@ -24,7 +24,7 @@ export class DependencyExecutionPlanner<T = unknown, TTask extends PlannedTask<T
     const status = new Map<string, "pending" | "running" | "completed" | "failed" | "skipped">(tasks.map((task) => [task.id, "pending"]));
     const outputs: Record<string, T> = {};
     const completed: string[] = [], failed: string[] = [], skipped: string[] = [];
-    const controller = new AbortController();
+    const controller = new globalThis.AbortController();
     const onAbort = () => controller.abort(options.signal?.reason);
     if (options.signal?.aborted) onAbort(); else options.signal?.addEventListener("abort", onAbort, { once: true });
     const limit = Number.isFinite(options.maxConcurrency) ? Math.max(1, Math.floor(options.maxConcurrency!)) : Number.MAX_SAFE_INTEGER;
