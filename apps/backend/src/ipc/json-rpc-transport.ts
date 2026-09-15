@@ -25,7 +25,8 @@ const METHOD_NOT_FOUND = -32601;
 const INVALID_PARAMS = -32602;
 const INTERNAL_ERROR = -32603;
 
-type ClosableServer = Server & { closeAllConnections(): void };
+type ClosableServer = Server & { closeAllConnections?: () => void };
+const activeSockets = new WeakMap<Server, Set<Socket>>();
 
 /** Newline-delimited JSON-RPC 2.0 transport for a local Klyn agent service. */
 export class JsonRpcAgentIpcTransport implements AgentIpcTransport {
@@ -149,6 +150,13 @@ export async function startJsonRpcAgentIpcServer(
   options: { host?: string; port?: number; socketPath?: string } = {},
 ): Promise<Server> {
   const server = createServer((socket) => {
+    let sockets = activeSockets.get(server);
+    if (!sockets) {
+      sockets = new Set<Socket>();
+      activeSockets.set(server, sockets);
+    }
+    sockets.add(socket);
+    socket.once("close", () => sockets?.delete(socket));
     socket.on("error", (error) => {
       jsonLogger.error("rpc_socket_error", { error: error.message });
     });
@@ -166,6 +174,7 @@ export async function startJsonRpcAgentIpcServer(
       }
     });
   });
+  activeSockets.set(server, new Set<Socket>());
 
   if (options.socketPath) {
     await new Promise<void>((resolve, reject) => {
@@ -185,10 +194,18 @@ export async function startJsonRpcAgentIpcServer(
 
 /** Deterministically stops the RPC server and immediately tears down active sockets. */
 export async function closeJsonRpcAgentIpcServer(server: Server): Promise<void> {
-  (server as ClosableServer).closeAllConnections();
+  const sockets = activeSockets.get(server);
+  const closeAllConnections = (server as ClosableServer).closeAllConnections;
+  if (typeof closeAllConnections === "function") {
+    closeAllConnections.call(server);
+  }
+  for (const socket of sockets ?? []) socket.destroy();
+  sockets?.clear();
+
   await new Promise<void>((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()));
   });
+  activeSockets.delete(server);
   jsonLogger.info("rpc_server_closed");
 }
 
