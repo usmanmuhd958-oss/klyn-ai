@@ -27,7 +27,7 @@ export class FallbackRouter {
   async complete(request: ProviderRequest): Promise<ProviderResponse> {
     let lastError: unknown;
     for (let index = 0; index < this.providers.length; index++) {
-      const target = this.providers[index];
+      const target = this.providers[index]!;
       if (request.model && target.model !== request.model) continue;
       if (!this.circuitBreaker.canRequest(target.provider)) { this.telemetry.fallbackCount++; continue; }
       for (let retry = 0; retry <= this.maxRetries; retry++) {
