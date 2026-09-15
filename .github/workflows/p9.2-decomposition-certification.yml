@@ -22,6 +22,7 @@ jobs:
     env:
       NODE_OPTIONS: --unhandled-rejections=strict
       PNPM_VERSION: 11.24.0
+      NODE_VERSION: '22'
       P9_2_BASE_SHA: ce0dd50c163aa5ab7509bafc789023d01e80c1bf
     steps:
       - name: Checkout candidate
@@ -34,10 +35,10 @@ jobs:
         with:
           version: 11.24.0
 
-      - name: Set up Node 20
+      - name: Set up Node 22
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '22'
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
@@ -46,7 +47,7 @@ jobs:
           set -euo pipefail
           node --version
           pnpm --version
-          test "$(node --version | cut -d. -f1)" = "v20"
+          test "$(node --version | cut -d. -f1)" = "v${NODE_VERSION}"
           test "$(pnpm --version)" = "${PNPM_VERSION}"
 
       - name: Warm pnpm store
@@ -98,11 +99,23 @@ jobs:
           grep -q 'GoalDecompositionRequest' packages/ai-engine/src/index.ts
           grep -q 'TaskGraphPlanRequest' packages/ai-engine/src/types/goal-decomposition.types.ts
 
+      - name: Phase 9.3 PlannerBridge Wiring Audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f packages/ai-engine/src/orchestrator/planner-bridge.ts
+          test -f packages/ai-engine/src/types/planner-bridge.types.ts
+          test -f packages/ai-engine/tests/orchestrator/planner-bridge.test.ts
+          grep -q 'PlannerBridge' packages/ai-engine/src/index.ts
+          grep -q 'PlannerRuntimeTaskState' packages/ai-engine/src/index.ts
+          grep -q 'PLANNER_BRIDGE_MISSING_PREREQUISITE' packages/ai-engine/src/types/planner-bridge.types.ts
+          grep -q 'synchronizeState' packages/ai-engine/src/orchestrator/planner-bridge.ts
+
       - name: Type Safety Audit
         shell: bash
         run: |
           set -euo pipefail
-          if grep -R -nE '\bany\b|@ts-ignore|@ts-nocheck' packages/ai-engine/src/planner/goal-decomposition-engine.ts packages/ai-engine/src/types/goal-decomposition.types.ts packages/ai-engine/tests/planner/goal-decomposition-engine.test.ts; then
+          if grep -R -nE '\bany\b|@ts-ignore|@ts-nocheck' packages/ai-engine/src/planner/goal-decomposition-engine.ts packages/ai-engine/src/types/goal-decomposition.types.ts packages/ai-engine/tests/planner/goal-decomposition-engine.test.ts packages/ai-engine/src/orchestrator/planner-bridge.ts packages/ai-engine/src/types/planner-bridge.types.ts packages/ai-engine/tests/orchestrator/planner-bridge.test.ts; then
             echo "Forbidden TypeScript escape hatches detected."
             exit 1
           fi
@@ -123,6 +136,6 @@ jobs:
     steps:
       - name: Publish certification summary
         run: |
-          echo "P9.2 decomposition certification gates completed successfully."
-          echo "Goal decomposition is deterministic, typed, tested, and wired to TaskGraphPlanRequest."
-          echo "CI uses cached pnpm dependencies with offline-first installation and a network fallback."
+          echo "P9.2 and P9.3 planner certification gates completed successfully."
+          echo "Goal decomposition and PlannerBridge are deterministic, typed, tested, and publicly exported."
+          echo "CI uses Node 22 with cached pnpm dependencies and offline-first installation with a network fallback."
