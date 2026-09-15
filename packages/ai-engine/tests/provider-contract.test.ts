@@ -10,6 +10,7 @@ import { getModelCapability } from "../src/providers/registry.js";
 class StubAdapter implements ProviderAdapter {
   constructor(readonly name: ProviderAdapter["name"], private readonly result: ProviderResponse | Error) {}
   async generate(_request: ProviderRequest): Promise<ProviderResponse> {
+    void _request;
     if (this.result instanceof Error) throw this.result;
     return this.result;
   }
