@@ -7,7 +7,7 @@ import {
 } from "../types/planner-persistence.types.js";
 import type { PlannerRuntimeTaskState } from "../types/planner-bridge.types.js";
 
-export type PlannerFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+export type PlannerFetch = (input: URL | string, init?: RequestInit) => Promise<Response>;
 
 export class SupabasePlannerStateStore implements PlannerStatePersistence {
   readonly #config: PlannerStatePersistenceConfig;
@@ -25,7 +25,6 @@ export class SupabasePlannerStateStore implements PlannerStatePersistence {
     endpoint.searchParams.set("owner_user_id", `eq.${this.#config.ownerUserId}`);
     endpoint.searchParams.set("state_version", `eq.${input.expectedStateVersion}`);
 
-    const nextVersion = input.expectedStateVersion + 1;
     const response = await this.#fetch(endpoint, {
       method: "PATCH",
       headers: {
@@ -43,7 +42,7 @@ export class SupabasePlannerStateStore implements PlannerStatePersistence {
         execution_order: input.executionOrder,
         node: input.node,
         metadata: input.metadata ?? {},
-        state_version: nextVersion,
+        state_version: input.expectedStateVersion + 1,
       }),
     });
 
