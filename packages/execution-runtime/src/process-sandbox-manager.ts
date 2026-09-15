@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { SecretMasker } from "./secret-masker.js";
 
@@ -213,8 +213,7 @@ export class ProcessSandboxManager {
       const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
       const fields = stat.trim().split(" ");
       const ticks = Number(fields[13] ?? 0) + Number(fields[14] ?? 0);
-      const ticksPerSecond = 100;
-      return (ticks / ticksPerSecond) * 1000;
+      return (ticks / 100) * 1000;
     } catch {
       return 0;
     }
@@ -223,16 +222,7 @@ export class ProcessSandboxManager {
   private readFileDescriptorCount(pid: number): number {
     if (process.platform !== "linux") return 0;
     try {
-      return readFileSync(`/proc/${pid}/fdinfo/0", "utf8") ? this.countDescriptors(pid) : 0;
-    } catch {
-      return 0;
-    }
-  }
-
-  private countDescriptors(pid: number): number {
-    try {
-      const proc = readFileSync(`/proc/${pid}/fd`, "utf8");
-      return proc.split("\n").filter(Boolean).length;
+      return readdirSync(`/proc/${pid}/fd`).length;
     } catch {
       return 0;
     }
