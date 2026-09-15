@@ -9,10 +9,10 @@ if ! git rev-parse --verify "${BASE_SHA}^{commit}" >/dev/null 2>&1; then
   exit 1
 fi
 
-if git diff --quiet "${BASE_SHA}" "${HEAD_SHA}" -- apps/studio/apps/web; then
-  echo "Vercel build ignored: no changes under apps/studio/apps/web."
+if git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- apps/backend packages; then
+  echo "Vercel build ignored: no backend/runtime changes."
   exit 0
 fi
 
-echo "Vercel build required: web deployment scope changed."
+echo "Vercel build required: backend/runtime scope changed."
 exit 1
