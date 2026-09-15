@@ -109,12 +109,14 @@ test("batch ordering is deterministic even when input task order is not", async 
 test("prerequisites are enforced before execution", () => {
   const bus = new SpatialBus();
   bus.register(plan());
+  bus.transitionNode("execution-1", "c", "queued");
 
   assert.throws(
     () => bus.transitionNode("execution-1", "c", "executing"),
     (error: unknown) =>
       error instanceof SpatialBusError && error.code === "SPATIAL_BUS_PREREQUISITE_INCOMPLETE",
   );
+  assert.equal(bus.getNodeState("execution-1", "c")?.status, "queued");
 });
 
 test("completed state records all completed prerequisites atomically", () => {
@@ -217,7 +219,7 @@ test("stream events are bounded by the configured memory buffer", async () => {
 
   assert.equal(stream.events.length, 3);
   assert.deepEqual(stream.events.map((event) => event.type), [
-    "node:completed",
+    "node:executing",
     "node:completed",
     "execution:completed",
   ]);
