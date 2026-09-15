@@ -69,7 +69,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git fetch origin main --depth=1
           git diff --name-only "$P9_2_BASE_SHA"...HEAD > /tmp/klyn-p92-files.txt
           if grep -E '(^|/)(apps/frontend|apps/studio|apps/web|packages/frontend)(/|$)|\.(tsx|jsx|css|scss|sass|html)$' /tmp/klyn-p92-files.txt; then
             echo "Frontend or UI files detected in the Phase 9.2 scope."
