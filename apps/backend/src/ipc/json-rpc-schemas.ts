@@ -1,3 +1,4 @@
+/** P6.1: feat(backend): harden json-rpc transport schemas and socket lifecycle. */
 import { z } from "zod";
 
 const JsonRpcIdSchema = z.union([z.string().min(1), z.number().finite()]);
