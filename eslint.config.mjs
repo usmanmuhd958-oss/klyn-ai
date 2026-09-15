@@ -11,10 +11,11 @@ const runtimeGlobals = {
   fetch: "readonly",
   process: "readonly",
   setTimeout: "readonly",
+  clearTimeout: "readonly",
 };
 
 export default tseslint.config(
-  { ignores: ["**/dist/**", "**/node_modules/**", "**/.next/**", "**/coverage/**", "**/src/**/*.js"] },
+  { ignores: ["**/dist/**", "**/node_modules/**", "**/.next/**", "**/coverage/**"] },
   {
     languageOptions: {
       globals: runtimeGlobals,
