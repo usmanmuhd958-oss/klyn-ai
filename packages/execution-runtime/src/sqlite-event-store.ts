@@ -1,4 +1,4 @@
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { AgentEvent, AgentEventStore, AgentState } from "./agent-state.js";
@@ -94,7 +94,7 @@ export class SqliteAgentEventStore implements AgentEventStore {
       if (!task) return undefined;
       const now = Date.now();
       this.transaction(() => this.db.prepare("UPDATE task_queue SET status='RUNNING', worker_id=?, attempts=attempts+1, updated_at=?, lease_until=? WHERE id=? AND status='PENDING'").run(workerId, now, now + leaseMs, String(task.id)));
-      return this.getTask<T>(String(task.id));
+      return this.getTaskRow<T>(String(task.id));
     });
   }
 
@@ -110,7 +110,7 @@ export class SqliteAgentEventStore implements AgentEventStore {
     });
   }
 
-  async getTask<T = unknown>(taskId: string): Promise<DurableTask<T> | undefined> { this.ensureOpen(); return this.getTaskSync<T>(taskId); }
+  async getTask<T = unknown>(taskId: string): Promise<DurableTask<T> | undefined> { this.ensureOpen(); return this.getTaskRow<T>(taskId); }
 
   async close(): Promise<void> {
     await this.withLock(() => {
@@ -138,13 +138,12 @@ export class SqliteAgentEventStore implements AgentEventStore {
   private nextSequence(treeId: string, agentId: string): number { return Number(this.get("SELECT COALESCE(MAX(sequence),0) AS sequence FROM events WHERE tree_id=? AND agent_id=?", treeId, agentId)?.sequence ?? 0) + 1; }
   private insert(event: AgentEvent): void { this.db.prepare("INSERT INTO events (id,tree_id,agent_id,sequence,type,timestamp,payload) VALUES (?,?,?,?,?,?,?)").run(event.id,event.treeId,event.agentId,event.sequence,event.type,event.timestamp,JSON.stringify(event.payload)); }
   private snapshotSync(treeId: string, agentId: string): AgentState { const row=this.get("SELECT tree_id,agent_id,values_json,version FROM agent_state WHERE tree_id=? AND agent_id=?",treeId,agentId); return row ? {treeId:String(row.tree_id),agentId:String(row.agent_id),values:JSON.parse(String(row.values_json)),version:Number(row.version)} : {treeId,agentId,values:{},version:0}; }
-  private get(sql: string, ...params: unknown[]): Row | undefined { return this.db.prepare(sql).get(...params) as Row | undefined; }
-  private all(sql: string, ...params: unknown[]): Row[] { return this.db.prepare(sql).all(...params) as Row[]; }
-  private getTaskSync<T>(id: string): DurableTask<T> | undefined { return this.mapTask<T>(this.get("SELECT * FROM task_queue WHERE id=?", id)); }
-  private getTask<T>(id: string): DurableTask<T> | undefined { return this.getTaskSync<T>(id); }
+  private get(sql: string, ...params: SQLInputValue[]): Row | undefined { return this.db.prepare(sql).get(...params) as Row | undefined; }
+  private all(sql: string, ...params: SQLInputValue[]): Row[] { return this.db.prepare(sql).all(...params) as Row[]; }
+  private getTaskRow<T>(id: string): DurableTask<T> | undefined { return this.mapTask<T>(this.get("SELECT * FROM task_queue WHERE id=?", id)); }
   private getTaskByIdempotency<T>(key: string): DurableTask<T> | undefined { return this.mapTask<T>(this.get("SELECT * FROM task_queue WHERE idempotency_key=?", key)); }
   private mapTask<T>(row: Row | undefined): DurableTask<T> | undefined { if (!row) return undefined; return { id:String(row.id), idempotencyKey:String(row.idempotency_key), payload:JSON.parse(String(row.payload_json)) as T, status:row.status as TaskStatus, attempts:Number(row.attempts), recoveryCount:Number(row.recovery_count), ...(row.worker_id == null ? {} : {workerId:String(row.worker_id)}), createdAt:Number(row.created_at), updatedAt:Number(row.updated_at), ...(row.lease_until == null ? {} : {leaseUntil:Number(row.lease_until)}), ...(row.error == null ? {} : {error:String(row.error)}) }; }
-  private async transitionTask(taskId: string, status: "COMPLETED" | "FAILED", error?: string): Promise<DurableTask | undefined> { return this.withLock(() => { this.ensureOpen(); this.transaction(() => this.db.prepare("UPDATE task_queue SET status=?, error=?, updated_at=?, lease_until=NULL WHERE id=? AND status='RUNNING'").run(status, error ?? null, Date.now(), taskId)); return this.getTask(taskId); }); }
+  private async transitionTask(taskId: string, status: "COMPLETED" | "FAILED", error?: string): Promise<DurableTask | undefined> { return this.withLock(() => { this.ensureOpen(); this.transaction(() => this.db.prepare("UPDATE task_queue SET status=?, error=?, updated_at=?, lease_until=NULL WHERE id=? AND status='RUNNING'").run(status, error ?? null, Date.now(), taskId)); return this.getTaskRow(taskId); }); }
   private toEvent(row: Row): AgentEvent { return {id:String(row.id),treeId:String(row.tree_id),agentId:String(row.agent_id),sequence:Number(row.sequence),type:row.type as AgentEvent["type"],timestamp:Number(row.timestamp),payload:JSON.parse(String(row.payload))}; }
   private ensureOpen(): void { if (this.closed) throw new Error("SQLite event store is closed"); }
   private async withLock<T>(operation: () => T | Promise<T>): Promise<T> { const previous=this.lock; let release!:()=>void; this.lock=new Promise<void>((resolve)=>{release=resolve;}); await previous; try{return await operation();} finally{release();} }
