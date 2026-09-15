@@ -60,3 +60,16 @@ export type {
   PlannerTaskStatus,
 } from "./types/planner-bridge.types.js";
 export { PlannerBridgeError } from "./types/planner-bridge.types.js";
+export { SpatialBus, SpatialBusError } from "./runtime/spatial-bus.js";
+export type {
+  SpatialBusErrorCode,
+  SpatialBusEvent,
+  SpatialBusEventType,
+  SpatialCanvasNodeState,
+  SpatialExecutionBusOptions,
+  SpatialExecutionInput,
+  SpatialNodeStatus,
+  SpatialRuntimeListener,
+  SpatialRuntimeStream,
+  SpatialTaskExecutor,
+} from "./types/spatial-bus.types.js";
