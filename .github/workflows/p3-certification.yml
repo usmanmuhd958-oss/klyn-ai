@@ -61,3 +61,7 @@ jobs:
       - name: Lockfile SHA-256
         shell: bash
         run: sha256sum pnpm-lock.yaml
+
+      # P3.6 certification trigger marker
+      - name: Certification marker
+        run: echo "P3.6 cloud audit"
