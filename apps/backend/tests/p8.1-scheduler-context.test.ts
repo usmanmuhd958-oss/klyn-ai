@@ -11,7 +11,7 @@ import {
   ReadyQueue,
   SwarmDagOrchestrator,
   distillSubagentResult,
-} from "@klyn/cognitive-engine";
+} from "../../../packages/cognitive-engine/src/index.ts";
 
 describe("Klyn Phase 8.1", () => {
   it("atomically fences workers and recovers expired leases", async () => {
