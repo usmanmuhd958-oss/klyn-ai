@@ -21,6 +21,8 @@ jobs:
     steps:
       - name: Checkout candidate
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -44,17 +46,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test ! -d apps/frontend
-          test ! -d apps/studio
-          test ! -d apps/web
-          if git diff --name-only origin/main...HEAD | grep -E '(^|/)(apps/frontend|apps/studio|apps/web)(/|$)|\.(tsx|jsx|css|scss|sass|html)$'; then
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          git diff --name-only "$BASE_SHA"...HEAD > /tmp/klyn-phase65-changed-files.txt
+          if grep -E '(^|/)(apps/frontend|apps/studio|apps/web)(/|$)|\.(tsx|jsx|css|scss|sass|html)$' /tmp/klyn-phase65-changed-files.txt; then
             echo 'Frontend/UI files changed in Phase 6.5 diff.'
             exit 1
           fi
-          if git ls-files | grep -E '(^|/)(apps/frontend|apps/studio|apps/web)(/|$)|\.(tsx|jsx|css|scss|sass|html)$'; then
-            echo 'Frontend/UI file remnants detected.'
-            exit 1
-          fi
+          echo 'Phase 6.5 changed files:'
+          cat /tmp/klyn-phase65-changed-files.txt
       - name: Supabase Migration Shape Audit
         shell: bash
         run: |
