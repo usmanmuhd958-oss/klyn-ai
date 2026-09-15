@@ -36,6 +36,9 @@ test("external cancellation propagates to running task", async () => {
   }) });
   const promise = dag.execute({ signal: controller.signal });
   const abortTimer = setTimeout(() => controller.abort(), 5);
-  abortTimer.unref();
-  await assert.rejects(promise);
+  try {
+    await assert.rejects(promise);
+  } finally {
+    clearTimeout(abortTimer);
+  }
 });
