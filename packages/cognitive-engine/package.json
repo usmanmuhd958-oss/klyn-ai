@@ -1,5 +1,19 @@
 {
-  "name":"@klyn/cognitive-engine","version":"6.1.0","private":true,"type":"module","exports":{".":"./src/index.ts"},
-  "scripts":{"typecheck":"tsc --noEmit -p tsconfig.json","build":"tsc -p tsconfig.json","test":"tsx --test --test-timeout=15000 tests/**/*.test.ts","lint":"eslint src tests --max-warnings 0"},
-  "devDependencies":{"@babel/types":"^8.0.4","@types/node":"^24.0.0","tsx":"^4.20.5","typescript":"^5.9.3"}
+  "name": "@klyn/cognitive-engine",
+  "version": "6.3.0",
+  "private": true,
+  "type": "module",
+  "exports": {".": "./src/index.ts"},
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc -p tsconfig.json",
+    "test": "tsx --test --test-timeout=15000 tests/**/*.test.ts",
+    "lint": "eslint src tests --max-warnings 0"
+  },
+  "devDependencies": {
+    "@babel/types": "^8.0.4",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.3"
+  }
 }
