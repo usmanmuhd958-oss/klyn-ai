@@ -4,14 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { SqliteAgentEventStore, LeaseScheduler } from "@klyn/execution-runtime";
-import {
-  ContextBudgetManager,
-  ContextCompactor,
-  ContextControlPlane,
-  ReadyQueue,
-  SwarmDagOrchestrator,
-  distillSubagentResult,
-} from "../../../packages/cognitive-engine/src/index.ts";
+import { ReadyQueue, SwarmDagOrchestrator } from "../../../packages/cognitive-engine/src/index.ts";
+import { ContextBudgetManager, ContextCompactor, ContextControlPlane, distillSubagentResult } from "@klyn/ai-engine";
 
 describe("Klyn Phase 8.1", () => {
   it("atomically fences workers and recovers expired leases", async () => {
