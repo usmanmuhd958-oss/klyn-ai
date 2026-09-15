@@ -9,6 +9,7 @@ export * from "./supabase/execution-ledger-sync.js";
 export * from "./kernel-health.js";
 export * from "./distributed-state.js";
 export * from "./node-heartbeat-monitor.js";
+export * from "./master-execution-orchestrator.js";
 
 const env = loadEnv();
 const app = express();
