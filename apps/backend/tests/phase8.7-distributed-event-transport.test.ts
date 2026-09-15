@@ -85,7 +85,7 @@ test("phase 8.7 rejects a broken revision chain instead of silently restoring pa
 test("phase 8.7 evicts silent nodes and reassigns each orphan task once", async () => {
   let now = 1_000;
   const reassigned: string[] = [];
-  const monitor = new NodeHeartbeatMonitor({ reassign: async (taskId) => { reassigned.push(taskId); } }, { nodeTimeoutMs: 100, evictionGraceMs: 50, now: () => now });
+  const monitor = new NodeHeartbeatMonitor({ reassign: async (taskId: string) => { reassigned.push(taskId); } }, { nodeTimeoutMs: 100, evictionGraceMs: 50, now: () => now });
   monitor.join("node-a");
   now += 151;
   assert.deepEqual(monitor.observe([{ taskId: "t1", nodeId: "node-a" }]), ["node-a"]);
