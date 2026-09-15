@@ -1,5 +1,5 @@
 {
-  "name":"klyn","version":"6.0.0","private":true,"type":"module","packageManager":"pnpm@11.24.0","engines":{"node":">=22.0.0"},
+  "name":"klyn","version":"6.1.0","private":true,"type":"module","packageManager":"pnpm@11.24.0","engines":{"node":">=22.0.0"},
   "scripts":{"build":"turbo run build","typecheck":"turbo run typecheck","test":"turbo run test","lint":"eslint packages/execution-runtime packages/cognitive-engine packages/ai-engine apps/backend --max-warnings 0","dev":"pnpm --filter @klyn/backend dev","start":"pnpm --filter @klyn/backend start","lockfile:generate":"pnpm install --lockfile-only","lockfile:verify":"pnpm install --frozen-lockfile"},
   "devDependencies":{"@babel/parser":"^8.0.4","@babel/types":"^8.0.4","@eslint/js":"^9.35.0","@types/bun":"^1.2.20","@types/node":"^24.0.0","@types/sql.js":"^1.4.9","eslint":"^9.35.0","sql.js":"^1.13.0","turbo":"^2.5.6","typescript":"^5.9.3","typescript-eslint":"^8.44.0"},
   "dependencies":{"@anthropic-ai/sdk":"^0.67.0","@google/generative-ai":"^0.24.1","openai":"^7.4.0"}

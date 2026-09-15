@@ -1,23 +1,32 @@
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import type {
-  AgentEventEnvelope,
   AgentEventSink,
   AgentExecutionRequest,
   AgentExecutionResponse,
   AgentIpcTransport,
   AgentSandboxService,
 } from "./agent-service.js";
-
-type JsonRpcId = string | number;
-type JsonRpcRequest = { jsonrpc: "2.0"; id: JsonRpcId; method: string; params?: unknown };
-type JsonRpcResponse =
-  | { jsonrpc: "2.0"; id: JsonRpcId; result: unknown }
-  | { jsonrpc: "2.0"; id: JsonRpcId; error: { code: number; message: string; data?: unknown } };
+import {
+  AgentEventEnvelopeSchema,
+  AgentExecutionRequestSchema,
+  AgentExecutionResponseSchema,
+  JsonRpcExecuteParamsSchema,
+  JsonRpcRequestSchema,
+  JsonRpcResponseSchema,
+  type JsonRpcId,
+  type JsonRpcRequest,
+  type JsonRpcResponse,
+} from "./json-rpc-schemas.js";
+import { jsonLogger } from "./json-logger.js";
 
 const PARSE_ERROR = -32700;
 const INVALID_REQUEST = -32600;
 const METHOD_NOT_FOUND = -32601;
+const INVALID_PARAMS = -32602;
 const INTERNAL_ERROR = -32603;
+
+type ClosableServer = Server & { closeAllConnections?: () => void };
+const activeSockets = new WeakMap<Server, Set<Socket>>();
 
 /** Newline-delimited JSON-RPC 2.0 transport for a local Klyn agent service. */
 export class JsonRpcAgentIpcTransport implements AgentIpcTransport {
@@ -39,10 +48,12 @@ export class JsonRpcAgentIpcTransport implements AgentIpcTransport {
   call(request: AgentExecutionRequest): Promise<AgentExecutionResponse> {
     const id = this.nextId++;
     return new Promise<AgentExecutionResponse>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
       try {
+        const validatedRequest = AgentExecutionRequestSchema.parse(request);
+        jsonLogger.info("rpc_request", { id, method: "execute", executionId: validatedRequest.executionId });
+        this.pending.set(id, { resolve, reject });
         const socket = this.ensureSocket();
-        socket.write(`${JSON.stringify({ jsonrpc: "2.0", id, method: "execute", params: request })}\n`);
+        socket.write(`${JSON.stringify({ jsonrpc: "2.0", id, method: "execute", params: validatedRequest })}\n`);
       } catch (error) {
         this.pending.delete(id);
         reject(error instanceof Error ? error : new Error(String(error)));
@@ -59,6 +70,8 @@ export class JsonRpcAgentIpcTransport implements AgentIpcTransport {
     this.failPending(new Error("JSON-RPC transport closed"));
     this.socket?.destroy();
     this.socket = undefined;
+    this.buffer = "";
+    jsonLogger.info("transport_closed");
   }
 
   private ensureSocket(): Socket {
@@ -84,18 +97,44 @@ export class JsonRpcAgentIpcTransport implements AgentIpcTransport {
   }
 
   private handleLine(line: string): void {
-    let message: JsonRpcResponse & { method?: string; params?: unknown };
-    try { message = JSON.parse(line) as typeof message; } catch { return; }
-    if ("method" in message && message.method === "event") {
-      const event = message.params as AgentEventEnvelope;
-      void Promise.all([...this.sinks].map((sink) => sink.publish(event)));
+    let raw: unknown;
+    try {
+      raw = JSON.parse(line);
+    } catch {
+      jsonLogger.error("rpc_response_parse_error");
       return;
     }
+
+    if (typeof raw === "object" && raw !== null && "method" in raw && raw.method === "event") {
+      const params = "params" in raw ? raw.params : undefined;
+      const event = AgentEventEnvelopeSchema.safeParse(params);
+      if (!event.success) {
+        jsonLogger.error("rpc_event_validation_error", { issues: event.error.issues });
+        return;
+      }
+      void Promise.all([...this.sinks].map((sink) => sink.publish(event.data))).catch((error: unknown) => {
+        jsonLogger.error("rpc_event_sink_error", { error: error instanceof Error ? error.message : String(error) });
+      });
+      return;
+    }
+
+    const parsed = JsonRpcResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      jsonLogger.error("rpc_response_validation_error", { issues: parsed.error.issues });
+      return;
+    }
+
+    const message = parsed.data;
     const pending = this.pending.get(message.id);
     if (!pending) return;
     this.pending.delete(message.id);
-    if ("error" in message) pending.reject(new Error(message.error.message));
-    else pending.resolve(message.result as AgentExecutionResponse);
+    if ("error" in message) {
+      jsonLogger.error("rpc_response_error", { id: message.id, code: message.error.code, message: message.error.message });
+      pending.reject(new Error(message.error.message));
+    } else {
+      jsonLogger.info("rpc_response", { id: message.id, method: "execute", executionId: message.result.executionId });
+      pending.resolve(message.result);
+    }
   }
 
   private failPending(error: Error): void {
@@ -111,6 +150,17 @@ export async function startJsonRpcAgentIpcServer(
   options: { host?: string; port?: number; socketPath?: string } = {},
 ): Promise<Server> {
   const server = createServer((socket) => {
+    let sockets = activeSockets.get(server);
+    if (!sockets) {
+      sockets = new Set<Socket>();
+      activeSockets.set(server, sockets);
+    }
+    sockets.add(socket);
+    socket.once("close", () => sockets?.delete(socket));
+    socket.on("error", (error) => {
+      jsonLogger.error("rpc_socket_error", { error: error.message });
+    });
+
     let buffer = "";
     socket.setEncoding("utf8");
     socket.on("data", (chunk: string) => {
@@ -124,6 +174,7 @@ export async function startJsonRpcAgentIpcServer(
       }
     });
   });
+  activeSockets.set(server, new Set<Socket>());
 
   if (options.socketPath) {
     await new Promise<void>((resolve, reject) => {
@@ -136,25 +187,69 @@ export async function startJsonRpcAgentIpcServer(
       server.listen(options.port ?? 0, options.host ?? "127.0.0.1", () => { server.off("error", reject); resolve(); });
     });
   }
+
+  jsonLogger.info("rpc_server_started", { address: server.address() });
   return server;
 }
 
+/** Deterministically stops the RPC server and immediately tears down active sockets. */
+export async function closeJsonRpcAgentIpcServer(server: Server): Promise<void> {
+  const sockets = activeSockets.get(server);
+  const closeAllConnections = (server as ClosableServer).closeAllConnections;
+  if (typeof closeAllConnections === "function") {
+    closeAllConnections.call(server);
+  }
+  for (const socket of sockets ?? []) socket.destroy();
+  sockets?.clear();
+
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+  activeSockets.delete(server);
+  jsonLogger.info("rpc_server_closed");
+}
+
 async function handleRequest(socket: Socket, service: AgentSandboxService, line: string): Promise<void> {
-  let request: JsonRpcRequest;
-  try { request = JSON.parse(line) as JsonRpcRequest; }
-  catch { writeResponse(socket, { jsonrpc: "2.0", id: 0, error: { code: PARSE_ERROR, message: "Parse error" } }); return; }
-  if (request.jsonrpc !== "2.0" || request.id === undefined || typeof request.method !== "string") {
-    writeResponse(socket, { jsonrpc: "2.0", id: request.id ?? 0, error: { code: INVALID_REQUEST, message: "Invalid Request" } }); return;
-  }
-  if (request.method !== "execute") {
-    writeResponse(socket, { jsonrpc: "2.0", id: request.id, error: { code: METHOD_NOT_FOUND, message: "Method not found" } }); return;
-  }
+  let raw: unknown;
   try {
-    const result = await service.execute(request.params as AgentExecutionRequest);
-    writeResponse(socket, { jsonrpc: "2.0", id: request.id, result });
+    raw = JSON.parse(line);
+  } catch {
+    writeResponse(socket, { jsonrpc: "2.0", id: 0, error: { code: PARSE_ERROR, message: "Parse error" } });
+    return;
+  }
+
+  const requestResult = JsonRpcRequestSchema.safeParse(raw);
+  if (!requestResult.success) {
+    writeResponse(socket, { jsonrpc: "2.0", id: 0, error: { code: INVALID_REQUEST, message: "Invalid Request", data: requestResult.error.issues } });
+    return;
+  }
+
+  const request: JsonRpcRequest = requestResult.data;
+  jsonLogger.info("rpc_request_received", { id: request.id, method: request.method });
+
+  if (request.method !== "execute") {
+    writeResponse(socket, { jsonrpc: "2.0", id: request.id, error: { code: METHOD_NOT_FOUND, message: "Method not found" } });
+    return;
+  }
+
+  const paramsResult = JsonRpcExecuteParamsSchema.safeParse(request.params);
+  if (!paramsResult.success) {
+    writeResponse(socket, { jsonrpc: "2.0", id: request.id, error: { code: INVALID_PARAMS, message: "Invalid params", data: paramsResult.error.issues } });
+    return;
+  }
+
+  try {
+    const result = await service.execute(paramsResult.data);
+    const validatedResult = AgentExecutionResponseSchema.parse(result);
+    writeResponse(socket, { jsonrpc: "2.0", id: request.id, result: validatedResult });
   } catch (error) {
-    writeResponse(socket, { jsonrpc: "2.0", id: request.id, error: { code: INTERNAL_ERROR, message: error instanceof Error ? error.message : "Internal error" } });
+    const message = error instanceof Error ? error.message : "Internal error";
+    jsonLogger.error("rpc_request_error", { id: request.id, error: message });
+    writeResponse(socket, { jsonrpc: "2.0", id: request.id, error: { code: INTERNAL_ERROR, message } });
   }
 }
 
-function writeResponse(socket: Socket, response: JsonRpcResponse): void { socket.write(`${JSON.stringify(response)}\n`); }
+function writeResponse(socket: Socket, response: JsonRpcResponse): void {
+  const validatedResponse = JsonRpcResponseSchema.parse(response);
+  if (!socket.destroyed) socket.write(`${JSON.stringify(validatedResponse)}\n`);
+}
