@@ -18,6 +18,8 @@ jobs:
   certify:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      NODE_OPTIONS: --unhandled-rejections=strict
     steps:
       - name: Checkout candidate
         uses: actions/checkout@v4
@@ -40,8 +42,6 @@ jobs:
       - name: Build Gate
         run: timeout --signal=TERM --kill-after=15s 300s pnpm build
       - name: Test Gate
-        env:
-          NODE_OPTIONS: --unhandled-rejections=strict
         run: timeout --signal=TERM --kill-after=15s 600s pnpm --filter @klyn/backend --filter @klyn/execution-runtime --filter @klyn/cognitive-engine --filter @klyn/ai-engine test
       - name: Real Lint Gate
         run: timeout --signal=TERM --kill-after=15s 300s pnpm lint
