@@ -17,3 +17,4 @@ export * from "./swarm/ReadyQueue.js";
 export * from "./swarm/AgentEventBus.js";
 export * from "./swarm/SwarmRouter.js";
 export * from "./swarm/ContextStore.js";
+export * from "./dynamic-dag.js";
