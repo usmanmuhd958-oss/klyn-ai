@@ -1,16 +1,16 @@
 {
   "name": "@klyn/execution-runtime",
-  "version": "5.0.0",
+  "version": "5.1.0",
   "private": true,
   "type": "module",
-  "exports": {
-    ".": "./src/index.ts"
-  },
+  "exports": { ".": "./src/index.ts" },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/**/*.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "tsx": "^4.20.5",
     "typescript": "^5.9.3"
   }
 }
