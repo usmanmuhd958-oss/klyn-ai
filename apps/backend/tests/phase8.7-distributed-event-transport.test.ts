@@ -45,20 +45,22 @@ test("phase 8.7 publishes AgentEventBus events through a durable transport and s
 });
 
 test("phase 8.7 preserves per-node sequence metadata while accepting cross-node reordering", async () => {
-  const bus = new AgentEventBus();
+  const nodeB = new AgentEventBus();
   const transport = new ReorderingTransport();
-  const bridge = new DistributedEventBridge(bus, { nodeId: "node-a", transport, consumerId: "node-b" });
+  const receiver = new DistributedEventBridge(nodeB, { nodeId: "node-b", transport, consumerId: "receiver" });
+  const sender = new DistributedEventBridge(new AgentEventBus(), { nodeId: "node-a", transport, consumerId: "sender" });
   const topics: string[] = [];
-  bus.subscribe("agent.task.*", async (event) => { topics.push(event.topic); });
-  bridge.bridgeTopic("agent.task.*");
+  nodeB.subscribe("agent.task.*", async (event) => { topics.push(event.topic); });
+  receiver.bridgeTopic("agent.task.*");
 
-  const first = await bridge.publish("agent.task.started", { taskId: "t1", agentId: "a1" });
-  const second = await bridge.publish("agent.task.completed", { taskId: "t1", agentId: "a1", output: "ok" });
-  await transport.deliver("node-b", second);
-  await transport.deliver("node-b", first);
+  const first = await sender.publish("agent.task.started", { taskId: "t1", agentId: "a1" });
+  const second = await sender.publish("agent.task.completed", { taskId: "t1", agentId: "a1", output: "ok" });
+  await transport.deliver("receiver", second);
+  await transport.deliver("receiver", first);
   assert.deepEqual(topics, ["agent.task.completed", "agent.task.started"]);
   assert.equal(first.sequence + 1, second.sequence);
-  bridge.close();
+  receiver.close();
+  sender.close();
 });
 
 test("phase 8.7 rehydrates the newest contiguous revision after node failure", () => {
