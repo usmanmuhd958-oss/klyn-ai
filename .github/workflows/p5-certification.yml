@@ -24,15 +24,15 @@ jobs:
           node-version: 22.23.2
           cache: pnpm
       - name: Frozen Install Gate
-        run: pnpm install --frozen-lockfile
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm install --frozen-lockfile
       - name: TypeScript Gate
-        run: pnpm typecheck
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm typecheck
       - name: Build Gate
-        run: pnpm build
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm build
       - name: Test Gate
-        run: pnpm test
+        run: timeout --signal=TERM --kill-after=15s 600s pnpm test
       - name: Real Lint Gate
-        run: pnpm lint
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm lint
       - name: Backend-only scope audit
         run: |
           test ! -d apps/frontend

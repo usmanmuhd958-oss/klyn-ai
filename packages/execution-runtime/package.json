@@ -6,7 +6,7 @@
   "exports": { ".": "./src/index.ts" },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/**/*.test.ts",
+    "test": "tsx --test --test-timeout=15000 tests/**/*.test.ts",
     "lint": "eslint src tests --ext .ts"
   },
   "dependencies": { "sql.js": "^1.13.0" },
