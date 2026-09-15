@@ -7,32 +7,16 @@ import assert from "node:assert/strict";
 import { RouterPipeline, type RouterProvider } from "@klyn/ai-engine";
 import { SqliteAgentEventStore } from "@klyn/execution-runtime";
 import { SwarmDagOrchestrator, type AgentTask } from "../../../packages/cognitive-engine/src/swarm/DagOrchestrator.js";
-import {
-  SupabaseExecutionLedgerSync,
-  type RealtimePayload,
-  type SupabaseLedgerClient,
-  type SupabaseTableQuery,
-} from "../src/supabase/execution-ledger-sync.js";
-import {
-  closeJsonRpcAgentIpcServer,
-  JsonRpcAgentIpcTransport,
-  startJsonRpcAgentIpcServer,
-  type AgentSandboxService,
-} from "../src/ipc/json-rpc-transport.js";
+import { SupabaseExecutionLedgerSync, type RealtimePayload, type SupabaseLedgerClient, type SupabaseTableQuery } from "../src/supabase/execution-ledger-sync.js";
+import { closeJsonRpcAgentIpcServer, JsonRpcAgentIpcTransport, startJsonRpcAgentIpcServer, type AgentSandboxService } from "../src/ipc/json-rpc-transport.js";
 
 const root = await mkdtemp(join(tmpdir(), "klyn-p66-"));
 
 class MemoryTable implements SupabaseTableQuery {
   readonly upserts: Array<{ values: Record<string, unknown> | Record<string, unknown>[]; options?: { onConflict?: string } }> = [];
   readonly inserts: Array<Record<string, unknown> | Record<string, unknown>[]> = [];
-  upsert(values: Record<string, unknown> | Record<string, unknown>[], options?: { onConflict?: string }): Promise<{ data: null; error: null }> {
-    this.upserts.push({ values, options });
-    return Promise.resolve({ data: null, error: null });
-  }
-  insert(values: Record<string, unknown> | Record<string, unknown>[]): Promise<{ data: null; error: null }> {
-    this.inserts.push(values);
-    return Promise.resolve({ data: null, error: null });
-  }
+  upsert(values: Record<string, unknown> | Record<string, unknown>[], options?: { onConflict?: string }): Promise<{ data: null; error: null }> { this.upserts.push({ values, options }); return Promise.resolve({ data: null, error: null }); }
+  insert(values: Record<string, unknown> | Record<string, unknown>[]): Promise<{ data: null; error: null }> { this.inserts.push(values); return Promise.resolve({ data: null, error: null }); }
 }
 
 class MemorySupabase implements SupabaseLedgerClient {
@@ -40,22 +24,16 @@ class MemorySupabase implements SupabaseLedgerClient {
   readonly subscriptions = new Map<string, (payload: RealtimePayload) => void>();
   from(table: string): SupabaseTableQuery {
     let value = this.tables.get(table);
-    if (!value) {
-      value = new MemoryTable();
-      this.tables.set(table, value);
-    }
+    if (!value) { value = new MemoryTable(); this.tables.set(table, value); }
     return value;
   }
   channel(name: string) {
-    const self = this;
-    return {
-      on(_event: "postgres_changes", _filter: Record<string, unknown>, callback: (payload: RealtimePayload) => void) {
-        self.subscriptions.set(name, callback);
-        return this;
-      },
-      subscribe() { return this; },
-      async unsubscribe() { self.subscriptions.delete(name); },
+    const channel = {
+      on: (_event: "postgres_changes", _filter: Record<string, unknown>, callback: (payload: RealtimePayload) => void) => { this.subscriptions.set(name, callback); return channel; },
+      subscribe: () => channel,
+      unsubscribe: async () => { this.subscriptions.delete(name); },
     };
+    return channel;
   }
 }
 
@@ -64,31 +42,21 @@ const makeProvider = (provider: "openai" | "anthropic", output: string): RouterP
   model: `${provider}-test`,
   adapter: {
     name: provider,
-    async generate() {
-      return { provider, model: `${provider}-test`, output, usage: { inputTokens: 7, outputTokens: 5 }, requestId: `${provider}-request` };
-    },
+    async generate() { return { provider, model: `${provider}-test`, output, usage: { inputTokens: 7, outputTokens: 5 }, requestId: `${provider}-request` }; },
     async *stream() { yield { provider, model: `${provider}-test`, text: output, done: true }; },
   },
 });
 
 describe("Klyn Phase 6.6 E2E orchestration", () => {
   let store: SqliteAgentEventStore;
-
-  before(async () => {
-    store = await SqliteAgentEventStore.open(join(root, "execution.sqlite"));
-  });
-
-  after(async () => {
-    await store.close();
-    await rm(root, { recursive: true, force: true });
-  });
+  before(async () => { store = await SqliteAgentEventStore.open(join(root, "execution.sqlite")); });
+  after(async () => { await store.close(); await rm(root, { recursive: true, force: true }); });
 
   it("connects AI routing -> deterministic DAG -> durable queue -> JSON-RPC -> Supabase ledger", async () => {
     const started = performance.now();
     const executionId = "e2e-execution-001";
     const ledgerClient = new MemorySupabase();
     const ledger = new SupabaseExecutionLedgerSync(ledgerClient);
-
     const router = new RouterPipeline([makeProvider("openai", '{"plan":"execute"}')], { baseDelayMs: 0, jitter: 0 });
     const completion = await router.complete({ input: "plan execution", responseFormat: "json" }, undefined);
     assert.equal(completion.provider, "openai");
@@ -101,20 +69,14 @@ describe("Klyn Phase 6.6 E2E orchestration", () => {
       { id: "execute", agentId: "executor", input: "run", dependsOn: ["plan"], run: async () => ({ executed: true }) },
     ];
     dag.addTasks(tasks);
-    const layers = dag.topologicalSort();
-    assert.deepEqual(layers, [["plan"], ["execute"]]);
-
+    assert.deepEqual(dag.topologicalSort(), [["plan"], ["execute"]]);
     await ledger.publish({ type: "execution.state", executionId, dagId: "dag-001", status: "pending" });
     const durable = await store.enqueueTask({ id: "durable-e2e-001", idempotencyKey: "e2e-idempotency-001", payload: { executionId, dagId: "dag-001" } });
     const claimed = await store.claimPendingTask("worker-a", 30_000);
     assert.equal(claimed?.id, durable.id);
     assert.equal(claimed?.status, "RUNNING");
 
-    const service: AgentSandboxService = {
-      async execute(request) {
-        return { executionId: request.executionId, result: { exitCode: 0, stdout: "ok", stderr: "", durationMs: 1 } };
-      },
-    };
+    const service: AgentSandboxService = { async execute(request) { return { executionId: request.executionId, result: { exitCode: 0, stdout: "ok", stderr: "", durationMs: 1 } }; } };
     const server = await startJsonRpcAgentIpcServer(service, { host: "127.0.0.1", port: 0 });
     const address = server.address();
     assert.equal(typeof address, "object");
@@ -130,13 +92,9 @@ describe("Klyn Phase 6.6 E2E orchestration", () => {
     await ledger.publish({ type: "dag.state", executionId, dagId: "dag-001", nodeId: "execute", state: "succeeded", attempt: 1, result: { executed: true } });
     await ledger.publish({ type: "agent.log", executionId, agentId: "executor", level: "info", event: "completed", sequence: 1 });
     await ledger.publish({ type: "execution.state", executionId, dagId: "dag-001", status: "succeeded", completedAt: new Date().toISOString() });
-
-    const executions = ledgerClient.tables.get("executions")!;
-    const dagStates = ledgerClient.tables.get("dag_states")!;
-    const telemetry = ledgerClient.tables.get("provider_telemetry")!;
-    assert.equal(executions.upserts.length, 2);
-    assert.equal(dagStates.upserts.length, 1);
-    assert.equal(telemetry.inserts.length, 1);
+    assert.equal(ledgerClient.tables.get("executions")!.upserts.length, 2);
+    assert.equal(ledgerClient.tables.get("dag_states")!.upserts.length, 1);
+    assert.equal(ledgerClient.tables.get("provider_telemetry")!.inserts.length, 1);
     assert.equal((await store.getTask(durable.id))?.status, "COMPLETED");
     assert.ok(performance.now() - started < 200, "full E2E flow exceeded 200ms");
   });
@@ -148,7 +106,6 @@ describe("Klyn Phase 6.6 E2E orchestration", () => {
     const running = await first.claimPendingTask("worker-crashed");
     assert.equal(running?.status, "RUNNING");
     await first.close();
-
     const recovered = await SqliteAgentEventStore.open(crashPath);
     const pending = await recovered.getTask(task.id);
     assert.equal(pending?.status, "PENDING");
@@ -179,9 +136,7 @@ describe("Klyn Phase 6.6 E2E orchestration", () => {
       assert.deepEqual(unhandled, []);
       assert.equal(process.listenerCount("unhandledRejection"), beforeUnhandled + 1);
       assert.ok(performance.now() - started < 200, "stress harness exceeded 200ms");
-    } finally {
-      process.off("unhandledRejection", onUnhandled);
-    }
+    } finally { process.off("unhandledRejection", onUnhandled); }
     assert.equal(process.listenerCount("unhandledRejection"), beforeUnhandled);
   });
 });
