@@ -117,7 +117,7 @@ jobs:
           set -euo pipefail
           ! grep -R -nE '"ready"|"running"' packages/ai-engine/src/types/planner-bridge.types.ts packages/ai-engine/src/orchestrator/planner-bridge.ts packages/ai-engine/src/runtime/spatial-bus.ts
           grep -q 'state_version' supabase/migrations/20260915210000_planner_execution_cas_and_timestamps.sql
-          grep -q 'planner_execution_states_version_guard' supabase/migrations/20260915210000_planner_execution_version_guard' supabase/migrations/20260915210000_planner_execution_cas_and_timestamps.sql
+          grep -q 'planner_execution_states_version_guard' supabase/migrations/20260915210000_planner_execution_cas_and_timestamps.sql
           grep -q 'updated_at' supabase/migrations/20260915210000_planner_execution_cas_and_timestamps.sql
 
       - name: Workflow Language Audit
