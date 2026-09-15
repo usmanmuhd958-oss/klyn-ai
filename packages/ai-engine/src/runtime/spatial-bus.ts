@@ -1,6 +1,5 @@
 import type {
   ExecutableTask,
-  ExecutableTaskBatch,
   PlannerBridgeResult,
   PlannerTaskStatus,
 } from "../types/planner-bridge.types.js";
@@ -34,7 +33,7 @@ type MutableNodeState = {
 type ExecutionRecord = {
   readonly executionId: string;
   readonly namespace: string;
-  readonly nodes: ReadonlyMap<string, MutableNodeState>;
+  nodes: ReadonlyMap<string, MutableNodeState>;
   readonly stream: StreamController;
 };
 
@@ -163,31 +162,27 @@ export class SpatialBus {
     const stream = this.register(plan);
     const record = this.getExecution(plan.executionId);
 
-    try {
-      for (const batch of plan.batches) {
-        const tasks = [...batch.tasks].sort((left, right) => left.node.id.localeCompare(right.node.id));
-        for (const task of tasks) {
-          this.transition(record, task.node.id, "queued");
-        }
-        for (const task of tasks) {
-          this.assertPrerequisitesComplete(record, task);
-          this.transition(record, task.node.id, "executing");
-          try {
-            await executor(task);
-            this.transition(record, task.node.id, "completed");
-          } catch (error) {
-            const message = error instanceof Error ? error.message : "Task execution failed";
-            this.transition(record, task.node.id, "failed", message);
-            this.emit(record, "execution:failed", undefined, message);
-            return stream;
-          }
+    for (const batch of plan.batches) {
+      const tasks = [...batch.tasks].sort((left, right) => left.node.id.localeCompare(right.node.id));
+      for (const task of tasks) {
+        this.transition(record, task.node.id, "queued");
+      }
+      for (const task of tasks) {
+        this.assertPrerequisitesComplete(record, task);
+        this.transition(record, task.node.id, "executing");
+        try {
+          await executor(task);
+          this.transition(record, task.node.id, "completed");
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Task execution failed";
+          this.transition(record, task.node.id, "failed", message);
+          this.emit(record, "execution:failed", undefined, message);
+          return stream;
         }
       }
-      this.emit(record, "execution:completed");
-      return stream;
-    } finally {
-      // Execution remains queryable until close() is explicitly requested.
     }
+    this.emit(record, "execution:completed");
+    return stream;
   }
 
   public transitionNode(
@@ -299,7 +294,7 @@ export class SpatialBus {
 
     const nextNodes = new Map(record.nodes);
     nextNodes.set(taskId, next);
-    (record as { nodes: ReadonlyMap<string, MutableNodeState> }).nodes = nextNodes;
+    record.nodes = nextNodes;
 
     const eventType = this.eventTypeFor(status);
     this.emit(record, eventType, next);
