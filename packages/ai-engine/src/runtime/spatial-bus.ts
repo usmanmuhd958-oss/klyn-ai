@@ -1,6 +1,5 @@
 import type {
   ExecutableTask,
-  PlannerBridgeResult,
   PlannerTaskStatus,
 } from "../types/planner-bridge.types.js";
 import {
@@ -19,15 +18,15 @@ const DEFAULT_NAMESPACE = "default";
 const DEFAULT_MAX_BUFFERED_EVENTS = 1000;
 
 type MutableNodeState = {
-  taskId: string;
-  status: SpatialCanvasNodeState["status"];
-  phase: number;
-  prerequisites: readonly string[];
-  completedPrerequisites: readonly string[];
-  executionId: string;
-  namespace: string;
-  sequence: number;
-  error?: string;
+  readonly taskId: string;
+  readonly status: SpatialCanvasNodeState["status"];
+  readonly phase: number;
+  readonly prerequisites: readonly string[];
+  readonly completedPrerequisites: readonly string[];
+  readonly executionId: string;
+  readonly namespace: string;
+  readonly sequence: number;
+  readonly error?: string;
 };
 
 type ExecutionRecord = {
@@ -41,65 +40,70 @@ class StreamController implements SpatialRuntimeStream {
   public readonly executionId: string;
   public readonly namespace: string;
 
-  private readonly maxBufferedEvents: number;
-  private bufferedEvents: SpatialBusEvent[] = [];
-  private listeners = new Set<SpatialRuntimeListener>();
-  private closed = false;
+  #maxBufferedEvents: number;
+  #bufferedEvents: SpatialBusEvent[] = [];
+  #listeners = new Set<SpatialRuntimeListener>();
+  #closed = false;
 
   public constructor(executionId: string, namespace: string, maxBufferedEvents: number) {
     this.executionId = executionId;
     this.namespace = namespace;
-    this.maxBufferedEvents = maxBufferedEvents;
+    this.#maxBufferedEvents = maxBufferedEvents;
   }
 
   public get events(): readonly SpatialBusEvent[] {
-    return [...this.bufferedEvents];
+    return Object.freeze([...this.#bufferedEvents]);
   }
 
   public subscribe(listener: SpatialRuntimeListener): () => void {
-    if (this.closed) {
+    if (this.#closed) {
       return () => undefined;
     }
 
-    this.listeners.add(listener);
+    this.#listeners.add(listener);
     return () => {
-      this.listeners.delete(listener);
+      this.#listeners.delete(listener);
     };
   }
 
+  public clear(): void {
+    this.#bufferedEvents = [];
+  }
+
   public close(): void {
-    this.closed = true;
-    this.listeners.clear();
+    this.#closed = true;
+    this.#listeners.clear();
+    this.clear();
   }
 
   public emit(event: SpatialBusEvent): void {
-    if (this.closed) {
+    if (this.#closed) {
       return;
     }
 
-    this.bufferedEvents = [...this.bufferedEvents, event].slice(-this.maxBufferedEvents);
-    const listeners = [...this.listeners];
+    this.#bufferedEvents = [...this.#bufferedEvents, Object.freeze(event)].slice(-this.#maxBufferedEvents);
+    const listeners = [...this.#listeners];
     for (const listener of listeners) {
       try {
         listener(event);
       } catch {
-        // A listener failure must not roll back or interrupt the committed runtime state.
+        // Observer failures cannot change committed execution state.
       }
     }
   }
 }
 
 export class SpatialBus {
-  private readonly namespace: string;
-  private readonly maxBufferedEvents: number;
-  private readonly executions = new Map<string, ExecutionRecord>();
-  private sequence = 0;
+  #namespace: string;
+  #maxBufferedEvents: number;
+  #executions = new Map<string, ExecutionRecord>();
+  #sequence = 0;
 
   public constructor(options: SpatialExecutionBusOptions = {}) {
-    this.namespace = options.namespace?.trim() || DEFAULT_NAMESPACE;
-    this.maxBufferedEvents = options.maxBufferedEvents ?? DEFAULT_MAX_BUFFERED_EVENTS;
+    this.#namespace = options.namespace?.trim() || DEFAULT_NAMESPACE;
+    this.#maxBufferedEvents = options.maxBufferedEvents ?? DEFAULT_MAX_BUFFERED_EVENTS;
 
-    if (!Number.isInteger(this.maxBufferedEvents) || this.maxBufferedEvents < 1) {
+    if (!Number.isInteger(this.#maxBufferedEvents) || this.#maxBufferedEvents < 1) {
       throw new SpatialBusError(
         "SPATIAL_BUS_BUFFER_LIMIT",
         "maxBufferedEvents must be a positive integer",
@@ -110,14 +114,14 @@ export class SpatialBus {
   public register(plan: SpatialExecutionInput): SpatialRuntimeStream {
     this.validatePlan(plan);
     const key = this.executionKey(plan.executionId);
-    if (this.executions.has(key)) {
+    if (this.#executions.has(key)) {
       throw new SpatialBusError(
         "SPATIAL_BUS_DUPLICATE_EXECUTION",
-        `Execution '${plan.executionId}' already exists in namespace '${this.namespace}'`,
+        `Execution '${plan.executionId}' already exists in namespace '${this.#namespace}'`,
       );
     }
 
-    const nodeMap = new Map<string, MutableNodeState>();
+    let nodeMap = new Map<string, MutableNodeState>();
     for (const batch of plan.batches) {
       for (const task of batch.tasks) {
         if (nodeMap.has(task.node.id)) {
@@ -126,31 +130,31 @@ export class SpatialBus {
             `Task '${task.node.id}' appears more than once in execution batches`,
           );
         }
-        nodeMap.set(task.node.id, {
+        nodeMap = new Map(nodeMap).set(task.node.id, Object.freeze({
           taskId: task.node.id,
           status: "pending",
           phase: batch.phase,
-          prerequisites: [...task.prerequisites],
-          completedPrerequisites: [],
+          prerequisites: Object.freeze([...task.prerequisites]),
+          completedPrerequisites: Object.freeze([]),
           executionId: plan.executionId,
-          namespace: this.namespace,
+          namespace: this.#namespace,
           sequence: 0,
-        });
+        }));
       }
     }
 
     const stream = new StreamController(
       plan.executionId,
-      this.namespace,
-      this.maxBufferedEvents,
+      this.#namespace,
+      this.#maxBufferedEvents,
     );
     const record: ExecutionRecord = {
       executionId: plan.executionId,
-      namespace: this.namespace,
+      namespace: this.#namespace,
       nodes: nodeMap,
       stream,
     };
-    this.executions.set(key, record);
+    this.#executions = new Map(this.#executions).set(key, record);
     this.emit(record, "execution:started");
     return stream;
   }
@@ -188,7 +192,7 @@ export class SpatialBus {
   public transitionNode(
     executionId: string,
     taskId: string,
-    status: Extract<SpatialCanvasNodeState["status"], "queued" | "executing" | "completed" | "failed">,
+    status: Exclude<SpatialCanvasNodeState["status"], "pending">,
     error?: string,
   ): SpatialCanvasNodeState {
     const record = this.getExecution(executionId);
@@ -204,46 +208,49 @@ export class SpatialBus {
       this.assertPrerequisitesComplete(record, this.taskForState(state));
     }
     this.transition(record, taskId, status, error);
-    return this.snapshot(record.nodes.get(taskId) as MutableNodeState);
+    return this.snapshot(record.nodes.get(taskId));
   }
 
   public getNodeState(executionId: string, taskId: string): SpatialCanvasNodeState | undefined {
-    const record = this.executions.get(this.executionKey(executionId));
+    const record = this.#executions.get(this.executionKey(executionId));
     const state = record?.nodes.get(taskId);
     return state ? this.snapshot(state) : undefined;
   }
 
   public getExecutionStates(executionId: string): readonly SpatialCanvasNodeState[] {
     const record = this.getExecution(executionId);
-    return [...record.nodes.values()]
-      .sort((left, right) => left.sequence - right.sequence || left.taskId.localeCompare(right.taskId))
-      .map((state) => this.snapshot(state));
+    return Object.freeze(
+      [...record.nodes.values()]
+        .sort((left, right) => left.sequence - right.sequence || left.taskId.localeCompare(right.taskId))
+        .map((state) => this.snapshot(state)),
+    );
   }
 
   public close(executionId: string): void {
     const key = this.executionKey(executionId);
-    const record = this.executions.get(key);
+    const record = this.#executions.get(key);
     if (!record) {
       return;
     }
     this.emit(record, "execution:closed");
     record.stream.close();
-    this.executions.delete(key);
+    this.#executions = new Map(this.#executions);
+    this.#executions.delete(key);
   }
 
   public clear(): void {
-    for (const record of [...this.executions.values()]) {
+    for (const record of this.#executions.values()) {
       this.emit(record, "execution:closed");
       record.stream.close();
     }
-    this.executions.clear();
+    this.#executions = new Map();
   }
 
   public get activeExecutionCount(): number {
-    return this.executions.size;
+    return this.#executions.size;
   }
 
-  private validatePlan(plan: PlannerBridgeResult): void {
+  private validatePlan(plan: SpatialExecutionInput): void {
     if (!plan || typeof plan.executionId !== "string" || !plan.executionId.trim()) {
       throw new SpatialBusError("SPATIAL_BUS_INVALID_INPUT", "A non-empty executionId is required");
     }
@@ -282,19 +289,17 @@ export class SpatialBus {
     }
     this.assertTransition(current.status, status);
 
-    const next: MutableNodeState = {
+    const next: MutableNodeState = Object.freeze({
       ...current,
       status,
       sequence: this.nextSequence(),
       ...(error === undefined ? {} : { error }),
       ...(status === "completed"
-        ? { completedPrerequisites: [...current.prerequisites] }
+        ? { completedPrerequisites: Object.freeze([...current.prerequisites]) }
         : {}),
-    };
+    });
 
-    const nextNodes = new Map(record.nodes);
-    nextNodes.set(taskId, next);
-    record.nodes = nextNodes;
+    record.nodes = new Map(record.nodes).set(taskId, next);
 
     const eventType = this.eventTypeFor(status);
     this.emit(record, eventType, next);
@@ -304,16 +309,14 @@ export class SpatialBus {
     current: SpatialCanvasNodeState["status"],
     next: SpatialCanvasNodeState["status"],
   ): void {
-    const allowed: Readonly<Record<string, readonly string[]>> = {
+    const allowed: Readonly<Record<SpatialCanvasNodeState["status"], readonly SpatialCanvasNodeState["status"][]>> = {
       pending: ["queued"],
       queued: ["executing", "failed"],
       executing: ["completed", "failed"],
       completed: [],
       failed: [],
-      ready: [],
-      running: [],
     };
-    if (!allowed[current]?.includes(next)) {
+    if (!allowed[current].includes(next)) {
       throw new SpatialBusError(
         "SPATIAL_BUS_INVALID_TRANSITION",
         `Invalid spatial state transition '${current}' -> '${next}'`,
@@ -336,7 +339,7 @@ export class SpatialBus {
     };
   }
 
-  private eventTypeFor(status: PlannerTaskStatus | "queued" | "executing"): SpatialBusEventType {
+  private eventTypeFor(status: PlannerTaskStatus): SpatialBusEventType {
     switch (status) {
       case "queued":
         return "node:queued";
@@ -358,7 +361,7 @@ export class SpatialBus {
     error?: string,
   ): void {
     const sequence = this.nextSequence();
-    const event: SpatialBusEvent = {
+    const event: SpatialBusEvent = Object.freeze({
       id: `${record.namespace}:${record.executionId}:${sequence}`,
       sequence,
       type,
@@ -366,35 +369,38 @@ export class SpatialBus {
       namespace: record.namespace,
       ...(state ? { taskId: state.taskId, phase: state.phase, state: this.snapshot(state) } : {}),
       ...(error ? { error } : {}),
-    };
+    });
     record.stream.emit(event);
   }
 
-  private snapshot(state: MutableNodeState): SpatialCanvasNodeState {
-    return {
+  private snapshot(state: MutableNodeState | undefined): SpatialCanvasNodeState {
+    if (!state) {
+      throw new SpatialBusError("SPATIAL_BUS_MISSING_NODE", "Task state disappeared during atomic transition");
+    }
+    return Object.freeze({
       ...state,
-      prerequisites: [...state.prerequisites],
-      completedPrerequisites: [...state.completedPrerequisites],
-    };
+      prerequisites: Object.freeze([...state.prerequisites]),
+      completedPrerequisites: Object.freeze([...state.completedPrerequisites]),
+    });
   }
 
   private getExecution(executionId: string): ExecutionRecord {
-    const record = this.executions.get(this.executionKey(executionId));
+    const record = this.#executions.get(this.executionKey(executionId));
     if (!record) {
       throw new SpatialBusError(
         "SPATIAL_BUS_EXECUTION_CLOSED",
-        `Execution '${executionId}' is not active in namespace '${this.namespace}'`,
+        `Execution '${executionId}' is not active in namespace '${this.#namespace}'`,
       );
     }
     return record;
   }
 
   private executionKey(executionId: string): string {
-    return `${this.namespace}\u0000${executionId}`;
+    return `${this.#namespace}\u0000${executionId}`;
   }
 
   private nextSequence(): number {
-    this.sequence += 1;
-    return this.sequence;
+    this.#sequence += 1;
+    return this.#sequence;
   }
 }
