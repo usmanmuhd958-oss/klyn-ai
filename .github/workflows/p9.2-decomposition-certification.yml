@@ -23,25 +23,22 @@ jobs:
       NODE_OPTIONS: --unhandled-rejections=strict
       PNPM_VERSION: 11.24.0
       NODE_VERSION: '22'
-      P9_2_BASE_SHA: ce0dd50c163aa5ab7509bafc789023d01e80c1bf
+      P9_2_BASE_SHA: 09959240aa97446b30bbdfedea6c800ffe431d7d
     steps:
       - name: Checkout candidate
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 11.24.0
-
       - name: Set up Node 22
         uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-
       - name: Verify runtime
         run: |
           set -euo pipefail
@@ -49,32 +46,25 @@ jobs:
           pnpm --version
           test "$(node --version | cut -d. -f1)" = "v${NODE_VERSION}"
           test "$(pnpm --version)" = "${PNPM_VERSION}"
-
       - name: Warm pnpm store
         shell: bash
         run: |
           set -euo pipefail
           pnpm config set store-dir "$HOME/.pnpm-store"
           pnpm fetch --prefer-offline --frozen-lockfile || pnpm fetch --frozen-lockfile
-
       - name: Offline-first frozen install
         shell: bash
         run: |
           set -euo pipefail
           pnpm install --offline --frozen-lockfile || pnpm install --prefer-offline --frozen-lockfile
-
       - name: TypeScript Gate
         run: timeout --signal=TERM --kill-after=15s 300s pnpm --filter @klyn/ai-engine typecheck
-
       - name: Build Gate
         run: timeout --signal=TERM --kill-after=15s 300s pnpm --filter @klyn/ai-engine build
-
       - name: Test Gate
         run: timeout --signal=TERM --kill-after=15s 300s pnpm --filter @klyn/ai-engine test
-
       - name: Lint Gate
         run: timeout --signal=TERM --kill-after=15s 300s pnpm --filter @klyn/ai-engine lint
-
       - name: Backend Scope Audit
         shell: bash
         run: |
@@ -86,7 +76,6 @@ jobs:
             exit 1
           fi
           cat /tmp/klyn-p92-files.txt
-
       - name: Phase 9.2 Wiring Audit
         shell: bash
         run: |
@@ -98,7 +87,6 @@ jobs:
           grep -q 'GoalDecomposerError' packages/ai-engine/src/index.ts
           grep -q 'GoalDecompositionRequest' packages/ai-engine/src/index.ts
           grep -q 'TaskGraphPlanRequest' packages/ai-engine/src/types/goal-decomposition.types.ts
-
       - name: Phase 9.3 PlannerBridge Wiring Audit
         shell: bash
         run: |
@@ -110,7 +98,6 @@ jobs:
           grep -q 'PlannerRuntimeTaskState' packages/ai-engine/src/index.ts
           grep -q 'PLANNER_BRIDGE_MISSING_PREREQUISITE' packages/ai-engine/src/types/planner-bridge.types.ts
           grep -q 'synchronizeState' packages/ai-engine/src/orchestrator/planner-bridge.ts
-
       - name: Type Safety Audit
         shell: bash
         run: |
@@ -119,7 +106,6 @@ jobs:
             echo "Forbidden TypeScript escape hatches detected."
             exit 1
           fi
-
       - name: Workflow Language Audit
         shell: bash
         run: |
@@ -128,7 +114,6 @@ jobs:
             echo "Non-English or non-ASCII workflow text detected."
             exit 1
           fi
-
   certification-report:
     if: github.event_name == 'pull_request'
     needs: certify
