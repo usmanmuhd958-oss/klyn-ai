@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { FallbackRouter, ProviderError, TokenTelemetryStreamer, type ProviderAdapter, type StreamChunk } from "../../../packages/ai-engine/src/index.ts";
+import { FallbackRouter, ProviderCircuitBreaker, ProviderError, TokenTelemetryStreamer, type ProviderAdapter, type StreamChunk } from "../../../packages/ai-engine/src/index.ts";
 
 function adapter(name: "anthropic" | "openai", failures = 0): ProviderAdapter {
   let attempts = 0;
@@ -19,27 +19,35 @@ function adapter(name: "anthropic" | "openai", failures = 0): ProviderAdapter {
 }
 
 test("phase 8.4 fails over from a transient primary provider to the backup", async () => {
-  const primary = adapter("anthropic", 1);
-  const backup = adapter("openai");
   const router = new FallbackRouter([
-    { provider: "anthropic", model: "primary", adapter: primary },
-    { provider: "openai", model: "backup", adapter: backup },
-  ], undefined, { maxRetriesPerProvider: 0 });
+    { provider: "anthropic", model: "requested", adapter: adapter("anthropic", 1) },
+    { provider: "openai", model: "requested", adapter: adapter("openai") },
+  ], new ProviderCircuitBreaker({ failureThreshold: 1 }), { maxRetriesPerProvider: 0 });
   const response = await router.complete({ model: "requested", input: "hello" });
   assert.equal(response.provider, "openai");
   assert.equal(router.telemetry.successes, 1);
   assert.equal(router.telemetry.fallbackCount, 1);
   assert.equal(router.telemetry.providerAttempts.anthropic, 1);
   assert.equal(router.telemetry.providerAttempts.openai, 1);
+  assert.equal(router.circuitBreaker.snapshot().anthropic?.open, true);
 });
 
-test("phase 8.4 circuit breaker opens a failing provider and permits backup routing", async () => {
+test("phase 8.4 circuit breaker prevents repeated calls to an unhealthy primary", async () => {
+  let primaryCalls = 0;
+  const primary = adapter("anthropic", 10);
+  const originalGenerate = primary.generate;
+  primary.generate = async (request) => { primaryCalls++; return originalGenerate(request); };
+  const backup = adapter("openai");
+  const breaker = new ProviderCircuitBreaker({ failureThreshold: 1 });
   const router = new FallbackRouter([
-    { provider: "anthropic", model: "a", adapter: adapter("anthropic", 10) },
-    { provider: "openai", model: "b", adapter: adapter("openai") },
-  ], new (class extends (await import("../../../packages/ai-engine/src/circuit-breaker.ts")).ProviderCircuitBreaker {})());
-  await assert.rejects(() => router.complete({ model: "a", input: "first" }), /All configured AI providers failed/);
-  assert.equal(router.circuitBreaker.snapshot().anthropic?.open, false);
+    { provider: "anthropic", model: "m", adapter: primary },
+    { provider: "openai", model: "m", adapter: backup },
+  ], breaker, { maxRetriesPerProvider: 0 });
+  await router.complete({ model: "m", input: "first" });
+  await router.complete({ model: "m", input: "second" });
+  assert.equal(primaryCalls, 1);
+  assert.equal(router.telemetry.providerAttempts.openai, 2);
+  assert.equal(breaker.snapshot().anthropic?.open, true);
 });
 
 test("phase 8.4 streaming telemetry counts injected tokenizer output and latency", async () => {
