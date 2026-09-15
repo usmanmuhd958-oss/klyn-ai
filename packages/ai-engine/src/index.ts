@@ -27,3 +27,5 @@ export { ContextBudgetManager, ContextCompactor, ContextControlPlane, distillSub
 export type { ContextRole, ContextMessage as ControlPlaneContextMessage, ExecutionNote, ContextBudget, ContextSnapshot, Compactor, SubagentResult } from "./context-control-plane.js";
 export { DistributedEventBridge, InMemoryDurableEventTransport } from "./distributed-event-transport.js";
 export type { DistributedEvent, EventDelivery, DurableEventTransport, EventBusLike, DistributedEventBridgeOptions } from "./distributed-event-transport.js";
+export { ContextEmbeddingEngine, DeterministicEmbeddingProvider, VectorMemoryIndex, CrossAgentKnowledgeBus, cosineSimilarity } from "./vector-memory.js";
+export type { EmbeddingProvider, EmbeddingRecord, VectorSearchResult, KnowledgeItem } from "./vector-memory.js";
