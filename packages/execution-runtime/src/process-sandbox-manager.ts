@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { SecretMasker } from "./secret-masker.js";
 
@@ -10,6 +11,8 @@ export interface ProcessSandboxRequest {
   timeoutMs?: number;
   memoryMb?: number;
   maxOutputBytes?: number;
+  fenceKey?: string;
+  ownerId?: string;
 }
 
 export interface ProcessSandboxResult {
@@ -36,7 +39,14 @@ export const DEFAULT_PROCESS_SANDBOX_POLICY: ProcessSandboxPolicy = {
   allowedCommands: new Set(["node", "python", "python3", "deno", "bun", "cargo", "rustc"]),
 };
 
+/**
+ * Host-process safety boundary. This is deliberately not a container escape
+ * boundary: production deployments must place the manager inside an OS/container
+ * sandbox with dropped privileges, seccomp/AppArmor, filesystem and network policy.
+ */
 export class ProcessSandboxManager {
+  private readonly owners = new Map<string, string>();
+
   constructor(
     private readonly policy: ProcessSandboxPolicy = DEFAULT_PROCESS_SANDBOX_POLICY,
     private readonly secretMasker = new SecretMasker(),
@@ -44,6 +54,12 @@ export class ProcessSandboxManager {
 
   execute(request: ProcessSandboxRequest): Promise<ProcessSandboxResult> {
     this.validate(request);
+    const fenceKey = request.fenceKey;
+    const ownerId = request.ownerId;
+    if (fenceKey && ownerId && !this.acquireFence(fenceKey, ownerId)) {
+      return Promise.reject(new Error(`Execution fence is held: ${fenceKey}`));
+    }
+
     const timeoutMs = Math.min(request.timeoutMs ?? this.policy.maxTimeoutMs, this.policy.maxTimeoutMs);
     const memoryMb = Math.min(request.memoryMb ?? this.policy.maxMemoryMb, this.policy.maxMemoryMb);
     const maxOutputBytes = Math.min(request.maxOutputBytes ?? this.policy.maxOutputBytes, this.policy.maxOutputBytes);
@@ -61,6 +77,7 @@ export class ProcessSandboxManager {
           stdio: ["ignore", "pipe", "pipe"],
         });
       } catch (error) {
+        if (fenceKey && ownerId) this.releaseFence(fenceKey, ownerId);
         reject(error);
         return;
       }
@@ -79,11 +96,12 @@ export class ProcessSandboxManager {
 
       const append = (target: "stdout" | "stderr", chunk: Buffer): void => {
         if (settled) return;
-        outputBytes += chunk.byteLength;
-        const remaining = Math.max(0, maxOutputBytes - Buffer.byteLength(stdout, "utf8") - Buffer.byteLength(stderr, "utf8"));
+        const currentBytes = Buffer.byteLength(stdout, "utf8") + Buffer.byteLength(stderr, "utf8");
+        const remaining = Math.max(0, maxOutputBytes - currentBytes);
         const text = chunk.toString("utf8", 0, Math.min(chunk.byteLength, remaining));
         if (target === "stdout") stdout += text;
         else stderr += text;
+        outputBytes += chunk.byteLength;
         if (outputBytes > maxOutputBytes) {
           stderr += "\n[Sandbox output limit exceeded]";
           this.terminate(child);
@@ -93,21 +111,20 @@ export class ProcessSandboxManager {
       child.stdout?.on("data", (chunk: Buffer) => append("stdout", chunk));
       child.stderr?.on("data", (chunk: Buffer) => append("stderr", chunk));
 
-      if (Number.isFinite(memoryMb) && memoryMb > 0) {
-        memoryTimer = globalThis.setInterval(() => {
-          const rss = child.pid ? this.readResidentMemoryBytes(child.pid) : 0;
-          if (rss > memoryMb * 1024 * 1024) {
-            memoryExceeded = true;
-            this.terminate(child);
-          }
-        }, 100);
-      }
+      memoryTimer = globalThis.setInterval(() => {
+        const rss = child.pid ? this.readResidentMemoryBytes(child.pid) : 0;
+        if (rss > memoryMb * 1024 * 1024) {
+          memoryExceeded = true;
+          this.terminate(child);
+        }
+      }, 100);
 
       const finish = (error?: Error): void => {
         if (settled) return;
         settled = true;
         globalThis.clearTimeout(timeoutTimer);
         if (memoryTimer !== undefined) globalThis.clearInterval(memoryTimer);
+        if (fenceKey && ownerId) this.releaseFence(fenceKey, ownerId);
         if (error) {
           reject(error);
           return;
@@ -126,6 +143,19 @@ export class ProcessSandboxManager {
       child.once("error", (error) => finish(error));
       child.once("close", () => finish());
     });
+  }
+
+  acquireFence(key: string, ownerId: string): boolean {
+    const current = this.owners.get(key);
+    if (current !== undefined && current !== ownerId) return false;
+    this.owners.set(key, ownerId);
+    return true;
+  }
+
+  releaseFence(key: string, ownerId: string): boolean {
+    if (this.owners.get(key) !== ownerId) return false;
+    this.owners.delete(key);
+    return true;
   }
 
   private validate(request: ProcessSandboxRequest): void {
@@ -155,22 +185,13 @@ export class ProcessSandboxManager {
   }
 
   private readResidentMemoryBytes(pid: number): number {
-    if (process.platform === "linux") {
-      try {
-        const fs = requireNodeFs();
-        const status = fs.readFileSync(`/proc/${pid}/status`, "utf8") as string;
-        const match = /VmRSS:\s+(\d+)\s+kB/.exec(status);
-        return match ? Number(match[1]) * 1024 : 0;
-      } catch {
-        return 0;
-      }
+    if (process.platform !== "linux") return 0;
+    try {
+      const status = readFileSync(`/proc/${pid}/status`, "utf8");
+      const match = /VmRSS:\s+(\d+)\s+kB/.exec(status);
+      return match ? Number(match[1]) * 1024 : 0;
+    } catch {
+      return 0;
     }
-    return 0;
   }
-}
-
-function requireNodeFs(): typeof import("node:fs") {
-  // Kept synchronous and local to the sampler so unsupported platforms simply report 0.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  return require("node:fs");
 }
