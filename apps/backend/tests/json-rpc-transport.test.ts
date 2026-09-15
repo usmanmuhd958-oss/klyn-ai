@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { Socket } from "node:net";
 import { JsonRpcAgentIpcTransport, startJsonRpcAgentIpcServer } from "../src/ipc/json-rpc-transport.js";
 
 test("JSON-RPC IPC round trip over loopback", async () => {
@@ -14,6 +15,11 @@ test("JSON-RPC IPC round trip over loopback", async () => {
   const address = server.address();
   assert.ok(address && typeof address !== "string");
 
+  let serverSocket: Socket | undefined;
+  server.on("connection", (socket) => {
+    serverSocket = socket;
+  });
+
   const transport = new JsonRpcAgentIpcTransport("127.0.0.1", address.port);
   try {
     const response = await transport.call({
@@ -26,6 +32,7 @@ test("JSON-RPC IPC round trip over loopback", async () => {
     assert.equal(response.result.stdout, "ok");
   } finally {
     transport.close();
+    serverSocket?.destroy();
     await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
     });
