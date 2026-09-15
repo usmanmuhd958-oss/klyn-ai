@@ -4,8 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { SqliteAgentEventStore, LeaseScheduler } from "@klyn/execution-runtime";
-import { SwarmDagOrchestrator, ReadyQueue } from "@klyn/cognitive-engine";
-import { ContextBudgetManager, ContextCompactor, ContextControlPlane, distillSubagentResult } from "@klyn/ai-engine";
+import {
+  ContextBudgetManager,
+  ContextCompactor,
+  ContextControlPlane,
+  ReadyQueue,
+  SwarmDagOrchestrator,
+  distillSubagentResult,
+} from "@klyn/cognitive-engine";
 
 describe("Klyn Phase 8.1", () => {
   it("atomically fences workers and recovers expired leases", async () => {
