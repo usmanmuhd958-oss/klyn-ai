@@ -53,7 +53,6 @@ export type {
   ExecutableTask,
   ExecutableTaskBatch,
   PlannerBridgeErrorCode,
-  PlannerBridgeInputPlan,
   PlannerBridgeOptions,
   PlannerBridgeResult,
   PlannerBridgeStateUpdate,
