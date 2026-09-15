@@ -14,3 +14,6 @@ export * from "./ExperienceMemory.js";
 export * from "./CognitiveLoop.js";
 export * from "./swarm/DagOrchestrator.js";
 export * from "./swarm/ReadyQueue.js";
+export * from "./swarm/AgentEventBus.js";
+export * from "./swarm/SwarmRouter.js";
+export * from "./swarm/ContextStore.js";
