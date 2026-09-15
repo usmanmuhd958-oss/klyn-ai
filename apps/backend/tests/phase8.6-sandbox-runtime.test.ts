@@ -51,7 +51,7 @@ test("Phase 8.6 terminates execution after the timeout boundary", async () => {
         allowedCommands: new Set(["node"]),
       },
     });
-    const result = await runtime.execute({ command: "node", args: ["-e", "setTimeout(() => {}, 10_000)"], cwd: workspace, timeoutMs: 50 });
+    const result = await runtime.execute({ command: "node", args: ["-e", "setTimeout(() => {}, 10_000)"], cwd: workspace, timeoutMs: 50, memoryMb: 128 });
     assert.equal(result.timedOut, true);
     assert.equal(result.exitCode, null);
   } finally {
@@ -103,6 +103,8 @@ test("Phase 8.6 restores the workspace after an execution failure", async () => 
       command: "node",
       args: ["-e", "require('node:fs').writeFileSync('state.txt','after'); process.exit(3)"],
       cwd: workspace,
+      timeoutMs: 5_000,
+      memoryMb: 128,
     });
     assert.equal(result.exitCode, 3);
     assert.equal(await readFile(target, "utf8"), "before");
