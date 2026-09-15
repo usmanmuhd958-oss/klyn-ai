@@ -1,15 +1,18 @@
 {
   "name": "@klyn/execution-runtime",
-  "version": "5.1.0",
+  "version": "5.2.0",
   "private": true,
   "type": "module",
   "exports": { ".": "./src/index.ts" },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/**/*.test.ts"
+    "test": "tsx --test --test-timeout=15000 tests/**/*.test.ts",
+    "lint": "eslint src tests --ext .ts"
   },
+  "dependencies": { "sql.js": "^1.13.0" },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/sql.js": "^1.4.9",
     "tsx": "^4.20.5",
     "typescript": "^5.9.3"
   }

@@ -1,19 +1,6 @@
 {
-  "name": "@klyn/database",
-  "version": "5.0.0",
-  "private": true,
-  "type": "module",
-  "exports": {
-    ".": "./src/index.ts"
-  },
-  "scripts": {
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@supabase/supabase-js": "^2.57.0"
-  },
-  "devDependencies": {
-    "@types/node": "^24.0.0",
-    "typescript": "^5.9.3"
-  }
+  "name":"@klyn/database","version":"5.0.0","private":true,"type":"module","exports":{".":"./src/index.ts"},
+  "scripts":{"typecheck":"tsc --noEmit","lint":"eslint src --max-warnings 0"},
+  "dependencies":{"@supabase/supabase-js":"^2.57.0"},
+  "devDependencies":{"@types/node":"^24.0.0","typescript":"^5.9.3"}
 }
