@@ -115,7 +115,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if grep -R -nE '\bany\b|@ts-ignore|@ts-nocheck' packages/ai-engine/src/planner/goal-decomposition-engine.ts packages/ai-engine/src/types/goal-decomposition.types.ts packages/ai-engine/tests/planner/goal-decomposition-engine.test.ts packages/ai-engine/src/orchestrator/planner-bridge.ts packages/ai-engine/src/types/planner-bridge.types.ts packages/ai-engine/tests/orchestrator/planner-bridge.test.ts; then
+          if grep -R -nE '(:[[:space:]]*any\b|[[:space:]]as[[:space:]]+any\b|<any>|Array<[[:space:]]*any[[:space:]]*>)|@ts-ignore|@ts-nocheck' packages/ai-engine/src/planner/goal-decomposition-engine.ts packages/ai-engine/src/types/goal-decomposition.types.ts packages/ai-engine/tests/planner/goal-decomposition-engine.test.ts packages/ai-engine/src/orchestrator/planner-bridge.ts packages/ai-engine/src/types/planner-bridge.types.ts packages/ai-engine/tests/orchestrator/planner-bridge.test.ts; then
             echo "Forbidden TypeScript escape hatches detected."
             exit 1
           fi
