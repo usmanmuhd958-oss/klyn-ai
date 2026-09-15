@@ -80,4 +80,4 @@ jobs:
         run: sha256sum pnpm-lock.yaml
 
       - name: Certification marker
-        run: echo "P3.7 cloud audit — post-lockfile"
+        run: echo "P3.7 cloud audit — final candidate"
