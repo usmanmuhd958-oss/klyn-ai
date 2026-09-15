@@ -69,14 +69,16 @@ jobs:
           set +e
           timeout --signal=TERM --kill-after=15s 300s pnpm --filter @klyn/ai-engine typecheck > /tmp/klyn-tsc.log 2>&1
           code=$?
-          {
-            echo "## AI Engine TypeScript Diagnostics"
-            echo '```text'
-            cat /tmp/klyn-tsc.log
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
           cat /tmp/klyn-tsc.log
           exit "$code"
+
+      - name: Archive TypeScript Diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p10-1-typescript-diagnostics
+          path: /tmp/klyn-tsc.log
+          if-no-files-found: error
 
       - name: Build Gate
         run: timeout --signal=TERM --kill-after=15s 300s pnpm --filter @klyn/ai-engine build
