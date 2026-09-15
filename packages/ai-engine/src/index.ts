@@ -13,6 +13,8 @@ export { ProviderCircuitBreaker, ProviderCircuitOpenError } from "./circuit-brea
 export type { CircuitBreakerOptions } from "./circuit-breaker.js";
 export { streamToSSE, sseHeaders } from "./sse.js";
 export type { RouteTarget, RouterOptions, Telemetry } from "./router.js";
+export { RouterPipeline, CompletionRequestSchema, CompletionResponseSchema, TokenUsageSchema } from "./provider-router.js";
+export type { CompletionRequest, CompletionResponse, RetryPolicy, RouterProvider, RouterMetrics } from "./provider-router.js";
 export { AgentSwarmCoordinator } from "./swarm/coordinator.js";
 export type { AgentTask, AgentResult, SwarmOptions } from "./swarm/coordinator.js";
 export { EphemeralContext } from "./memory/context.js";
