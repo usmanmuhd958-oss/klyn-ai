@@ -1,6 +1,6 @@
 import type { ExecutableTask, ExecutableTaskBatch, PlannerBridgeResult, PlannerTaskStatus } from "./planner-bridge.types.js";
 
-export type SpatialNodeStatus = PlannerTaskStatus | "queued" | "executing";
+export type SpatialNodeStatus = PlannerTaskStatus;
 
 export type SpatialBusEventType =
   | "execution:started"
@@ -46,6 +46,7 @@ export interface SpatialRuntimeStream {
   readonly namespace: string;
   readonly events: readonly SpatialBusEvent[];
   subscribe(listener: SpatialRuntimeListener): () => void;
+  clear(): void;
   close(): void;
 }
 
