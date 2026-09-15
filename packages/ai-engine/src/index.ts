@@ -19,3 +19,5 @@ export { AgentSwarmCoordinator } from "./swarm/coordinator.js";
 export type { AgentTask, AgentResult, SwarmOptions } from "./swarm/coordinator.js";
 export { EphemeralContext } from "./memory/context.js";
 export type { ContextMessage } from "./memory/context.js";
+export { ContextBudgetManager, ContextCompactor, ContextControlPlane, distillSubagentResult } from "./context-control-plane.js";
+export type { ContextRole, ContextMessage as ControlPlaneContextMessage, ExecutionNote, ContextBudget, ContextSnapshot, Compactor, SubagentResult } from "./context-control-plane.js";
