@@ -1,11 +1,12 @@
 {
   "name": "@klyn/execution-runtime",
-  "version": "5.2.0",
+  "version": "6.1.0",
   "private": true,
   "type": "module",
   "exports": { ".": "./src/index.ts" },
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.json",
     "test": "tsx --test --test-timeout=15000 tests/**/*.test.ts",
     "lint": "eslint src tests --ext .ts"
   },
