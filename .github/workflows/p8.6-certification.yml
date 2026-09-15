@@ -62,7 +62,7 @@ jobs:
           grep -q 'shell: false' packages/execution-runtime/src/process-sandbox-manager.ts
           grep -q 'maxFileDescriptors' packages/execution-runtime/src/process-sandbox-manager.ts
           grep -q 'maxCpuMs' packages/execution-runtime/src/process-sandbox-manager.ts
-          grep -q 'phase8.6-sandbox-runtime' apps/backend/tests/phase8.6-sandbox-runtime.test.ts
+          grep -q 'Phase 8.6' apps/backend/tests/phase8.6-sandbox-runtime.test.ts
       - name: Process Exception Audit
         run: test "${NODE_OPTIONS}" = "--unhandled-rejections=strict"
       - name: Lockfile SHA-256
