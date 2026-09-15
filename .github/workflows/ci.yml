@@ -2,7 +2,7 @@ name: Klyn Backend CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, p2/agent-swarm-runtime-hardening]
   pull_request:
     branches: [main, master]
 
@@ -43,7 +43,7 @@ jobs:
           test -f turbo.json
           test -f apps/backend/package.json
 
-      - name: Install dependencies
+      - name: Frozen Install
         run: pnpm install --frozen-lockfile
 
       - name: Typecheck
@@ -54,3 +54,6 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      - name: Lint
+        run: pnpm lint
