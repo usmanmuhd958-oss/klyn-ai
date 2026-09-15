@@ -1,8 +1,8 @@
-import { CognitiveStateManager } from "./CognitiveState";
-import { GoalManager } from "./GoalManager";
-import { PlanningEngine } from "./PlanningEngine";
-import { ReflectionEngine } from "./ReflectionEngine";
-import { SelfModelEngine } from "./SelfModel";
+import { CognitiveStateManager } from "./CognitiveState.js";
+import { GoalManager } from "./GoalManager.js";
+import { PlanningEngine } from "./PlanningEngine.js";
+import { ReflectionEngine } from "./ReflectionEngine.js";
+import { SelfModelEngine } from "./SelfModel.js";
 
 export class CognitiveKernel {
 

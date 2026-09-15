@@ -1,48 +1,33 @@
 {
-  "name": "klyn-ai-os",
-  "version": "4.2.0",
+  "name": "klyn",
+  "version": "5.0.0",
+  "private": true,
   "type": "module",
-  "description": "Autonomous AI Operating System surpassing traditional IDEs",
-  "main": "klyn_server.js",
-  "bin": {
-    "klyn": "./klyn_cli.js"
-  },
+  "packageManager": "pnpm@11.24.0",
+  "engines": { "node": ">=22.0.0" },
   "scripts": {
-    "start": "node klyn_server.js",
-    "dev": "node klyn_server.js",
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
-    "typecheck:v670": "tsc --noEmit -p genesis/v670/tsconfig.json",
-    "smoke:v670": "bun run genesis/v670/smoke.ts",
-    "smoke:phase3": "bun run packages/self-healing-runtime/smoke.ts",
-    "smoke:phase4": "bun run 1.brain/smoke.phase4.ts",
-    "smoke:phase5": "bun run 1.brain/smoke.phase5.ts",
-    "smoke:phase6": "bun run 1.brain/smoke.phase6.ts",
-    "smoke:phase7": "bun run 1.brain/smoke.phase7.ts",
-    "smoke:phase8": "bun run 1.brain/smoke.phase8.ts",
-    "smoke:phase9": "bun run 1.brain/smoke.phase9.ts",
-    "smoke:phase10": "bun run 1.brain/smoke.phase10.ts",
-    "smoke:phase11": "bun run 1.brain/smoke.phase11.ts",
-    "smoke:phase12": "bun run 1.brain/smoke.phase12.ts",
-    "smoke:phase13": "bun run 1.brain/smoke.phase13.ts",
-    "smoke:phase14": "bun run 1.brain/smoke.phase14.ts",
-    "genesis:forge": "node genesis/forge.mjs all",
-    "genesis:verify": "node genesis/forge.mjs verify",
-    "genesis:typecheck": "tsc --noEmit -p genesis/tsconfig.json",
-    "genesis:test": "bun run genesis/evolution.ts"
-  },
-  "dependencies": {
-    "@babel/parser": "^8.0.4",
-    "@google/generative-ai": "^0.24.1",
-    "chokidar": "^5.0.0",
-    "cors": "^2.8.6",
-    "dotenv": "^17.4.2",
-    "express": "^5.2.1",
-    "openai": "^7.4.0"
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "dev": "pnpm --filter @klyn/backend dev",
+    "start": "pnpm --filter @klyn/backend start",
+    "lockfile:generate": "pnpm install --lockfile-only",
+    "lockfile:verify": "pnpm install --frozen-lockfile"
   },
   "devDependencies": {
-    "@types/bun": "^1.3.14",
-    "@types/node": "^26.2.0",
+    "@babel/parser": "^8.0.4",
+    "@babel/types": "^8.0.4",
+    "@types/bun": "^1.2.20",
+    "@types/node": "^24.0.0",
+    "@types/sql.js": "^1.4.9",
+    "sql.js": "^1.13.0",
+    "turbo": "^2.5.6",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.67.0",
+    "@google/generative-ai": "^0.24.1",
+    "openai": "^7.4.0"
   }
 }

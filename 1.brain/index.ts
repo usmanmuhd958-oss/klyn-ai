@@ -1,5 +1,6 @@
 import { validateConfig, getConfig } from './config.js';
 import { CognitiveRouter } from './cognitive_router.js';
+import type { DAGNode } from '../kernel/src/pipeline/repo_ingest.js';
 import { LLMGateway } from './llm_gateway.js';
 import { CostOptimizer } from './cost_optimizer.js';
 import { GraphMemory } from './graph_memory.js';
@@ -44,7 +45,16 @@ export function createBrain() {
   const config = getConfig();
   const gateway = new LLMGateway();
   const optimizer = new CostOptimizer();
-  const router = new CognitiveRouter(gateway, optimizer);
+  const dagRoot: DAGNode = {
+    hash: '',
+    path: process.cwd(),
+    type: 'root',
+    size: 0,
+    children: [],
+    mtime: Date.now(),
+    astNodeCount: 0,
+  };
+  const router = new CognitiveRouter(dagRoot);
   const memory = new GraphMemory();
 
   return {
@@ -55,9 +65,9 @@ export function createBrain() {
     config,
     getGateway: () => gateway,
     getOptimizer: () => optimizer,
-    route: (task: any) => router.route(task),
-    routeTask: (task: any) => router.routeTask(task),
-    execute: (provider: string, task: any) => router.execute(provider, task)
+    route: (task: any) => router.route(String(task)),
+    routeTask: (task: any) => router.route(String(task)),
+    execute: (provider: string, task: any) =>
+      gateway.execute({ prompt: String(task), provider }),
   };
 }
-

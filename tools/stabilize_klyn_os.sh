@@ -10,12 +10,21 @@ log_ok()    { echo -e "${C_GREEN}${ICON_OK}${C_RESET} $*"; }
 log_warn()  { echo -e "${C_YELLOW}${ICON_WARN}${C_RESET} $*"; }
 log_err()   { echo -e "${C_RED}${ICON_ERR}${C_RESET} $*"; }
 
+# Required runtime configuration must come from the environment/secret store.
+: "${NEXT_PUBLIC_SUPABASE_URL:?NEXT_PUBLIC_SUPABASE_URL is required}"
+: "${NEXT_PUBLIC_SUPABASE_ANON_KEY:?NEXT_PUBLIC_SUPABASE_ANON_KEY is required}"
+: "${JWT_SECRET:?JWT_SECRET is required}"
+: "${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}"
+
+# Backward-compatible names for the local API implementation.
+export SUPABASE_URL="${SUPABASE_URL:-$NEXT_PUBLIC_SUPABASE_URL}"
+export SUPABASE_ANON_KEY="${SUPABASE_ANON_KEY:-$NEXT_PUBLIC_SUPABASE_ANON_KEY}"
+
 # 1. Ensure required tools
 for cmd in node npm jq curl; do
   if ! command -v "$cmd" &>/dev/null; then
-    log_warn "$cmd missing – installing via pkg..."
-    pkg install -y "$cmd" 2>/dev/null || { log_err "Failed to install $cmd."; exit 1; }
-    log_ok "$cmd installed."
+    log_err "$cmd is required; refusing to install dependencies during CI."
+    exit 1
   fi
 done
 
@@ -33,43 +42,15 @@ for pkg in "${REQUIRED_PKGS[@]}"; do
 done
 
 if [ ${#MISSING_PKGS[@]} -ne 0 ]; then
-  log_warn "Missing dependencies: ${MISSING_PKGS[*]}"
-  log_info "Installing and saving them..."
-  npm install --save "${MISSING_PKGS[@]}" 2>&1 | tail -5
-  log_ok "Dependencies installed and saved."
+  log_err "Missing dependencies: ${MISSING_PKGS[*]}"
+  log_err "Dependency manifests are immutable in CI; update package.json and package-lock.json intentionally."
+  exit 1
 else
   log_ok "All required dependencies present in package.json."
 fi
 
-# 3. Zero‑Crash Local Mocking
-mkdir -p config
-
-if [ ! -f config/supabase.env ]; then
-  cat > config/supabase.env << 'SUPABASE'
-# KLYN AI OS – Supabase Configuration (placeholder)
-SUPABASE_URL=https://fxuiljecdjgyffkjzqzl.supabase.co
-SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ4dWlsamVjZGpneWZma2p6cXpsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA0MjU0OTUsImV4cCI6MjA5NjAwMTQ5NX0.awMYL1hFl-lBF1QIh4KtkYSMmsCnVlwKfmKLwIhb2SM
-SUPABASE
-  log_info "Created placeholder config/supabase.env."
-fi
-
-if [ ! -f config/ai_keys.env ]; then
-  cat > config/ai_keys.env << 'AIKEYS'
-# KLYN AI OS – Cloud AI Provider Keys (placeholder)
-#OPENAI_API_KEY=***REMOVED***
-#ANTHROPIC_API_KEY=***REMOVED***
-#GEMINI_API_KEY=AQ.Ab8RN6LY5i1-safh-eEzOqeC7YNBkHwBTYdibl3ohpBROhMH4g
-#DEEPSEEK_API_KEY=***REMOVED***
-AIKEYS
-  log_info "Created placeholder config/ai_keys.env."
-fi
-
-# 4. Local dry‑run of health check (Termux‑compatible paths)
-export JWT_SECRET="***REMOVED***"
-export ADMIN_PASSWORD="klyn"
-
-# Termux does not have /tmp – use a directory that always exists
-LOG_DIR="$HOME/tmp"
+# 3. Local dry-run of health check (Termux-compatible paths)
+LOG_DIR="${KLYN_LOG_DIR:-$HOME/tmp}"
 mkdir -p "$LOG_DIR"
 
 log_info "Starting local API server..."
@@ -78,7 +59,7 @@ API_PID=$!
 trap 'kill $API_PID 2>/dev/null || true' EXIT
 
 HEALTH_OK=false
-for i in $(seq 1 15); do   # up to 15 attempts = 30 seconds
+for i in $(seq 1 15); do
   sleep 2
   if curl -s http://localhost:3000/status | grep -q healthy; then
     HEALTH_OK=true
@@ -104,7 +85,7 @@ else
   exit 1
 fi
 
-# 5. Git Sync Safety Gate
+# 4. Git Sync Safety Gate
 if ! git diff --quiet HEAD 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
   log_err "Uncommitted changes detected. Please commit or stash them before pushing."
   exit 1

@@ -1,0 +1,17 @@
+{
+  "name": "@klyn/cognitive-engine",
+  "version": "5.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@babel/types": "^8.0.4",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3"
+  }
+}
