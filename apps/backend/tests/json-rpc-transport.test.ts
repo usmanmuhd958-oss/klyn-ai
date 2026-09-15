@@ -26,7 +26,6 @@ test("JSON-RPC IPC round trip over loopback", async () => {
     assert.equal(response.result.stdout, "ok");
   } finally {
     transport.close();
-    server.closeAllConnections();
     await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
     });
