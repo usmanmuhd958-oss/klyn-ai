@@ -8,7 +8,7 @@ const DEFAULT_AGENT_TYPE = "general";
 
 export class GoalDecompositionEngine {
   public decompose(request: GoalDecompositionRequest): GoalDecompositionResult {
-    if (typeof request.goal !== "string") {
+    if (request === null || typeof request !== "object" || typeof request.goal !== "string") {
       throw new GoalDecomposerError("GOAL_INVALID_TYPE", "Goal must be a string.");
     }
 
@@ -110,7 +110,7 @@ export class GoalDecompositionEngine {
   }
 
   private cleanFragment(fragment: string): string {
-    return fragment.replace(/^[\s,.:;-]+|[\s,.:;-]+$/g, "").replace(/\s+/g, " ").trim();
+    return fragment.replace(/^[\s.:;-]+|[\s.:;-]+$/g, "").replace(/\s+/g, " ").trim();
   }
 
   private toTitle(fragment: string, index: number): string {
