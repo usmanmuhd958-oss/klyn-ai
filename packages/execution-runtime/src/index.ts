@@ -12,3 +12,5 @@ export { ProcessSandboxManager, DEFAULT_PROCESS_SANDBOX_POLICY } from "./process
 export type { ProcessSandboxPolicy, ProcessSandboxRequest, ProcessSandboxResult } from "./process-sandbox-manager.js";
 export { SecretMasker } from "./secret-masker.js";
 export type { SecretMaskerOptions } from "./secret-masker.js";
+export { DependencyExecutionPlanner } from "./dependency-execution-planner.js";
+export type { PlannedTask, DependencyPlanResult } from "./dependency-execution-planner.js";
