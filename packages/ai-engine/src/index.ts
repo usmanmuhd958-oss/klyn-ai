@@ -40,3 +40,11 @@ export type {
   TaskGraphPlannerErrorCode,
 } from "./types/task-graph.types.js";
 export { TaskGraphPlannerError } from "./types/task-graph.types.js";
+export { GoalDecompositionEngine } from "./planner/goal-decomposition-engine.js";
+export type {
+  DecomposedTaskNode,
+  GoalDecompositionRequest,
+  GoalDecompositionResult,
+  GoalDecomposerErrorCode,
+} from "./types/goal-decomposition.types.js";
+export { GoalDecomposerError } from "./types/goal-decomposition.types.js";
