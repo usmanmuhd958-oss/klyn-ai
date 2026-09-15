@@ -2,6 +2,7 @@
   "name": "klyn",
   "version": "5.0.0",
   "private": true,
+  "type": "module",
   "packageManager": "pnpm@11.24.0",
   "engines": { "node": ">=22.0.0" },
   "scripts": {
@@ -17,7 +18,16 @@
   "devDependencies": {
     "@babel/parser": "^8.0.4",
     "@babel/types": "^8.0.4",
+    "@types/bun": "^1.2.20",
+    "@types/node": "^24.0.0",
+    "@types/sql.js": "^1.4.9",
+    "sql.js": "^1.13.0",
     "turbo": "^2.5.6",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.67.0",
+    "@google/generative-ai": "^0.24.1",
+    "openai": "^7.4.0"
   }
 }
