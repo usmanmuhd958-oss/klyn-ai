@@ -2,8 +2,6 @@ name: P5 Cloud Certification
 on:
   push:
     branches: [p5/durable-execution-kernel]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
