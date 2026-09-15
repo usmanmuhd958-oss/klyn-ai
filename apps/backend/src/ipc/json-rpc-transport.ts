@@ -1,4 +1,4 @@
-import { createServer, type Server, type Socket } from "node:net";
+import { createConnection, createServer, type Server, type Socket } from "node:net";
 import type {
   AgentEventEnvelope,
   AgentEventSink,
@@ -26,21 +26,39 @@ export class JsonRpcAgentIpcTransport implements AgentIpcTransport {
   private socket: Socket | undefined;
   private nextId = 1;
   private buffer = "";
+  private readonly connect: () => Socket;
 
-  constructor(private readonly connect: () => Socket) {}
+  constructor(connect: () => Socket);
+  constructor(host: string, port: number);
+  constructor(connectOrHost: (() => Socket) | string, port?: number) {
+    this.connect = typeof connectOrHost === "function"
+      ? connectOrHost
+      : () => createConnection({ host: connectOrHost, port: port ?? 0 });
+  }
 
   call(request: AgentExecutionRequest): Promise<AgentExecutionResponse> {
     const id = this.nextId++;
     return new Promise<AgentExecutionResponse>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      const socket = this.ensureSocket();
-      socket.write(`${JSON.stringify({ jsonrpc: "2.0", id, method: "execute", params: request })}\n`);
+      try {
+        const socket = this.ensureSocket();
+        socket.write(`${JSON.stringify({ jsonrpc: "2.0", id, method: "execute", params: request })}\n`);
+      } catch (error) {
+        this.pending.delete(id);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   }
 
   subscribe(sink: AgentEventSink): () => void {
     this.sinks.add(sink);
     return () => this.sinks.delete(sink);
+  }
+
+  close(): void {
+    this.failPending(new Error("JSON-RPC transport closed"));
+    this.socket?.destroy();
+    this.socket = undefined;
   }
 
   private ensureSocket(): Socket {
