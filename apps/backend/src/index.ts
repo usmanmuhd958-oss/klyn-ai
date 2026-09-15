@@ -7,6 +7,8 @@ export * from "./ipc/agent-service.js";
 export * from "./ipc/json-rpc-transport.js";
 export * from "./supabase/execution-ledger-sync.js";
 export * from "./kernel-health.js";
+export * from "./distributed-state.js";
+export * from "./node-heartbeat-monitor.js";
 
 const env = loadEnv();
 const app = express();
