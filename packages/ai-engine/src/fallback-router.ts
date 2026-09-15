@@ -9,7 +9,6 @@ export type FallbackAttempt = { provider: ProviderName; model: string; latencyMs
 export type FallbackTelemetry = { attempts: number; successes: number; failures: number; fallbackCount: number; providerAttempts: Record<string, number>; latencyMs: Record<string, { attempts: number; totalMs: number; averageMs: number }>; lastAttempt?: FallbackAttempt };
 
 const DEFAULT_RETRYABLE = new Set([408, 409, 429, 500, 502, 503, 504]);
-
 function retryable(error: unknown, statuses: Set<number>): boolean {
   if (error instanceof ProviderCircuitOpenError) return true;
   if (error instanceof ProviderError) return Boolean(error.retryable && (error.status === undefined || statuses.has(error.status) || error.status >= 500));
@@ -27,21 +26,21 @@ export class FallbackRouter {
   }
   async complete(request: ProviderRequest): Promise<ProviderResponse> {
     let lastError: unknown;
-    let attemptedProvider = false;
-    for (const target of this.providers) {
+    for (let index = 0; index < this.providers.length; index++) {
+      const target = this.providers[index];
       if (request.model && target.model !== request.model) continue;
       if (!this.circuitBreaker.canRequest(target.provider)) { this.telemetry.fallbackCount++; continue; }
-      attemptedProvider = true;
       for (let retry = 0; retry <= this.maxRetries; retry++) {
         const started = performance.now();
         this.telemetry.attempts++;
         this.telemetry.providerAttempts[target.provider] = (this.telemetry.providerAttempts[target.provider] ?? 0) + 1;
         try {
           const response = await target.adapter.generate({ ...request, model: target.model });
+          const latencyMs = performance.now() - started;
           this.circuitBreaker.recordSuccess(target.provider);
           this.telemetry.successes++;
-          this.recordLatency(target.provider, performance.now() - started);
-          this.telemetry.lastAttempt = { provider: target.provider, model: target.model, latencyMs: performance.now() - started, success: true };
+          this.recordLatency(target.provider, latencyMs);
+          this.telemetry.lastAttempt = { provider: target.provider, model: target.model, latencyMs, success: true };
           return response;
         } catch (error) {
           lastError = error;
@@ -49,17 +48,24 @@ export class FallbackRouter {
           this.recordLatency(target.provider, performance.now() - started);
           const backoff = this.circuitBreaker.recordFailure(target.provider);
           if (!retryable(error, this.statuses) || retry === this.maxRetries) break;
-          await new Promise<void>((resolve, reject) => {
-            const timer = globalThis.setTimeout(resolve, backoff);
-            request.signal?.addEventListener("abort", () => { globalThis.clearTimeout(timer); reject(request.signal?.reason ?? new Error("Operation aborted")); }, { once: true });
-          });
+          await this.sleep(backoff, request.signal);
         }
       }
-      if (attemptedProvider) this.telemetry.fallbackCount++;
+      if (index < this.providers.length - 1) this.telemetry.fallbackCount++;
     }
     throw new Error(`All configured AI providers failed: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
   }
   snapshot(): Readonly<FallbackTelemetry> { return structuredClone(this.telemetry); }
+  private async sleep(ms: number, signal?: AbortSignal): Promise<void> {
+    if (!ms) return;
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const timer = globalThis.setTimeout(() => { if (settled) return; settled = true; signal?.removeEventListener("abort", abort); resolve(); }, ms);
+      const abort = () => { if (settled) return; settled = true; globalThis.clearTimeout(timer); signal?.removeEventListener("abort", abort); reject(signal?.reason ?? new Error("Operation aborted")); };
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) abort();
+    });
+  }
   private recordLatency(provider: string, durationMs: number): void {
     const current = this.telemetry.latencyMs[provider] ?? { attempts: 0, totalMs: 0, averageMs: 0 };
     const attempts = current.attempts + 1;
@@ -67,5 +73,4 @@ export class FallbackRouter {
     this.telemetry.latencyMs[provider] = { attempts, totalMs, averageMs: totalMs / attempts };
   }
 }
-
 export { ProviderCircuitBreaker as CircuitBreaker };
