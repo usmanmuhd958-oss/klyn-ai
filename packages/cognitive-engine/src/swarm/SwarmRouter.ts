@@ -74,33 +74,34 @@ export class SwarmRouter {
   async dispatch<T>(task: SwarmTask<T>, execute: SwarmExecutor, signal = new AbortController().signal): Promise<SwarmDispatchResult> {
     if (this.states.has(task.id)) throw new Error(`Duplicate task id: ${task.id}`);
     const agent = this.selectAgent(task.requiredCapabilities);
+    this.active.set(agent.id, (this.active.get(agent.id) ?? 0) + 1);
     const queued: SwarmTaskState = Object.freeze({ taskId: task.id, agentId: agent.id, status: "queued", attempt: 0 });
     this.states.set(task.id, queued);
-    await this.eventBus.publish("agent.task.dispatched", { taskId: task.id, agentId: agent.id, attempt: 1 });
-
-    const running: SwarmTaskState = Object.freeze({ ...queued, status: "running", attempt: 1 });
-    this.states.set(task.id, running);
-    const start = await this.eventBus.publish("agent.task.started", { taskId: task.id, agentId: agent.id });
-    void start;
-    this.active.set(agent.id, (this.active.get(agent.id) ?? 0) + 1);
     try {
-      const output = await execute(agent, task, signal);
-      const succeeded: SwarmTaskState = Object.freeze({ ...running, status: "succeeded" });
-      this.states.set(task.id, succeeded);
-      const context = this.contextStore.snapshot(task.id, succeeded);
-      await this.eventBus.publish("agent.task.completed", { taskId: task.id, agentId: agent.id, output });
-      await this.eventBus.publish("agent.context.snapshot", { executionId: task.id, revision: context.revision });
-      return { taskId: task.id, agentId: agent.id, output, state: succeeded, context };
-    } catch (error) {
-      const failed: SwarmTaskState = Object.freeze({
-        ...running,
-        status: "failed",
-        error: error instanceof Error ? error.message : String(error),
-      });
-      this.states.set(task.id, failed);
-      this.contextStore.snapshot(task.id, failed);
-      await this.eventBus.publish("agent.task.failed", { taskId: task.id, agentId: agent.id, error: failed.error! });
-      throw error;
+      await this.eventBus.publish("agent.task.dispatched", { taskId: task.id, agentId: agent.id, attempt: 1 });
+
+      const running: SwarmTaskState = Object.freeze({ ...queued, status: "running", attempt: 1 });
+      this.states.set(task.id, running);
+      await this.eventBus.publish("agent.task.started", { taskId: task.id, agentId: agent.id });
+      try {
+        const output = await execute(agent, task, signal);
+        const succeeded: SwarmTaskState = Object.freeze({ ...running, status: "succeeded" });
+        this.states.set(task.id, succeeded);
+        const context = this.contextStore.snapshot(task.id, succeeded);
+        await this.eventBus.publish("agent.task.completed", { taskId: task.id, agentId: agent.id, output });
+        await this.eventBus.publish("agent.context.snapshot", { executionId: task.id, revision: context.revision });
+        return { taskId: task.id, agentId: agent.id, output, state: succeeded, context };
+      } catch (error) {
+        const failed: SwarmTaskState = Object.freeze({
+          ...running,
+          status: "failed",
+          error: error instanceof Error ? error.message : String(error),
+        });
+        this.states.set(task.id, failed);
+        this.contextStore.snapshot(task.id, failed);
+        await this.eventBus.publish("agent.task.failed", { taskId: task.id, agentId: agent.id, error: failed.error! });
+        throw error;
+      }
     } finally {
       this.active.set(agent.id, Math.max(0, (this.active.get(agent.id) ?? 1) - 1));
     }
