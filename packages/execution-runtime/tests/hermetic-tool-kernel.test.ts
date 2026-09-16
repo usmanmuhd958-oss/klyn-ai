@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -112,6 +112,23 @@ test("git status is constrained to the declared workspace", async () => {
 
     assert.equal(result.result.exitCode, 128);
     assert.match(result.result.stderr, /not a git repository/);
+  });
+});
+
+test("broken symlinks cannot redirect writes outside the workspace", async () => {
+  await withWorkspace(async (root) => {
+    const kernel = new HermeticToolKernel({ workspaceRoot: root });
+    await symlink("/tmp/klyn-outside-does-not-exist", join(root, "link.ts"));
+
+    await assert.rejects(
+      kernel.execute({
+        ...metadata,
+        callId: "call-broken-link",
+        tool: "file-tree",
+        args: { operation: "write", path: "link.ts", content: "escape", expectedSha256: null },
+      }),
+      HermeticToolError,
+    );
   });
 });
 
