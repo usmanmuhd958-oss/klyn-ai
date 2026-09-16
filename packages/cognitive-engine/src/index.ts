@@ -6,7 +6,18 @@ export * from "./IntentCompiler.js";
 export * from "./WorldModel.js";
 export * from "./TaskGraphCompiler.js";
 export * from "./ExecutionPlanner.js";
-export * from "./SwarmTaskDispatcher.js";
+export {
+  SwarmTaskDispatcher,
+} from "./SwarmTaskDispatcher.js";
+export type {
+  AgentRole,
+  SwarmAgent,
+  SwarmExecutionContext,
+  SwarmEpistemicState,
+  SwarmTaskResult,
+  SwarmDispatchRecord,
+  SwarmDispatchResult,
+} from "./SwarmTaskDispatcher.js";
 export * from "./ConsensusArbitrator.js";
 export * from "./SelfHealingBridge.js";
 export * from "./EvidenceGraphBuilder.js";
@@ -35,7 +46,15 @@ export * from "./CognitiveLoop.js";
 export * from "./swarm/DagOrchestrator.js";
 export * from "./swarm/ReadyQueue.js";
 export * from "./swarm/AgentEventBus.js";
-export * from "./swarm/SwarmRouter.js";
+export { SwarmRouter } from "./swarm/SwarmRouter.js";
+export type {
+  SwarmAgent as RouterAgent,
+  SwarmTask,
+  SwarmTaskStatus,
+  SwarmTaskState,
+  SwarmDispatchResult as RouterDispatchResult,
+  SwarmExecutor,
+} from "./swarm/SwarmRouter.js";
 export * from "./swarm/ContextStore.js";
 export * from "./dynamic-dag.js";
 export * from "./consensus/AgentConsensusEngine.js";
