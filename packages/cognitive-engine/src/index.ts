@@ -26,6 +26,7 @@ export * from "./EpistemicAuditEngine.js";
 export * from "./GovernancePolicyEngine.js";
 export * from "./PromotionController.js";
 export * from "./GovernanceOrchestrator.js";
+export * from "./ConsensusPromotionController.js";
 export * from "./benchmark/IntentBenchmarkSuite.js";
 export * from "./EpistemicMetricEvaluator.js";
 export * from "./BenchmarkRunner.js";
