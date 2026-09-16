@@ -26,3 +26,32 @@ export { PolicyGovernedSandbox } from "./PolicyGovernedSandbox.js";
 export type { PolicyGovernedSandboxRequest, PolicyGovernedSandboxResult, PolicyGovernedSandboxOptions } from "./PolicyGovernedSandbox.js";
 export { ObservationCollector, SYSTEM_CLOCK } from "./ObservationCollector.js";
 export type { ObservationClock, ObservationEvent, ObservationEventInput, ObservationEventType, ObservationSessionMetadata, ObservationSnapshot } from "./ObservationCollector.js";
+export { HermeticToolKernel, HermeticToolError } from "./hermetic-tool-kernel.js";
+export type {
+  AstPatchArgs,
+  AstPatchReplacement,
+  AstPatchResult,
+  BashResult,
+  BashToolArgs,
+  FileDeleteArgs,
+  FileMkdirArgs,
+  FileMoveArgs,
+  FileMutationResult,
+  FileReadArgs,
+  FileReadResult,
+  FileTreeToolArgs,
+  FileWriteArgs,
+  GitApplyArgs,
+  GitDiffArgs,
+  GitResult,
+  GitStatusArgs,
+  GitToolArgs,
+  HermeticToolCall,
+  HermeticToolResult,
+  HermeticToolKernelOptions,
+  ToolAuditRecord,
+  ToolCall,
+  ToolCallMetadata,
+  ToolExecutionKernel,
+  ToolName,
+} from "./hermetic-tool-contracts.js";
