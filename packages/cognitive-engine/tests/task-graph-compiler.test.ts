@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { IntentCompiler, IntentStateMachine, TaskGraphCompiler, ExecutionPlanner, WorldModelBuilder, type IntentContent, type IntentSpec } from "../src/index.js";
+import {
+  ExecutionPlanner,
+  IntentCompiler,
+  IntentStateMachine,
+  TaskGraphCompiler,
+  WorldModelBuilder,
+  type IntentContent,
+  type IntentSpec,
+} from "../src/index.js";
 
 function content(): IntentContent {
   return {
@@ -44,20 +52,18 @@ function content(): IntentContent {
   };
 }
 
+function freezeIntent(result: Extract<ReturnType<IntentCompiler["compile"]>, { accepted: true }>): IntentSpec {
+  const machine = new IntentStateMachine();
+  const validating = machine.transition({ ...result.spec, state: "DRAFT" }, "VALIDATING");
+  const validated = machine.transition(validating, "VALIDATED");
+  return machine.transition(validated, "FROZEN");
+}
+
 function executableIntent(): IntentSpec {
   const result = new IntentCompiler().compile(content());
   assert.equal(result.accepted, true);
   if (!result.accepted) throw new Error("fixture failed to compile");
-  return new IntentStateMachine().transition(
-    new IntentStateMachine().transition(
-      new IntentStateMachine().transition(
-        { ...result.spec, state: "DRAFT" },
-        "VALIDATING",
-      ),
-      "VALIDATED",
-    ),
-    "FROZEN",
-  );
+  return freezeIntent(result);
 }
 
 test("world model initializes deterministic epistemic state for a frozen intent", () => {
@@ -66,7 +72,8 @@ test("world model initializes deterministic epistemic state for a frozen intent"
   assert.equal(model.intentId, intent.intentId);
   assert.equal(model.contentHash, intent.contentHash);
   assert.equal(model.state, "FROZEN");
-  assert.deepEqual(model.slots.map((slot) => slot.id), [...model.slots].map((slot) => slot.id).sort());
+  const sortedIds = [...model.slots].map((slot) => slot.id).sort();
+  assert.deepEqual(model.slots.map((slot) => slot.id), sortedIds);
   assert.equal(model.slots.find((slot) => slot.id === "objective")?.status, "OBSERVED");
   assert.equal(model.slots.find((slot) => slot.id === "assumption:node")?.status, "ASSUMED");
   assert.equal(model.slots.find((slot) => slot.id === "evidence:hash")?.status, "UNKNOWN");
@@ -75,20 +82,26 @@ test("world model initializes deterministic epistemic state for a frozen intent"
   assert.throws(() => new WorldModelBuilder().build({ ...intent, state: "DRAFT" }), /FROZEN or EXECUTABLE/);
 });
 
+test("world model accepts EXECUTABLE state and rejects tampered cryptographic identity", () => {
+  const intent = executableIntent();
+  const executable = new IntentStateMachine().transition(intent, "EXECUTABLE");
+  assert.equal(new WorldModelBuilder().build(executable).state, "EXECUTABLE");
+  assert.throws(() => new WorldModelBuilder().build({ ...intent, contentHash: "0".repeat(64) }), /content hash|identity/);
+});
+
 test("identical intent content compiles into an identical task graph", () => {
   const intent = executableIntent();
-  const equivalent = new IntentCompiler().compile({
+  const equivalentContent: IntentContent = {
     ...content(),
     constraints: [...content().constraints].reverse(),
     dependencies: [...content().dependencies].reverse(),
     acceptanceCriteria: [...content().acceptanceCriteria].reverse(),
     requiredEvidence: [...content().requiredEvidence].reverse(),
-  });
+  };
+  const equivalent = new IntentCompiler().compile(equivalentContent);
   assert.equal(equivalent.accepted, true);
   if (!equivalent.accepted) return;
-  const secondIntent = new IntentStateMachine().transition({ ...equivalent.spec, state: "DRAFT" }, "VALIDATING");
-  const secondValidated = new IntentStateMachine().transition(secondIntent, "VALIDATED");
-  const secondFrozen = new IntentStateMachine().transition(secondValidated, "FROZEN");
+  const secondFrozen = freezeIntent(equivalent);
   const compiler = new TaskGraphCompiler();
   const first = compiler.compile(intent);
   const second = compiler.compile(secondFrozen);
@@ -109,10 +122,10 @@ test("dependency tasks precede the objective and downstream verification tasks",
 
 test("dependency mismatch is rejected before graph resolution", () => {
   const intent = executableIntent();
-  const broken = {
+  const broken: IntentSpec = {
     ...intent,
     dependencies: intent.dependencies.map((dependency) => dependency.id === "crypto" ? { ...dependency, dependsOn: ["missing"] } : dependency),
-  } as IntentSpec;
+  };
   assert.throws(() => new TaskGraphCompiler().compile(broken), /missing node|Unknown dependency/);
 });
 
