@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { IntentSpec } from "./IntentSpec.js";
-import type { EvidenceCategory, EvidenceClaim, EvidenceGraph } from "./EvidenceGraphBuilder.js";
+import type { EvidenceClaim, EvidenceGraph } from "./EvidenceGraphBuilder.js";
 
 export type ClaimsVerificationState = "UNKNOWN" | "EVIDENCE-SUPPORTED" | "VERIFIED" | "REJECTED";
 export type ClaimVerificationState = ClaimsVerificationState;
