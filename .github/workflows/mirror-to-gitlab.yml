@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
   mirror:
@@ -14,12 +15,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Push to GitLab
-        env:
-          GITLAB_SSH_KEY: ${{ secrets.GITLAB_SSH_KEY }}
+      - name: Push to GitLab via Token
         run: |
-          mkdir -p ~/.ssh
-          echo "$GITLAB_SSH_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan gitlab.com >> ~/.ssh/known_hosts
-          git push --force git@gitlab.com:usmanmuhd958-oss/klyn-ai.git main:main
+          git push --force https://oauth2:glpat-Eg44MeDmgMyrLa0gz5rGT2M6MQpvOjEKdTpwYmxpaQ8.01.171on3zyn@gitlab.com/usmanmuhd958-oss/klyn-ai.git main:main
