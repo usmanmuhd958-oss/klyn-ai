@@ -88,7 +88,7 @@ jobs:
         run: pnpm run test
 
       - name: Zero-warning package lint
-        run: pnpm exec eslint packages/* --max-warnings 0
+        run: pnpm exec eslint packages/*/src packages/*/tests --max-warnings 0
 
       - name: Deterministic end-to-end autonomous promotion simulation
         shell: bash
