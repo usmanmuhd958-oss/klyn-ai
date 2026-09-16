@@ -41,14 +41,14 @@ function makeAuditTrail(intentId: string, count = 3): PromotionAuditRecord[] {
 }
 
 const validEvidence = [
-  { suite: "cognitive-engine" as const, passed: PHASE_7A_EXPECTED_TESTS["cognitive-engine"], total: 79, failed: 0, skipped: 0 },
+  { suite: "cognitive-engine" as const, passed: PHASE_7A_EXPECTED_TESTS["cognitive-engine"], total: 82, failed: 0, skipped: 0 },
   { suite: "execution-runtime" as const, passed: PHASE_7A_EXPECTED_TESTS["execution-runtime"], total: 25, failed: 0, skipped: 0 },
-  { suite: "agent-core" as const, passed: PHASE_7A_EXPECTED_TESTS["agent-core"], total: 7, failed: 0, skipped: 0 },
+  { suite: "agent-core" as const, passed: PHASE_7A_EXPECTED_TESTS["agent-core"], total: 10, failed: 0, skipped: 0 },
 ];
 
 const validInput = {
-  intentId: "intent-phase-7a",
-  auditTrail: makeAuditTrail("intent-phase-7a"),
+  intentId: "intent-phase-7c",
+  auditTrail: makeAuditTrail("intent-phase-7c"),
   testEvidence: validEvidence,
   selfHealing: {
     attempts: 1,
@@ -85,7 +85,7 @@ void test("rejects a tampered audit record even when test evidence is perfect", 
 void test("rejects unresolved self-healing errors and incomplete suite evidence", () => {
   const decision = new ConsensusPromotionController().evaluate({
     ...validInput,
-    testEvidence: validEvidence.map((evidence) => evidence.suite === "agent-core" ? { ...evidence, passed: 6 } : evidence),
+    testEvidence: validEvidence.map((evidence) => evidence.suite === "agent-core" ? { ...evidence, passed: 9 } : evidence),
     selfHealing: { attempts: 3, maxAttempts: 3, recovered: false, exhausted: true, unhandledErrors: 1 },
   }, targetCommit);
   assert.equal(decision.state, "REJECTED");

@@ -58,11 +58,14 @@ export interface ConsensusPromotionDecision {
   readonly decisionHash: string;
 }
 
-export const PHASE_7A_EXPECTED_TESTS = Object.freeze({
-  "cognitive-engine": 79,
+/** Phase 7C re-authorized certification baseline. */
+export const PHASE_7C_EXPECTED_TESTS = Object.freeze({
+  "cognitive-engine": 82,
   "execution-runtime": 25,
-  "agent-core": 7,
+  "agent-core": 10,
 });
+
+export const PHASE_7A_EXPECTED_TESTS = PHASE_7C_EXPECTED_TESTS;
 
 export const PHASE_7A_CERTIFIED_SUBSTRATES = Object.freeze([
   "fb9f11eb8882f6d427855f54ed56d0ed793722fd",
@@ -161,18 +164,18 @@ export class ConsensusPromotionController {
     if (!input.coreInvariantsUnmodified) reasons.push("Core 1.0 invariants are not verified as unmodified");
 
     const evidenceBySuite = new Map(input.testEvidence.map((evidence) => [evidence.suite, evidence]));
-    for (const suite of Object.keys(PHASE_7A_EXPECTED_TESTS) as Array<keyof typeof PHASE_7A_EXPECTED_TESTS>) {
+    for (const suite of Object.keys(PHASE_7C_EXPECTED_TESTS) as Array<keyof typeof PHASE_7C_EXPECTED_TESTS>) {
       const evidence = evidenceBySuite.get(suite);
-      const expected = PHASE_7A_EXPECTED_TESTS[suite];
+      const expected = PHASE_7C_EXPECTED_TESTS[suite];
       if (evidence === undefined) {
         reasons.push(`Missing test evidence for ${suite}`);
         continue;
       }
       if (evidence.total !== expected || evidence.passed !== expected || evidence.failed !== 0 || evidence.skipped !== 0) {
-        reasons.push(`${suite} test evidence is not a 100% pass against the certified baseline`);
+        reasons.push(`${suite} test evidence is not a 100% pass against the Phase 7C certified baseline`);
       }
     }
-    if (input.testEvidence.length !== Object.keys(PHASE_7A_EXPECTED_TESTS).length) {
+    if (input.testEvidence.length !== Object.keys(PHASE_7C_EXPECTED_TESTS).length) {
       reasons.push("Unexpected test evidence suites were supplied");
     }
 

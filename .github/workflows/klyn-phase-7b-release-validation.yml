@@ -1,0 +1,117 @@
+name: KLYN Phase 7B Release Validation
+
+on:
+  push:
+    branches: [phase/7b-release-validation]
+  pull_request:
+    branches: [phase/7a-consensus-production-promotion, main]
+    paths:
+      - packages/agent-core/**
+      - packages/cognitive-engine/**
+      - packages/execution-runtime/**
+      - pnpm-lock.yaml
+      - package.json
+      - pnpm-workspace.yaml
+      - .github/workflows/klyn-phase-7b-release-validation.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: klyn-phase-7b-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.24.0 --activate
+
+      - name: Step 1 - Frozen install
+        run: pnpm install --frozen-lockfile
+
+      - name: Step 1 - Lockfile and backend isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=a4fbf2debd1d2853d4efea9d0adf9eea50d68387
+          git diff --quiet "$base" HEAD -- pnpm-lock.yaml
+          changed="$(git diff --name-only "$base" HEAD)"
+          if printf '%s\n' "$changed" | grep -E '(^|/)(apps/(frontend|studio)|frontend|ui|visual|client)(/|$)' >/dev/null; then exit 1; fi
+          git diff --quiet "$base" HEAD -- packages/execution-runtime/src/process-sandbox-manager.ts
+          git diff --quiet "$base" HEAD -- packages/cognitive-engine/src/IntentStateMachine.ts packages/cognitive-engine/src/ConsensusArbitrator.ts packages/cognitive-engine/src/PromotionController.ts packages/cognitive-engine/src/GovernancePolicyEngine.ts
+          sha256sum pnpm-lock.yaml
+
+      - name: Step 2 - Substrate ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          for sha in fb9f11eb8882f6d427855f54ed56d0ed793722fd 7e30523f20d20d99070c50ad75dc5893fd1cabf1 7e595eda138b1a0cd58a751b3e8ce55f8b4876b0 a4fbf2debd1d2853d4efea9d0adf9eea50d68387; do git merge-base --is-ancestor "$sha" HEAD; done
+
+      - name: Step 3 - Typecheck
+        run: |
+          pnpm --filter @klyn/cognitive-engine typecheck
+          pnpm --filter @klyn/agent-core typecheck
+          pnpm --filter @klyn/execution-runtime typecheck
+
+      - name: Step 3 - Cognitive tests
+        shell: bash
+        run: pnpm --filter @klyn/cognitive-engine test 2>&1 | tee /tmp/klyn-7b-cognitive.tap
+
+      - name: Step 3 - Execution tests
+        shell: bash
+        run: pnpm --filter @klyn/execution-runtime test 2>&1 | tee /tmp/klyn-7b-execution.tap
+
+      - name: Step 3 - Agent tests
+        shell: bash
+        run: pnpm --filter @klyn/agent-core test 2>&1 | tee /tmp/klyn-7b-agent.tap
+
+      - name: Step 3 - Aggregate monorepo test
+        run: pnpm run test
+
+      - name: Step 3 - Assert 117 certified core tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cognitive="$(grep -E '^# pass [0-9]+$' /tmp/klyn-7b-cognitive.tap | tail -1 | awk '{print $3}')"
+          execution="$(grep -E '^# pass [0-9]+$' /tmp/klyn-7b-execution.tap | tail -1 | awk '{print $3}')"
+          agent="$(grep -E '^# pass [0-9]+$' /tmp/klyn-7b-agent.tap | tail -1 | awk '{print $3}')"
+          [[ "$cognitive" == "82" && "$execution" == "25" && "$agent" == "10" ]]
+          [[ $((cognitive + execution + agent)) -eq 117 ]]
+
+      - name: Step 3 - Zero-warning lint
+        run: pnpm exec eslint packages/agent-core packages/cognitive-engine packages/execution-runtime --max-warnings 0
+
+      - name: Step 4 - Consensus release dry-run
+        id: dry_run
+        continue-on-error: true
+        env:
+          KLYN_TARGET_COMMIT: ${{ github.sha }}
+        run: pnpm --filter @klyn/cognitive-engine exec tsx scripts/phase-7b-release-dry-run.ts
+
+      - name: Step 4 - Upload release manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: klyn-phase-7b-release-manifest-${{ github.sha }}
+          path: artifacts/phase-7b/release-manifest.*.json
+          if-no-files-found: error
+
+      - name: Step 5 - Production release gate
+        if: steps.dry_run.outcome != 'success'
+        run: exit 1
