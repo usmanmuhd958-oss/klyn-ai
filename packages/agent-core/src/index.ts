@@ -17,3 +17,12 @@ export type {
   SelfHealingAttempt,
   SelfHealingResult,
 } from "./self-healing-controller.js";
+export {
+  ProductionPromotionSignoffEngine,
+  ProductionPromotionSignoffError,
+} from "./production-promotion-signoff.js";
+export type {
+  ProductionTestSummary,
+  ProductionPromotionSignoffInput,
+  ProductionPromotionSignoffArtifact,
+} from "./production-promotion-signoff.js";
