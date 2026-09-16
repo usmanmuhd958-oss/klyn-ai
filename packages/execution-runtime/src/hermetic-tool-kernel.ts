@@ -290,7 +290,8 @@ export class HermeticToolKernel implements ToolExecutionKernel {
     if (!sameWorkspace(this.workspaceRoot, absolutePath)) throw new HermeticToolError(`Path escapes workspace root: ${candidate}`);
 
     const realRoot = await realpath(this.workspaceRoot);
-    if (existingRequired) {
+    const existing = await this.exists(absolutePath);
+    if (existing || existingRequired) {
       const real = await realpath(absolutePath);
       if (!sameWorkspace(realRoot, real)) throw new HermeticToolError(`Symlink escapes workspace root: ${candidate}`);
       return real;
