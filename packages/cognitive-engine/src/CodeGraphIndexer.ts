@@ -151,7 +151,7 @@ export class CodeGraphIndexer {
         ast = parse(file.content, {
           sourceType: "unambiguous",
           errorRecovery: false,
-          plugins: ["typescript", "jsx", "dynamicImport", "importMeta"],
+          plugins: ["typescript", "jsx"],
         });
       } catch (error) {
         throw new CodeGraphParseError(file.path, error);
