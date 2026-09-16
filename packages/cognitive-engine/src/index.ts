@@ -19,6 +19,7 @@ export * from "./benchmark/IntentBenchmarkSuite.js";
 export * from "./EpistemicMetricEvaluator.js";
 export * from "./BenchmarkRunner.js";
 export * from "./ComparativeHarness.js";
+export * from "./KlynCoreReleaseManifest.js";
 export * from "./CognitiveKernel.js";
 export * from "./CognitiveState.js";
 export * from "./GoalManager.js";
