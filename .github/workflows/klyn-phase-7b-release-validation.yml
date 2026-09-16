@@ -81,6 +81,19 @@ jobs:
         shell: bash
         run: pnpm --filter @klyn/agent-core test 2>&1 | tee /tmp/klyn-7b-agent.tap
 
+      - name: Step 3 - Aggregate monorepo test
+        run: pnpm run test
+
+      - name: Step 3 - Assert 117 certified core tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cognitive="$(grep -E '^# pass [0-9]+$' /tmp/klyn-7b-cognitive.tap | tail -1 | awk '{print $3}')"
+          execution="$(grep -E '^# pass [0-9]+$' /tmp/klyn-7b-execution.tap | tail -1 | awk '{print $3}')"
+          agent="$(grep -E '^# pass [0-9]+$' /tmp/klyn-7b-agent.tap | tail -1 | awk '{print $3}')"
+          [[ "$cognitive" == "82" && "$execution" == "25" && "$agent" == "10" ]]
+          [[ $((cognitive + execution + agent)) -eq 117 ]]
+
       - name: Step 3 - Zero-warning lint
         run: pnpm exec eslint packages/agent-core packages/cognitive-engine packages/execution-runtime --max-warnings 0
 
