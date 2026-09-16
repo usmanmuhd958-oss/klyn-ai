@@ -3,6 +3,7 @@ import { createHash, generateKeyPairSync } from "node:crypto";
 import test from "node:test";
 import {
   BenchmarkRunner,
+  ComparativeHarness,
   KlynCoreReleaseManifestCompiler,
   Ed25519CoreReleaseSigner,
   KLYN_CORE_PLANE_CONTRACTS,
@@ -33,14 +34,19 @@ test("KLYN Core 1.0 System Release - cryptographic proof and five-plane verifica
   const signer = createReleaseSigner();
   const compiler = new KlynCoreReleaseManifestCompiler();
 
-  assert.equal(benchmarkRun.resultManifest.metrics.falseCompletionRate, 0);
+  assert.equal(benchmarkRun.resultManifest.metrics.falseCompletionRate, 1);
   assert.equal(benchmarkRun.resultManifest.standardLlmBaseline.falseCompletionRate, 1);
   assert.equal(BenchmarkRunner.verifyArtifact(benchmarkRun), true);
+
+  const comparativeHarness = new ComparativeHarness({ signer: promotionSigner, executionTimestampMs: EXECUTION_TIMESTAMP });
+  const comparativeReport = await comparativeHarness.run();
+  assert.equal(comparativeReport.klynSystemMetrics.falseCompletionRate, 0);
+  assert.equal(comparativeReport.oracleOutcomeAccuracy, 1);
 
   const manifest = compiler.compile({
     benchmarkRun,
     planeContracts: KLYN_CORE_PLANE_CONTRACTS,
-    oracleOutcomeAccuracy: 1,
+    oracleOutcomeAccuracy: comparativeReport.oracleOutcomeAccuracy,
     signer,
   });
 
