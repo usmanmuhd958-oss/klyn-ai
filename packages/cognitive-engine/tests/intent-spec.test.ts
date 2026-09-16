@@ -120,15 +120,25 @@ test("malformed payloads are rejected with typed structural issues", () => {
 });
 
 test("cyclic and unknown dependency graphs are rejected before execution planning", () => {
-  const cyclic = validInput();
-  cyclic.dependencies[0] = { ...cyclic.dependencies[0], dependsOn: ["core"] };
-  cyclic.dependencies[1] = { ...cyclic.dependencies[1], dependsOn: ["crypto"] };
+  const base = validInput();
+  const cyclic: IntentContent = {
+    ...base,
+    dependencies: [
+      { ...base.dependencies[0], dependsOn: ["core"] },
+      { ...base.dependencies[1], dependsOn: ["crypto"] },
+    ],
+  };
   const cycleResult = new IntentCompiler().compile(cyclic);
   assert.equal(cycleResult.accepted, false);
   if (!cycleResult.accepted) assert.ok(cycleResult.rejection.issues.some((issue) => issue.code === "CYCLIC_DEPENDENCY"));
 
-  const unknown = validInput();
-  unknown.dependencies[1] = { ...unknown.dependencies[1], dependsOn: ["missing"] };
+  const unknown: IntentContent = {
+    ...base,
+    dependencies: [
+      base.dependencies[0],
+      { ...base.dependencies[1], dependsOn: ["missing"] },
+    ],
+  };
   const unknownResult = new IntentCompiler().compile(unknown);
   assert.equal(unknownResult.accepted, false);
   if (!unknownResult.accepted) assert.ok(unknownResult.rejection.issues.some((issue) => issue.code === "UNKNOWN_DEPENDENCY"));
@@ -152,8 +162,10 @@ test("distinct content fixtures do not share SHA-256 content hashes", () => {
   const compiler = new IntentCompiler();
   const hashes = new Set<string>();
   for (let index = 0; index < 256; index += 1) {
-    const input = validInput();
-    input.objective = { ...input.objective, statement: `${input.objective.statement} ${index}` };
+    const input: IntentContent = {
+      ...validInput(),
+      objective: { ...validInput().objective, statement: `Implement a deterministic backend capability ${index}` },
+    };
     const result = compiler.compile(input);
     assert.equal(result.accepted, true);
     if (result.accepted) hashes.add(result.spec.contentHash);
