@@ -14,7 +14,6 @@
     "@klyn/execution-runtime": "workspace:*"
   },
   "devDependencies": {
-    "@klyn/cognitive-engine": "workspace:*",
     "@types/node": "^24.0.0",
     "tsx": "^4.20.5",
     "typescript": "^5.9.3"
