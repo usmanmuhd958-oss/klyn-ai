@@ -7,8 +7,8 @@ import { test } from "node:test";
 import {
   HermeticToolError,
   HermeticToolKernel,
-  type HermeticToolCall,
 } from "../src/hermetic-tool-kernel.js";
+import type { HermeticToolCall } from "../src/hermetic-tool-contracts.js";
 
 const sha256 = (value: string): string => createHash("sha256").update(value, "utf8").digest("hex");
 
