@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile, stat } from "node:fs/promises";
+import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import {
   DEFAULT_PROCESS_SANDBOX_POLICY,
@@ -44,7 +44,7 @@ const stableSerialize = (value: unknown): string => {
   if (Array.isArray(value)) return `[${value.map(stableSerialize).join(",")}]`;
   if (typeof value === "object") {
     const entries = Object.entries(value).sort(([left], [right]) => left.localeCompare(right));
-    return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${stableSerialize(entry)}`).join(",`)}}`;
+    return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${stableSerialize(entry)}`).join(",")}}`;
   }
   throw new HermeticToolError(`Unsupported value type for canonical hashing: ${typeof value}`);
 };
@@ -63,7 +63,7 @@ const assertSafeRelativePath = (candidate: string): void => {
 
 const sameWorkspace = (root: string, candidate: string): boolean => {
   const relation = relative(root, candidate);
-  return relation === "" || (!relation.startsWith("..${""}") && !isAbsolute(relation));
+  return relation === "" || (!relation.startsWith("..") && !isAbsolute(relation));
 };
 
 export class HermeticToolKernel implements ToolExecutionKernel {
@@ -164,7 +164,7 @@ export class HermeticToolKernel implements ToolExecutionKernel {
         const current = await this.readOptional(absolutePath);
         if (current === null) throw new HermeticToolError(`File does not exist: ${args.path}`);
         this.assertExpectedSha(current, args.expectedSha256, args.path);
-        await rm(absolutePath, { force: false });
+        await rm(absolutePath);
         return { path: this.relativePath(absolutePath), sha256: args.expectedSha256 };
       }
       case "mkdir": {
@@ -196,7 +196,7 @@ export class HermeticToolKernel implements ToolExecutionKernel {
       case "diff":
         return this.runGit(["diff", ...(args.staged ? ["--cached"] : [])], cwd);
       case "apply": {
-        const patchPath = resolve(this.workspaceRoot, ".klyn-tool-patch-${Date.now()}-${process.pid}.diff");
+        const patchPath = resolve(this.workspaceRoot, `.klyn-tool-patch-${Date.now()}-${process.pid}.diff`);
         await writeFile(patchPath, args.patch, "utf8");
         try {
           const commandArgs = ["apply", "--whitespace=error", ...(args.checkOnly ? ["--check"] : []), patchPath];
@@ -276,7 +276,7 @@ export class HermeticToolKernel implements ToolExecutionKernel {
   }
 
   private async resolveDirectory(workingDirectory: string): Promise<string> {
-    const directory = await this.resolvePath(".", workingDirectory, false);
+    const directory = await this.resolvePath(".", workingDirectory, true);
     const info = await stat(directory);
     if (!info.isDirectory()) throw new HermeticToolError(`Not a directory: ${workingDirectory}`);
     return directory;
@@ -289,18 +289,16 @@ export class HermeticToolKernel implements ToolExecutionKernel {
     const absolutePath = resolve(base, candidate === "." ? "." : candidate);
     if (!sameWorkspace(this.workspaceRoot, absolutePath)) throw new HermeticToolError(`Path escapes workspace root: ${candidate}`);
 
+    const realRoot = await realpath(this.workspaceRoot);
     if (existingRequired) {
-      const real = await import("node:fs/promises").then(({ realpath }) => realpath(absolutePath));
-      if (!sameWorkspace(await import("node:fs/promises").then(({ realpath }) => realpath(this.workspaceRoot)), real)) {
-        throw new HermeticToolError(`Symlink escapes workspace root: ${candidate}`);
-      }
+      const real = await realpath(absolutePath);
+      if (!sameWorkspace(realRoot, real)) throw new HermeticToolError(`Symlink escapes workspace root: ${candidate}`);
       return real;
     }
 
-    const parent = await import("node:fs/promises").then(({ realpath }) => realpath(dirname(absolutePath)).catch(() => null));
-    if (parent !== null) {
-      const realRoot = await import("node:fs/promises").then(({ realpath }) => realpath(this.workspaceRoot));
-      if (!sameWorkspace(realRoot, parent)) throw new HermeticToolError(`Symlink escapes workspace root: ${candidate}`);
+    const parent = await realpath(dirname(absolutePath)).catch(() => null);
+    if (parent !== null && !sameWorkspace(realRoot, parent)) {
+      throw new HermeticToolError(`Symlink escapes workspace root: ${candidate}`);
     }
     return absolutePath;
   }
