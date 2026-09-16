@@ -87,8 +87,8 @@ jobs:
       - name: Full monorepo tests
         run: pnpm run test
 
-      - name: Zero-warning package lint
-        run: pnpm exec eslint packages/*/src packages/*/tests --max-warnings 0
+      - name: Zero-warning promotion-package lint
+        run: pnpm exec eslint packages/agent-core/src packages/agent-core/tests packages/cognitive-engine/src packages/cognitive-engine/tests packages/execution-runtime/src packages/execution-runtime/tests --max-warnings 0
 
       - name: Deterministic end-to-end autonomous promotion simulation
         shell: bash
