@@ -18,7 +18,8 @@ export interface ProductionPromotionSignoffInput {
 }
 
 export interface ProductionPromotionSignoffArtifact {
-  readonly artifactVersion: "7A-1.0.0";
+  readonly artifactVersion: "7C-1.0.0";
+  readonly identifier: "KLYN-CORE-1.0-RELEASE-FINAL";
   readonly policyId: "KLYN-CORE-1.0-PROMOTION-V1";
   readonly decision: "APPROVED" | "REJECTED";
   readonly intentId: string;
@@ -73,7 +74,8 @@ export class ProductionPromotionSignoffEngine {
     this.assertExactTestSummary(input.testSummary);
 
     const unsigned = {
-      artifactVersion: "7A-1.0.0" as const,
+      artifactVersion: "7C-1.0.0" as const,
+      identifier: "KLYN-CORE-1.0-RELEASE-FINAL" as const,
       policyId: "KLYN-CORE-1.0-PROMOTION-V1" as const,
       decision: input.decision,
       intentId: input.intentId,
@@ -89,20 +91,21 @@ export class ProductionPromotionSignoffEngine {
   }
 
   private assertExactTestSummary(summary: ProductionTestSummary): void {
-    if (summary.cognitiveEngine.passed !== 79 || summary.cognitiveEngine.total !== 79) {
-      throw new ProductionPromotionSignoffError("Cognitive-engine evidence must be exactly 79/79");
+    if (summary.cognitiveEngine.passed !== 82 || summary.cognitiveEngine.total !== 82) {
+      throw new ProductionPromotionSignoffError("Cognitive-engine evidence must be exactly 82/82");
     }
     if (summary.executionRuntime.passed !== 25 || summary.executionRuntime.total !== 25) {
       throw new ProductionPromotionSignoffError("Execution-runtime evidence must be exactly 25/25");
     }
-    if (summary.agentCore.passed !== 7 || summary.agentCore.total !== 7) {
-      throw new ProductionPromotionSignoffError("Agent-core evidence must be exactly 7/7");
+    if (summary.agentCore.passed !== 10 || summary.agentCore.total !== 10) {
+      throw new ProductionPromotionSignoffError("Agent-core evidence must be exactly 10/10");
     }
   }
 
   static verify(artifact: ProductionPromotionSignoffArtifact): boolean {
     const unsigned = {
       artifactVersion: artifact.artifactVersion,
+      identifier: artifact.identifier,
       policyId: artifact.policyId,
       decision: artifact.decision,
       intentId: artifact.intentId,
