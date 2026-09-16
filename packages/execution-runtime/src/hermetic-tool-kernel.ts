@@ -297,7 +297,16 @@ export class HermeticToolKernel implements ToolExecutionKernel {
     });
 
     if (entry !== null || existingRequired) {
-      const real = await realpath(absolutePath);
+      let real: string;
+      try {
+        real = await realpath(absolutePath);
+      } catch (error) {
+        const code = error instanceof Error && "code" in error ? error.code : undefined;
+        if (code === "ENOENT") {
+          throw new HermeticToolError(`Broken symlink or missing path: ${candidate}`);
+        }
+        throw error;
+      }
       if (!sameWorkspace(realRoot, real)) throw new HermeticToolError(`Symlink escapes workspace root: ${candidate}`);
       return real;
     }
