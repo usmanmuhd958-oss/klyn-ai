@@ -44,7 +44,7 @@ jobs:
           run_install: false
 
       - name: Install backend workspace
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Agent core typecheck
         run: pnpm --filter @klyn/agent-core typecheck
