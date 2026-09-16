@@ -2,16 +2,22 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { AgentDAGScheduler } from "../src/dag-scheduler.js";
 import { ContextLedger, canonicalSerializeContext } from "../src/context-ledger.js";
+import type { AgentTaskContext } from "../src/contracts.js";
 
-const node = (id: string, dependsOn: readonly string[] = [], run: (attempt: number) => Promise<void> = async () => undefined) => ({
+const node = (
+  id: string,
+  dependsOn: readonly string[] = [],
+  run: (attempt: number) => Promise<void> = async () => undefined,
+  writePath = `${id}.ts`,
+) => ({
   id,
   agentId: `agent-${id}`,
   role: "coder" as const,
   dependsOn,
-  readPaths: [`${id}.ts`],
-  writePaths: [`${id}.ts`],
+  readPaths: [writePath],
+  writePaths: [writePath],
   maxRetries: 2,
-  run: async (_context: { runId: string; agentId: string; intentId: string; role: "coder" }, attempt: number) => run(attempt),
+  run: async (_context: AgentTaskContext, attempt: number) => run(attempt),
 });
 
 describe("ContextLedger", () => {
@@ -51,22 +57,25 @@ describe("AgentDAGScheduler", () => {
     assert.deepEqual(order.slice(0, 1), ["a"]);
   });
 
-  it("retries stale CAS conflicts without introducing a lock", async () => {
+  it("retries stale CAS conflicts on overlapping paths and requests re-planning", async () => {
     let attempts = 0;
     let replans = 0;
     const scheduler = new AgentDAGScheduler({
       maxConcurrency: 2,
-      replanOnStaleRevision: async () => { replans += 1; },
+      replanOnStaleRevision: async ({ node: conflictedNode }) => {
+        replans += 1;
+        assert.equal(conflictedNode.writePaths[0], "shared.ts");
+      },
     });
     const result = await scheduler.run({
       runId: "run-race",
       intentId: "intent-race",
       nodes: [
-        node("writer-a", [], async () => undefined),
+        node("writer-a", [], async () => undefined, "shared.ts"),
         node("writer-b", [], async (attempt) => {
           attempts = attempt;
           if (attempt === 1) throw new Error("Stale file revision for shared.ts: expected old, observed new");
-        }),
+        }, "shared.ts"),
       ],
     });
     assert.equal(result.completed, true);
