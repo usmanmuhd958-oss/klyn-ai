@@ -29,13 +29,13 @@ export class EpistemicAuditError extends Error {
   }
 }
 
-const RANK: Readonly<Record<EpistemicAuditState, number>> = Object.freeze({
-  UNKNOWN: 0,
-  CLAIMED: 1,
-  OBSERVED: 2,
-  "EVIDENCE-SUPPORTED": 3,
-  VERIFIED: 4,
-  REJECTED: 5,
+const NEXT_STATE: Readonly<Record<EpistemicAuditState, EpistemicAuditState | undefined>> = Object.freeze({
+  UNKNOWN: "CLAIMED",
+  CLAIMED: "OBSERVED",
+  OBSERVED: "EVIDENCE-SUPPORTED",
+  "EVIDENCE-SUPPORTED": "VERIFIED",
+  VERIFIED: undefined,
+  REJECTED: undefined,
 });
 
 function canonicalize(value: unknown): unknown {
@@ -98,6 +98,7 @@ export class EpistemicAuditEngine {
       return;
     }
     if (result.state === "UNKNOWN") return;
+    if (this.state !== "OBSERVED") throw new EpistemicAuditError(`Verification requires OBSERVED state; current state is ${this.state}`);
     if (result.state === "EVIDENCE-SUPPORTED") {
       this.support("Claims verifier found supporting but incomplete evidence");
       return;
@@ -142,10 +143,7 @@ export class EpistemicAuditEngine {
     if (this.state === "REJECTED") throw new EpistemicAuditError("Rejected audit is terminal");
     if (target === "REJECTED") return this.reject(reason);
     if (target === this.state) return;
-    if (target !== "CLAIMED" && target !== "OBSERVED" && target !== "EVIDENCE-SUPPORTED" && target !== "VERIFIED") {
-      throw new EpistemicAuditError(`Unsupported forward state: ${target}`);
-    }
-    if (RANK[target] < RANK[this.state]) throw new EpistemicAuditError(`Epistemic regression: ${this.state} -> ${target}`);
+    if (NEXT_STATE[this.state] !== target) throw new EpistemicAuditError(`Invalid epistemic transition: ${this.state} -> ${target}`);
     const transition = freezeTransition({ from: this.state, to: target, reason, sequence: this.transitions.length });
     this.transitions.push(transition);
     this.state = target;
