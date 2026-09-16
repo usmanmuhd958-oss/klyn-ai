@@ -81,10 +81,12 @@ export class GovernancePolicyEngine {
     const normalized = this.normalizeRisks(risks);
     const violations: GovernanceViolation[] = [];
 
-    for (const [vector, severity] of Object.entries(normalized) as [GovernanceRiskVector, GovernanceSeverity][]) {
+    for (const [vector, severity] of Object.entries(normalized) as unknown as Array<[GovernanceRiskVector, GovernanceSeverity]>) {
       if (severity === "CRITICAL") {
         violations.push(Object.freeze({ vector, severity, reason: `${vector} is at critical severity` }));
-      } else if (SEVERITY_RANK[severity] > RISK_RANK[intent.riskPolicy.maxRiskLevel]) {
+        continue;
+      }
+      if (severity !== "NONE" && SEVERITY_RANK[severity] > RISK_RANK[intent.riskPolicy.maxRiskLevel]) {
         violations.push(Object.freeze({ vector, severity, reason: `${vector} exceeds the intent risk policy` }));
       }
     }

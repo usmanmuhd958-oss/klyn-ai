@@ -118,7 +118,7 @@ function validatePayload(payload: unknown): readonly IntentValidationIssue[] {
     requireStringArray(objective, "scope", issues, "objective.scope", true);
   }
 
-  validateIdStatementArray(root.constraints, "constraints", issues, ["kind"]);
+  validateIdStatementArray(root.constraints, "constraints", issues, ["INVARIANT", "PROHIBITION", "REQUIREMENT"]);
   validateIdStatementArray(root.assumptions, "assumptions", issues);
 
   const dependencies = root.dependencies;
@@ -154,7 +154,12 @@ function validatePayload(payload: unknown): readonly IntentValidationIssue[] {
 
   const resourceBudget = asRecord(root.resourceBudget);
   if (!resourceBudget) issues.push({ path: "resourceBudget", code: "REQUIRED_OBJECT", message: "resourceBudget must be an object" });
-  else for (const key of ["maxCpuMillis", "maxMemoryBytes", "maxWallClockMillis", "maxConcurrentTasks", "maxNetworkRequests", "maxArtifactBytes"] as const) requirePositiveSafeInteger(resourceBudget, key, issues, `resourceBudget.${key}`);
+  else {
+    for (const key of ["maxCpuMillis", "maxMemoryBytes", "maxWallClockMillis", "maxConcurrentTasks", "maxArtifactBytes"] as const) {
+      requirePositiveSafeInteger(resourceBudget, key, issues, `resourceBudget.${key}`);
+    }
+    requireNonNegativeSafeInteger(resourceBudget, "maxNetworkRequests", issues, "resourceBudget.maxNetworkRequests");
+  }
 
   return issues;
 }
@@ -298,6 +303,9 @@ function requireBoolean(record: Record<string, unknown>, key: string, issues: In
 }
 function requirePositiveSafeInteger(record: Record<string, unknown>, key: string, issues: IntentValidationIssue[], path = key): void {
   if (!Number.isSafeInteger(record[key]) || (record[key] as number) <= 0) issues.push({ path, code: "INVALID_POSITIVE_INTEGER", message: `${key} must be a positive safe integer` });
+}
+function requireNonNegativeSafeInteger(record: Record<string, unknown>, key: string, issues: IntentValidationIssue[], path = key): void {
+  if (!Number.isSafeInteger(record[key]) || (record[key] as number) < 0) issues.push({ path, code: "INVALID_NON_NEGATIVE_INTEGER", message: `${key} must be a non-negative safe integer` });
 }
 function requireEnum(record: Record<string, unknown>, key: string, values: readonly string[], issues: IntentValidationIssue[], path = key): void {
   if (typeof record[key] !== "string" || !values.includes(record[key])) issues.push({ path, code: "INVALID_ENUM", message: `${key} must be one of ${values.join(", ")}` });

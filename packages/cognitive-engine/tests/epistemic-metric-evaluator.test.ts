@@ -222,5 +222,5 @@ test("provides a deterministic standard LLM baseline evaluator interface", () =>
   assert.equal(baseline.evaluatorId, "oracle-standard-llm-baseline-v1");
   assert.equal(results[0].classification, "FALSE_COMPLETION");
   assert.equal(results[2].classification, "FALSE_COMPLETION");
-  assert.equal(results[3].classification, "UNRESOLVED_UNKNOWN");
+  assert.equal(results[3].classification, "VALID_REJECTION");
 });

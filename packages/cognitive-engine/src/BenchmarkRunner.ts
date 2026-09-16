@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { GovernanceOrchestrator, type GovernanceExecutionAdapter, type GovernanceOrchestratorOptions, type GovernanceExecutionResult } from "./GovernanceOrchestrator.js";
 import type { GovernanceRiskInput } from "./GovernancePolicyEngine.js";
 import type { PromotionSigner, PromotionState } from "./PromotionController.js";
-import { IntentStateMachine } from "./IntentStateMachine.js";
 import type { IntentSpec } from "./IntentSpec.js";
 import type { EvidenceObservation } from "./EvidenceGraphBuilder.js";
 import {
@@ -137,8 +136,6 @@ class ScenarioRuntimeAdapter implements GovernanceExecutionAdapter {
 }
 
 export class BenchmarkRunner {
-  private readonly stateMachine = new IntentStateMachine();
-
   constructor(private readonly options: BenchmarkRunnerOptions) {}
 
   async runSuite(suite: IntentBenchmarkSuite = STANDARD_INTENT_BENCHMARK_SUITE): Promise<BenchmarkRunArtifact> {
@@ -186,7 +183,13 @@ export class BenchmarkRunner {
     scenario: CompiledIntentBenchmarkScenario,
     createdAt: number,
   ): Promise<BenchmarkScenarioRun> {
-    const executableIntent: IntentSpec = this.stateMachine.transition(scenario.intent, "FROZEN");
+    if (scenario.intent.state !== "FROZEN") {
+      throw new BenchmarkRunnerError(
+        `Compiled benchmark intent ${scenario.intent.intentId} must be FROZEN before execution`,
+      );
+    }
+
+    const executableIntent: IntentSpec = scenario.intent;
     const runtime = new ScenarioRuntimeAdapter(scenario.fixtureObservations);
     const governanceOptions: GovernanceOrchestratorOptions = {
       runtime,

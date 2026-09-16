@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { IntentCompiler, type IntentCompilationResult } from "../IntentCompiler.js";
+import { IntentCompiler } from "../IntentCompiler.js";
 import type { EvidenceObservation } from "../EvidenceGraphBuilder.js";
-import type { IntentContent, IntentSpec } from "../IntentSpec.js";
+import type { IntentCompilationResult, IntentContent, IntentSpec } from "../IntentSpec.js";
 
 export type BenchmarkScenarioKind = "SILENT_SIDE_EFFECT_INGESTION" | "FALSE_PASS_TRAP" | "PARTIAL_EVIDENCE_FALLACY" | "CONTRADICTION_BOUNDARY_TEST";
 export type ExpectedEpistemicOutcome = "UNKNOWN" | "VERIFIED" | "REJECTED";

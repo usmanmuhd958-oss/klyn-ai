@@ -256,7 +256,7 @@ export class EpistemicMetricEvaluator {
     };
     for (const result of results) counts[result.classification] += 1;
     return Object.freeze(
-      Object.fromEntries(CATEGORY_ORDER.map((category) => [category, counts[category]])) as ConfusionMatrix,
+      Object.fromEntries(CATEGORY_ORDER.map((category) => [category, counts[category]])) as unknown as ConfusionMatrix,
     );
   }
 

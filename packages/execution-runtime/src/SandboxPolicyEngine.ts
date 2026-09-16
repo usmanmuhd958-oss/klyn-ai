@@ -1,6 +1,6 @@
 import { realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
-import type { ProcessSandboxPolicy, ProcessSandboxRequest } from "./process-sandbox-manager.js";
+import type { ProcessSandboxRequest } from "./process-sandbox-manager.js";
 import type { ResourceBoundaryPolicy, ResourceBoundaryRequest } from "./resource-boundary-enforcer.js";
 
 const BYTES_PER_MIB = 1024 * 1024;

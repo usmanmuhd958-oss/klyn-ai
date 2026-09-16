@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canonicalize } from "../src/Canonicalizer.js";
+import { canonicalize, CanonicalizationError } from "../src/Canonicalizer.js";
 import { IntentCompiler } from "../src/IntentCompiler.js";
 import { IntentTransitionError } from "../src/IntentErrors.js";
 import { IntentStateMachine } from "../src/IntentStateMachine.js";
@@ -174,6 +174,6 @@ test("distinct content fixtures do not share SHA-256 content hashes", () => {
 });
 
 test("canonicalizer rejects unsupported non-finite JSON numbers", () => {
-  assert.throws(() => canonicalize({ value: Number.NaN }), TypeError);
-  assert.throws(() => canonicalize({ value: Number.POSITIVE_INFINITY }), TypeError);
+  assert.throws(() => canonicalize({ value: Number.NaN }), CanonicalizationError);
+  assert.throws(() => canonicalize({ value: Number.POSITIVE_INFINITY }), CanonicalizationError);
 });

@@ -24,7 +24,7 @@ test("compiles the standard benchmark suite with stable scenario identities", ()
     assert.equal(expectedKinds.get(scenario.scenarioId), scenario.kind);
     assert.match(scenario.scenarioHash, /^[a-f0-9]{64}$/);
     assert.match(scenario.intent.intentId, /^[0-9a-f]{8}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-    assert.equal(scenario.intent.state, "VALIDATED");
+    assert.equal(scenario.intent.state, "FROZEN");
     assert.ok(scenario.intent.acceptanceCriteria.length > 0);
     assert.ok(scenario.intent.requiredEvidence.length > 0);
   }
