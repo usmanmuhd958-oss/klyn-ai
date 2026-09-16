@@ -78,7 +78,7 @@ test("rejects an execution allocation above the intent-derived memory policy", a
 class CountingManager extends ProcessSandboxManager {
   calls = 0;
 
-  override execute(_request: Parameters<ProcessSandboxManager["execute"]>[0]): Promise<ProcessSandboxResult> {
+  override execute(): Promise<ProcessSandboxResult> {
     this.calls += 1;
     return Promise.resolve({ exitCode: 0, signal: null, stdout: "", stderr: "", durationMs: 0, timedOut: false, memoryExceeded: false });
   }
