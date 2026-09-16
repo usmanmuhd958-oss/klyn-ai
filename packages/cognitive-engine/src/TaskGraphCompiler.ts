@@ -45,9 +45,10 @@ export class TaskGraphCompiler {
     }
 
     const worldModel = this.worldModelBuilder.build(intent);
-    const tasks: IntentGraphTask[] = [this.objectiveTask(intent)];
+    const tasks: IntentGraphTask[] = [];
 
     for (const dependency of intent.dependencies) tasks.push(this.dependencyTask(intent, dependency));
+    tasks.push(this.objectiveTask(intent));
     for (const constraint of intent.constraints) tasks.push(this.constraintTask(intent, constraint));
     for (const criterion of intent.acceptanceCriteria) {
       tasks.push({
@@ -76,7 +77,10 @@ export class TaskGraphCompiler {
       contentHash: intent.contentHash,
       worldModel,
       tasks: Object.freeze(graph),
-      resolution: Object.freeze({ order: Object.freeze(resolution.order), layers: Object.freeze(resolution.layers.map((layer) => Object.freeze(layer))) }),
+      resolution: Object.freeze({
+        order: Object.freeze(resolution.order),
+        layers: Object.freeze(resolution.layers.map((layer) => Object.freeze(layer))),
+      }),
     });
   }
 
@@ -85,6 +89,7 @@ export class TaskGraphCompiler {
       id: `objective:${intent.intentId}`,
       kind: "OBJECTIVE",
       sourceId: intent.intentId,
+      dependsOn: intent.dependencies.map((dependency) => `dependency:${dependency.id}`),
       input: { intentId: intent.intentId, kind: "OBJECTIVE", sourceId: intent.intentId, description: intent.objective.outcome },
     };
   }
