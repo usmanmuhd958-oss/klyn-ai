@@ -10,6 +10,9 @@
     "test": "tsx --test --test-timeout=15000 tests/**/*.test.ts",
     "lint": "eslint src tests --max-warnings 0"
   },
+  "dependencies": {
+    "@babel/parser": "^8.0.5"
+  },
   "devDependencies": {
     "@babel/types": "^8.0.4",
     "@types/node": "^24.0.0",

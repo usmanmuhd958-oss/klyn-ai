@@ -1,4 +1,4 @@
-name: KLYN Phase 6B Certification
+name: KLYN Phase 6C Certification
 
 on:
   pull_request:
@@ -9,23 +9,25 @@ on:
       - "packages/agent-core/**"
       - "packages/execution-runtime/**"
       - "packages/cognitive-engine/**"
-      - "packages/agent-runtime/**"
       - "pnpm-workspace.yaml"
       - "package.json"
       - "pnpm-lock.yaml"
+  push:
+    branches:
+      - phase/6c-self-healing-context
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: klyn-phase-6b-${{ github.ref }}
+  group: klyn-phase-6c-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  phase-6b-certification:
+  phase-6c-certification:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -43,7 +45,7 @@ jobs:
           version: 11.24.0
           run_install: false
 
-      - name: Install backend workspace
+      - name: Install backend workspace with frozen lockfile
         run: pnpm install --frozen-lockfile
 
       - name: Agent core typecheck
@@ -52,11 +54,17 @@ jobs:
       - name: Execution runtime typecheck
         run: pnpm --filter @klyn/execution-runtime typecheck
 
+      - name: Cognitive engine typecheck
+        run: pnpm --filter @klyn/cognitive-engine typecheck
+
       - name: Agent core build
         run: pnpm --filter @klyn/agent-core build
 
       - name: Execution runtime build
         run: pnpm --filter @klyn/execution-runtime build
+
+      - name: Cognitive engine build
+        run: pnpm --filter @klyn/cognitive-engine build
 
       - name: Agent core tests
         run: pnpm --filter @klyn/agent-core test
@@ -64,8 +72,8 @@ jobs:
       - name: Execution runtime tests
         run: pnpm --filter @klyn/execution-runtime test
 
-      - name: Backend lint
-        run: pnpm exec eslint packages/agent-core packages/execution-runtime --max-warnings 0
-
-      - name: Cognitive engine non-regression tests
+      - name: Cognitive engine tests
         run: pnpm --filter @klyn/cognitive-engine test
+
+      - name: Backend lint
+        run: pnpm exec eslint packages/agent-core packages/execution-runtime packages/cognitive-engine --max-warnings 0
