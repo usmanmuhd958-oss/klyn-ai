@@ -1,0 +1,281 @@
+name: KLYN Phase 7A Consensus Promotion Certification
+
+on:
+  push:
+    branches:
+      - phase/7a-consensus-production-promotion
+  pull_request:
+    branches:
+      - phase/6c-self-healing-context
+      - main
+    paths:
+      - 'packages/agent-core/**'
+      - 'packages/cognitive-engine/**'
+      - 'packages/execution-runtime/**'
+      - 'pnpm-lock.yaml'
+      - 'package.json'
+      - '.github/workflows/klyn-phase-7a-certification.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  certification:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Frozen install
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify backend isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="$(git merge-base HEAD phase/6c-self-healing-context)"
+          changed="$(git diff --name-only "$base" HEAD)"
+          if printf '%s\n' "$changed" | grep -E '(^|/)(apps|frontend|studio|ui|visual|client)(/|$)' >/dev/null; then
+            echo "Frontend/UI change detected"
+            printf '%s\n' "$changed"
+            exit 1
+          fi
+          if ! git diff --quiet "$base" HEAD -- packages/execution-runtime/src/process-sandbox-manager.ts; then
+            echo "ProcessSandboxManager was modified"
+            exit 1
+          fi
+
+      - name: Verify Core 1.0 promotion surface unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="$(git merge-base HEAD phase/6c-self-healing-context)"
+          if ! git diff --quiet "$base" HEAD -- \
+            packages/cognitive-engine/src/IntentStateMachine.ts \
+            packages/cognitive-engine/src/ConsensusArbitrator.ts \
+            packages/cognitive-engine/src/PromotionController.ts \
+            packages/cognitive-engine/src/GovernancePolicyEngine.ts; then
+            echo "Core 1.0 promotion/consensus surface changed"
+            exit 1
+          fi
+
+      - name: Cognitive-engine typecheck
+        run: pnpm --filter @klyn/cognitive-engine typecheck
+
+      - name: Agent-core typecheck
+        run: pnpm --filter @klyn/agent-core typecheck
+
+      - name: Execution-runtime typecheck
+        run: pnpm --filter @klyn/execution-runtime typecheck
+
+      - name: Full monorepo build
+        run: pnpm run build
+
+      - name: Full monorepo tests
+        run: pnpm run test
+
+      - name: Zero-warning package lint
+        run: pnpm exec eslint packages/* --max-warnings 0
+
+      - name: Deterministic end-to-end autonomous promotion simulation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/klyn-phase-7a-e2e.ts <<'EOF'
+          import assert from "node:assert/strict";
+          import { createHash } from "node:crypto";
+          import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+          import { tmpdir } from "node:os";
+          import { join } from "node:path";
+          import {
+            AgentDAGScheduler,
+            AgentToolExecutor,
+            AgentTrajectoryLedger,
+            SelfHealingController,
+            ProductionPromotionSignoffEngine,
+          } from "./packages/agent-core/src/index.ts";
+          import {
+            CodeGraphIndexer,
+            ConsensusPromotionController,
+            PHASE_7A_CERTIFIED_SUBSTRATES,
+            PHASE_7A_EXPECTED_TESTS,
+          } from "./packages/cognitive-engine/src/index.ts";
+          import { HermeticToolKernel } from "./packages/execution-runtime/src/hermetic-tool-kernel.ts";
+
+          const sha256 = (value: string): string => createHash("sha256").update(value, "utf8").digest("hex");
+          const intentId = "intent-phase-7a-e2e";
+          const runId = "run-phase-7a-e2e";
+          const workspace = await mkdtemp(join(tmpdir(), "klyn-7a-"));
+
+          try {
+            await mkdir(join(workspace, "src"), { recursive: true });
+            const broken = "export const value = ;\n";
+            await writeFile(join(workspace, "src/target.ts"), broken, "utf8");
+            await writeFile(join(workspace, "src/index.ts"), "import './target.ts';\n", "utf8");
+
+            const kernel = new HermeticToolKernel({ workspaceRoot: workspace, enableBash: false });
+            const trajectory = new AgentTrajectoryLedger();
+            const executor = new AgentToolExecutor(kernel, trajectory);
+
+            const graphSource = await readFile(join(workspace, "src/index.ts"), "utf8");
+            const graphTarget = await readFile(join(workspace, "src/target.ts"), "utf8");
+            const graph = new CodeGraphIndexer().index([
+              { path: "src/index.ts", content: graphSource },
+              { path: "src/target.ts", content: graphTarget },
+            ]);
+            assert.equal(graph.edges.length, 1);
+            assert.equal(graph.edges[0]?.to, "src/target.ts");
+
+            const dag = await new AgentDAGScheduler().run({
+              runId,
+              intentId,
+              nodes: [
+                {
+                  id: "context",
+                  agentId: "planner-7a",
+                  role: "planner",
+                  dependsOn: [],
+                  readPaths: ["src/index.ts"],
+                  writePaths: [],
+                  run: async (context) => {
+                    const execution = await executor.execute({
+                      call: {
+                        callId: "context-read",
+                        agentId: context.agentId,
+                        intentId: context.intentId,
+                        workingDirectory: ".",
+                        tool: "file-tree",
+                        args: { operation: "read", path: "src/index.ts" },
+                      },
+                      stepId: "dag:context",
+                      runId: context.runId,
+                      role: context.role,
+                    });
+                    assert.equal("content" in execution.result, true);
+                  },
+                },
+                {
+                  id: "repair",
+                  agentId: "coder-7a",
+                  role: "coder",
+                  dependsOn: ["context"],
+                  readPaths: ["src/target.ts"],
+                  writePaths: ["src/target.ts"],
+                  run: async () => undefined,
+                },
+              ],
+            });
+            assert.equal(dag.completed, true);
+
+            let testRuns = 0;
+            const selfHealing = await new SelfHealingController(
+              executor,
+              {
+                plan: async () => {
+                  const content = await readFile(join(workspace, "src/target.ts"), "utf8");
+                  const expectedSha256 = sha256(content);
+                  const start = content.indexOf("= ;");
+                  assert.notEqual(start, -1);
+                  return {
+                    callId: "repair-patch",
+                    agentId: "coder-7a",
+                    intentId,
+                    workingDirectory: ".",
+                    tool: "ast-patch" as const,
+                    args: {
+                      operation: "apply-replacements" as const,
+                      path: "src/target.ts",
+                      expectedSha256,
+                      replacements: [{ start: start + 2, end: start + 3, replacement: " 1" }],
+                    },
+                  };
+                },
+              },
+              { maxAttempts: 3 },
+            ).run({
+              runId,
+              intentId,
+              agentId: "coder-7a",
+              cwd: ".",
+              role: "coder",
+              executeTest: async () => {
+                testRuns += 1;
+                const content = await readFile(join(workspace, "src/target.ts"), "utf8");
+                if (content.includes("= ;")) {
+                  return {
+                    exitCode: 1,
+                    signal: null,
+                    stdout: "",
+                    stderr: "src/target.ts:1:20: error: invalid syntax",
+                    timedOut: false,
+                    memoryExceeded: false,
+                  };
+                }
+                return {
+                  exitCode: 0,
+                  signal: null,
+                  stdout: "ok",
+                  stderr: "",
+                  timedOut: false,
+                  memoryExceeded: false,
+                };
+              },
+            });
+
+            assert.equal(selfHealing.finalResult.exitCode, 0);
+            assert.equal(selfHealing.attempts.length, 1);
+            assert.equal(testRuns, 2);
+            assert.equal(kernel.getAuditTrail().length, 2);
+            assert.equal(kernel.getAuditTrail()[0]?.previousAuditHash, null);
+            assert.equal(kernel.getAuditTrail()[1]?.previousAuditHash, kernel.getAuditTrail()[0]?.auditHash);
+
+            const controller = new ConsensusPromotionController();
+            const decision = controller.evaluate({
+              intentId,
+              auditTrail: kernel.getAuditTrail(),
+              testEvidence: [
+                { suite: "cognitive-engine", passed: PHASE_7A_EXPECTED_TESTS["cognitive-engine"], total: 79, failed: 0, skipped: 0 },
+                { suite: "execution-runtime", passed: PHASE_7A_EXPECTED_TESTS["execution-runtime"], total: 25, failed: 0, skipped: 0 },
+                { suite: "agent-core", passed: PHASE_7A_EXPECTED_TESTS["agent-core"], total: 7, failed: 0, skipped: 0 },
+              ],
+              selfHealing: { attempts: selfHealing.attempts.length, maxAttempts: 3, recovered: true, exhausted: false, unhandledErrors: 0 },
+              noFrontendChanges: true,
+              coreInvariantsUnmodified: true,
+              certifiedSubstrates: PHASE_7A_CERTIFIED_SUBSTRATES,
+            }, "7e595eda138b1a0cd58a751b3e8ce55f8b4876b0");
+
+            assert.equal(decision.state, "APPROVED");
+            assert.equal(decision.auditChain.valid, true);
+
+            const signoff = new ProductionPromotionSignoffEngine().create({
+              decision: "APPROVED",
+              intentId,
+              targetCommit: "7e595eda138b1a0cd58a751b3e8ce55f8b4876b0",
+              auditChainHash: decision.auditChain.chainDigest,
+              evidenceHash: decision.evidenceHash,
+              testSummary: {
+                cognitiveEngine: { passed: 79, total: 79 },
+                executionRuntime: { passed: 25, total: 25 },
+                agentCore: { passed: 7, total: 7 },
+              },
+              unhandledErrors: 0,
+              certifiedSubstrates: PHASE_7A_CERTIFIED_SUBSTRATES,
+            });
+            assert.equal(ProductionPromotionSignoffEngine.verify(signoff), true);
+            console.log(JSON.stringify({ decision: decision.state, auditRecords: kernel.getAuditTrail().length, attempts: selfHealing.attempts.length, artifactHash: signoff.artifactHash }));
+          } finally {
+            await rm(workspace, { recursive: true, force: true });
+          }
+          EOF
+          pnpm exec tsx /tmp/klyn-phase-7a-e2e.ts
