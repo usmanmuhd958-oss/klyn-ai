@@ -1,0 +1,42 @@
+{
+  "id": "v695",
+  "name": "Universal Intelligence Platform Layer",
+  "codename": "UniversalIntelligence",
+  "mission": "One platform exposing every intelligence capability as a uniform, composable service.",
+  "principles": [
+    "One API, every capability",
+    "Capabilities are versioned",
+    "Fallbacks are automatic"
+  ],
+  "dependsOn": [
+    "v694"
+  ],
+  "modules": [
+    "UniversalIntelligenceKernel",
+    "UniversalIntelligenceOrchestrator",
+    "UniversalIntelligenceRuntime",
+    "UniversalGovernanceController",
+    "UnifiedIntelligenceEngine",
+    "UniversalIntelligenceRegistry",
+    "UniversalCoordinationHub",
+    "UniversalTelemetryObserver",
+    "UniversalIntegrationAdapter",
+    "UniversalIntelligencePlatform"
+  ],
+  "contracts": [
+    "v695.engine.tick",
+    "v695.capability.resolved",
+    "v695.fallback.engaged",
+    "v695.metric.recorded"
+  ],
+  "policies": {
+    "maxEntities": 32768,
+    "tickMs": 12,
+    "batchSize": 192,
+    "ringSize": 2048,
+    "consensusThreshold": 0.8,
+    "compactionThreshold": 0.3,
+    "quota": 16384
+  },
+  "commitMessage": "feat(genesis): v695 universal intelligence platform layer"
+}

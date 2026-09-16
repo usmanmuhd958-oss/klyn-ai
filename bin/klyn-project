@@ -1,0 +1,48 @@
+#!/bin/bash
+PROJECTS_DIR="$HOME/klyn-ai-os/projects"
+TEMPLATES_DIR="$HOME/klyn-ai-os/projects/templates"
+ACTIVE_PROJECT_FILE="$HOME/klyn-ai-os/runtime/active_project"
+
+init_project() {
+    local name="$1"
+    local template="${2:-blank}"
+    if [ -d "$PROJECTS_DIR/$name" ]; then
+        echo "Project $name already exists."
+        return 1
+    fi
+    mkdir -p "$PROJECTS_DIR/$name"
+    cp -r "$TEMPLATES_DIR/$template/"* "$PROJECTS_DIR/$name/" 2>/dev/null || true
+    echo "Created project: $name (template: $template)"
+    echo "$name" > "$ACTIVE_PROJECT_FILE"
+}
+
+list_projects() {
+    ls "$PROJECTS_DIR" 2>/dev/null | grep -v templates
+}
+
+switch_project() {
+    local name="$1"
+    if [ ! -d "$PROJECTS_DIR/$name" ]; then
+        echo "Project $name does not exist."
+        return 1
+    fi
+    echo "$name" > "$ACTIVE_PROJECT_FILE"
+    echo "Switched to project: $name"
+}
+
+current_project() {
+    cat "$ACTIVE_PROJECT_FILE" 2>/dev/null || echo "none"
+}
+
+search_code() {
+    rg "$1" "$PROJECTS_DIR" --color=auto
+}
+
+case "$1" in
+    init) init_project "$2" "$3" ;;
+    list) list_projects ;;
+    switch) switch_project "$2" ;;
+    current) current_project ;;
+    search) search_code "$2" ;;
+    *) echo "Usage: $0 {init|list|switch|current|search} ..." ;;
+esac

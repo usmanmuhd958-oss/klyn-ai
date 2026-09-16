@@ -1,0 +1,53 @@
+name: Klyn P4 Lockfile Bootstrap
+
+on:
+  push:
+    branches:
+      - p4/backend-agent-swarm-runtime
+
+permissions:
+  contents: write
+
+concurrency:
+  group: klyn-p4-lockfile-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: p4/backend-agent-swarm-runtime
+          fetch-depth: 1
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+          run_install: false
+      - name: Generate canonical lockfile
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@11.24.0 --activate
+          pnpm install --no-frozen-lockfile
+          test -s pnpm-lock.yaml
+      - name: Commit canonical lockfile
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- pnpm-lock.yaml && git ls-files --error-unmatch pnpm-lock.yaml >/dev/null 2>&1; then
+            echo "Lockfile unchanged."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pnpm-lock.yaml
+          git diff --cached --quiet && exit 0
+          git commit -m "chore(p4): synchronize canonical pnpm lockfile"
+          git push origin HEAD:p4/backend-agent-swarm-runtime

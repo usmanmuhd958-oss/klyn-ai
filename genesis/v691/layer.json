@@ -1,0 +1,42 @@
+{
+  "id": "v691",
+  "name": "Advanced Intelligence Coordination Layer",
+  "codename": "IntelligenceCoordination",
+  "mission": "Synchronize distributed intelligence units through consensus and coordination protocols.",
+  "principles": [
+    "Coordination over control",
+    "Consensus is a service",
+    "Latency is the enemy"
+  ],
+  "dependsOn": [
+    "v690"
+  ],
+  "modules": [
+    "IntelligenceCoordinationKernel",
+    "CoordinationMeshOrchestrator",
+    "IntelligenceCoordinationRuntime",
+    "CoordinationGovernanceController",
+    "ConsensusEngine",
+    "CoordinationUnitRegistry",
+    "IntelligenceCoordinationHub",
+    "CoordinationTelemetryObserver",
+    "CoordinationProtocolAdapter",
+    "AdvancedIntelligenceCoordinationPlatform"
+  ],
+  "contracts": [
+    "v691.engine.tick",
+    "v691.unit.synced",
+    "v691.consensus.reached",
+    "v691.metric.recorded"
+  ],
+  "policies": {
+    "maxEntities": 16384,
+    "tickMs": 16,
+    "batchSize": 128,
+    "ringSize": 1024,
+    "consensusThreshold": 0.85,
+    "compactionThreshold": 0.35,
+    "quota": 8192
+  },
+  "commitMessage": "feat(genesis): v691 advanced intelligence coordination layer"
+}

@@ -1,0 +1,21 @@
+{
+  "name": "@klyn/orchestrator",
+  "version": "1.0.0",
+  "description": "Klyn AI OS Layer 1 - Task Orchestrator & Scheduler",
+  "main": "index.node",
+  "scripts": {
+    "build": "cargo build --release && napi build --platform --release",
+    "build:debug": "cargo build && napi build --platform",
+    "test": "node stress_test.cjs"
+  },
+  "napi": {
+    "name": "klyn-orchestrator"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2.16.0"
+  },
+  "engines": {
+    "node": ">= 16"
+  },
+  "license": "MIT"
+}

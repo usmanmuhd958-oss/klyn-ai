@@ -1,0 +1,42 @@
+{
+  "id": "v692",
+  "name": "Self-Optimizing Infrastructure Layer",
+  "codename": "SelfOptimizingInfrastructure",
+  "mission": "Infrastructure that continuously tunes itself against live workload telemetry.",
+  "principles": [
+    "Measure, tune, verify",
+    "Local optima are traps",
+    "Every tuning is reversible"
+  ],
+  "dependsOn": [
+    "v691"
+  ],
+  "modules": [
+    "SelfOptimizingInfrastructureKernel",
+    "OptimizationOrchestrator",
+    "SelfOptimizingRuntime",
+    "OptimizationGovernanceController",
+    "ResourceTuningEngine",
+    "OptimizationStateRegistry",
+    "OptimizationCoordinationHub",
+    "OptimizationTelemetryObserver",
+    "HardwareTuningAdapter",
+    "SelfOptimizingInfrastructurePlatform"
+  ],
+  "contracts": [
+    "v692.engine.tick",
+    "v692.tuning.applied",
+    "v692.gain.verified",
+    "v692.metric.recorded"
+  ],
+  "policies": {
+    "maxEntities": 8192,
+    "tickMs": 16,
+    "batchSize": 128,
+    "ringSize": 1024,
+    "consensusThreshold": 0.75,
+    "compactionThreshold": 0.3,
+    "quota": 4096
+  },
+  "commitMessage": "feat(genesis): v692 self-optimizing infrastructure layer"
+}

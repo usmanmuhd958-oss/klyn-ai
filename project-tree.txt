@@ -1,0 +1,1165 @@
+.
+├── 0.kernel
+│   ├── Cargo.toml
+│   ├── benches
+│   ├── build.rs
+│   ├── bus.js
+│   ├── bus.ts
+│   ├── index.js
+│   ├── index.ts
+│   ├── kernel.ts
+│   ├── klyn_kernel_core.linux-arm64-gnu.node
+│   ├── law.ts
+│   ├── node_modules
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── setup_agent.sh
+│   ├── setup_llm.sh
+│   ├── src
+│   ├── stress_test.cjs
+│   ├── target
+│   ├── test_kernel.ts
+│   ├── types.ts
+│   └── vault.ts
+├── 1.brain
+│   ├── agent_engine.ts
+│   ├── analyzer.ts
+│   ├── ast_indexer.ts
+│   ├── cognitive_router.ts
+│   ├── config.ts
+│   ├── cost_optimizer.ts
+│   ├── examples
+│   ├── graph_memory.ts
+│   ├── index.ts
+│   ├── llm_gateway.ts
+│   ├── memory.ts
+│   ├── orchestrator.ts
+│   ├── patch_generator.ts
+│   ├── patch_validator.ts
+│   ├── providers
+│   ├── scheduler.ts
+│   ├── test_agent_engine.ts
+│   ├── types.ts
+│   └── vector_store.ts
+├── 1.bridge
+│   ├── dist
+│   ├── node_modules
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── src
+│   └── tsconfig.json
+├── 1.orchestrator
+│   ├── Cargo.toml
+│   ├── build.rs
+│   ├── fix_stress_test.sh
+│   ├── index.node
+│   ├── klyn-orchestrator.android-arm64.node
+│   ├── node_modules
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── patch_stress_test.sh
+│   ├── run_benchmark.sh
+│   ├── run_final_l1_test.sh
+│   ├── src
+│   ├── stress_test.cjs
+│   └── target
+├── 2.body
+│   ├── coder.ts
+│   ├── deployer.ts
+│   ├── executor.ts
+│   ├── index.ts
+│   ├── patcher.ts
+│   ├── runtime.js
+│   ├── runtime.ts
+│   ├── supervisor.ts
+│   └── validator.ts
+├── 2.vault
+│   ├── 0.kernel
+│   ├── 1.brain
+│   ├── 1.bridge
+│   ├── 2.body
+│   ├── 2.vault
+│   ├── 2.vfs
+│   ├── 3.memory
+│   ├── 3.senses
+│   ├── 4.loops
+│   ├── 4.mouth
+│   ├── 5.marketplace
+│   ├── Cargo.toml
+│   ├── Dockerfile
+│   ├── GEMINI.md
+│   ├── LICENSE
+│   ├── Makefile
+│   ├── README.md
+│   ├── README_QuantumLeaps.md
+│   ├── add_cursor_ai_editing.sh
+│   ├── agents
+│   ├── apex_core_module.js
+│   ├── apex_enterprise_core.js
+│   ├── apex_v15_synthesizer.js
+│   ├── apex_v16_benchmark.json
+│   ├── api
+│   ├── app.js
+│   ├── ast_woven_module.js
+│   ├── async_git_push.sh
+│   ├── audit.sh
+│   ├── autonomous_evolution.sh
+│   ├── autonomous_learning.sh
+│   ├── benchmark
+│   ├── bin
+│   ├── boot.sh
+│   ├── build.rs
+│   ├── build_klyn_os.sh
+│   ├── build_payment_c_core.js
+│   ├── build_payment_c_utils.js
+│   ├── build_real_time_core.js
+│   ├── build_real_time_utils.js
+│   ├── build_user_auth_core.js
+│   ├── build_user_auth_utils.js
+│   ├── clean.sh
+│   ├── collaborative_ide.sh
+│   ├── commands
+│   ├── config
+│   ├── config.ts
+│   ├── configs
+│   ├── core
+│   ├── create_bridge.sh
+│   ├── create_kernel.sh
+│   ├── create_kernel_files.sh
+│   ├── create_vfs.sh
+│   ├── dashboard
+│   ├── database
+│   ├── declarations.d.ts
+│   ├── dependency_graph.json
+│   ├── deployment_guide.md
+│   ├── developer_ecosystem.sh
+│   ├── docs
+│   ├── download_model.sh
+│   ├── edit_all_files.sh
+│   ├── edit_klyn_files.sh
+│   ├── edit_query_files.sh
+│   ├── engine.js
+│   ├── enterprise_grid.sh
+│   ├── enterprise_hardening.sh
+│   ├── example
+│   ├── example.ts
+│   ├── example_healing.ts
+│   ├── example_swarm.ts
+│   ├── example_swarm_mesh.ts
+│   ├── file_list.txt
+│   ├── final_enterprise_improvement.sh
+│   ├── fix-ci.sh
+│   ├── fix_all.sh
+│   ├── fix_all_ts.sh
+│   ├── fix_bridge.sh
+│   ├── fix_final_18.sh
+│   ├── fix_kernel.sh
+│   ├── fix_kernel_18.sh
+│   ├── fix_klyn.sh
+│   ├── fix_klyn_v2.sh
+│   ├── fix_klyn_v5.js
+│   ├── fix_pinpoint_errors.sh
+│   ├── fly.toml
+│   ├── full_autonomy.sh
+│   ├── generate_report.sh
+│   ├── global_platform.sh
+│   ├── healed_test.js
+│   ├── index.d.ts
+│   ├── index.js
+│   ├── index.ts
+│   ├── install_all_sonnet_files.sh
+│   ├── install_deepseek.sh
+│   ├── install_sonnet_modules.sh
+│   ├── keep_alive.sh
+│   ├── kernel
+│   ├── klyn-ai.sh
+│   ├── klyn-vault.android-arm64.node
+│   ├── klyn.sh
+│   ├── klyn_agent_loop.js
+│   ├── klyn_cli.js
+│   ├── klyn_core.js
+│   ├── klyn_daemon.js
+│   ├── klyn_engine.js
+│   ├── klyn_evolved_kernel.js
+│   ├── klyn_hotfix.sh
+│   ├── klyn_part_aa
+│   ├── klyn_part_ab
+│   ├── klyn_part_ac
+│   ├── klyn_part_ad
+│   ├── klyn_part_ae
+│   ├── klyn_query.js
+│   ├── klyn_server.js
+│   ├── lib
+│   ├── mailbox
+│   ├── master_klyn_fix.sh
+│   ├── matrix_module.js
+│   ├── memory
+│   ├── migrate_js_to_ts.sh
+│   ├── mod_a.js
+│   ├── mod_b.js
+│   ├── multi_project_platform.sh
+│   ├── multi_project_server.sh
+│   ├── native
+│   ├── neural_fabric_core.js
+│   ├── open_nano_engine.sh
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── packages
+│   ├── patch_engine.js
+│   ├── patch_klyn_os.sh
+│   ├── pipeline_module.js
+│   ├── plugins
+│   ├── project_files_manifest.txt
+│   ├── project_report.txt
+│   ├── projects
+│   ├── push_git.sh
+│   ├── quantum_cluster_module.js
+│   ├── quantum_v14_core.js
+│   ├── render.yaml
+│   ├── render_deploy_setup.sh
+│   ├── replit.nix
+│   ├── run_all_tests.sh
+│   ├── run_cli.sh
+│   ├── run_daemon_autoheal_test.sh
+│   ├── run_daemon_test.sh
+│   ├── run_daemon_test_v3.2.sh
+│   ├── run_kernel_tests.sh
+│   ├── run_task_test.sh
+│   ├── run_tx_test.sh
+│   ├── run_v3_test.sh
+│   ├── run_v4_hud.sh
+│   ├── scripts
+│   ├── secret-patterns.txt
+│   ├── services
+│   ├── setup-architecture.sh
+│   ├── setup-env.sh
+│   ├── setup.sh
+│   ├── setup_cli.js
+│   ├── setup_kernel_files.sh
+│   ├── setup_klyn_environment.sh
+│   ├── setup_klyn_modules.sh
+│   ├── setup_nano.sh
+│   ├── setup_phase3.sh
+│   ├── setup_rust_kernel.sh
+│   ├── setup_test_suite.sh
+│   ├── shared
+│   ├── simd_swarm_matrix.json
+│   ├── sovereign_upgrade.sh
+│   ├── src
+│   ├── swarm_cluster_module.js
+│   ├── swarm_module.js
+│   ├── swarm_v52.js
+│   ├── test-gemini.mjs
+│   ├── test-vault.js
+│   ├── test.js
+│   ├── test.ts
+│   ├── test_bridge.cjs
+│   ├── test_bridge.js
+│   ├── test_build_payment_c_core.js
+│   ├── test_build_payment_c_utils.js
+│   ├── test_build_real_time_core.js
+│   ├── test_build_real_time_utils.js
+│   ├── test_build_user_auth_core.js
+│   ├── test_build_user_auth_utils.js
+│   ├── test_git_auto_commit.sh
+│   ├── test_kernel_production.ts
+│   ├── test_module.js
+│   ├── test_patch.js
+│   ├── test_router
+│   ├── test_vfs.cjs
+│   ├── tests
+│   ├── tools
+│   ├── tsconfig.json
+│   ├── update-fixed-files.sh
+│   ├── update_v42.js
+│   ├── upgrade_real_engine.js
+│   ├── upgrade_v100.js
+│   ├── upgrade_v110.js
+│   ├── upgrade_v120.js
+│   ├── upgrade_v121.js
+│   ├── upgrade_v122.js
+│   ├── upgrade_v123.js
+│   ├── upgrade_v130.js
+│   ├── upgrade_v131.js
+│   ├── upgrade_v132.js
+│   ├── upgrade_v133.js
+│   ├── upgrade_v134.js
+│   ├── upgrade_v135.js
+│   ├── upgrade_v140.js
+│   ├── upgrade_v141.js
+│   ├── upgrade_v142.js
+│   ├── upgrade_v150.js
+│   ├── upgrade_v160.js
+│   ├── upgrade_v2_engine.js
+│   ├── upgrade_v3_engine.js
+│   ├── upgrade_v41_engine.js
+│   ├── upgrade_v42_engine.js
+│   ├── upgrade_v43_engine.js
+│   ├── upgrade_v44_engine.js
+│   ├── upgrade_v45_engine.js
+│   ├── upgrade_v4_engine.js
+│   ├── upgrade_v50.js
+│   ├── upgrade_v51.js
+│   ├── upgrade_v52.js
+│   ├── upgrade_v53.js
+│   ├── upgrade_v54.js
+│   ├── upgrade_v60.js
+│   ├── upgrade_v70.js
+│   ├── upgrade_v80.js
+│   ├── upgrade_v90.js
+│   ├── utils
+│   ├── vscode-extension
+│   └── worker.sh
+├── 2.vfs
+│   ├── dist
+│   ├── node_modules
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── src
+│   └── tsconfig.json
+├── 3.memory
+│   ├── index.ts
+│   └── unified_memory.ts
+├── 3.senses
+│   ├── diagnostics.ts
+│   ├── error_detector.ts
+│   ├── index.ts
+│   ├── logs.ts
+│   ├── metrics.ts
+│   ├── stream_monitor.ts
+│   ├── telemetry.ts
+│   └── traces.ts
+├── 4.loops
+│   ├── brain.ts
+│   ├── healer.ts
+│   ├── index.ts
+│   └── types.ts
+├── 4.mouth
+│   ├── api.ts
+│   └── cli.ts
+├── 5.marketplace
+│   └── registry.ts
+├── Cargo.lock
+├── Cargo.toml
+├── Dockerfile
+├── GEMINI.md
+├── KLYN_ARCHITECTURE.json
+├── LICENSE
+├── Makefile
+├── README.md
+├── README_QuantumLeaps.md
+├── add_cursor_ai_editing.sh
+├── agent-civilization
+│   ├── agents
+│   ├── architect
+│   ├── communication
+│   ├── coordination
+│   ├── decision
+│   ├── developer
+│   ├── engineer
+│   ├── leadership
+│   ├── memory
+│   ├── negotiation
+│   ├── optimizer
+│   ├── reputation
+│   ├── researcher
+│   ├── reviewer
+│   ├── security
+│   ├── skills
+│   ├── teacher
+│   └── tester
+├── agent-os
+│   ├── memory
+│   ├── registry
+│   ├── roles
+│   └── skills
+├── agents
+│   ├── architect.ts
+│   ├── auditor.ts
+│   ├── base_agent.ts
+│   ├── bug_hunter.ts
+│   ├── coder.ts
+│   ├── index.ts
+│   ├── lib
+│   ├── reviewer.ts
+│   ├── src
+│   ├── swarm_orchestrator.ts
+│   ├── types.ts
+│   └── workflows
+├── apex_core_module.js
+├── apex_enterprise_core.js
+├── apex_v15_synthesizer.js
+├── apex_v16_benchmark.json
+├── api
+│   ├── gateway.sh
+│   ├── gateway.ts
+│   ├── metrics.ts
+│   ├── router.ts
+│   └── server.ts
+├── app.js
+├── apps
+├── archive
+│   └── vault_snapshots
+├── ast_woven_module.js
+├── async_git_push.sh
+├── audit.sh
+├── autonomous-engine
+├── autonomous-engineering
+│   └── v2
+├── autonomous-kernel
+│   ├── executor
+│   ├── optimizer
+│   ├── planner
+│   ├── repair
+│   └── validator
+├── autonomous_evolution.sh
+├── autonomous_learning.sh
+├── benches
+├── benchmark
+│   └── perf_test.ts
+├── bin
+│   ├── klyn
+│   ├── klyn-agent
+│   ├── klyn-agent-project
+│   ├── klyn-client
+│   ├── klyn-code
+│   ├── klyn-dashboard
+│   ├── klyn-init
+│   ├── klyn-project
+│   └── supashell
+├── boot.sh
+├── build.rs
+├── build_klyn_os.sh
+├── build_payment_c_core.js
+├── build_payment_c_utils.js
+├── build_real_time_core.js
+├── build_real_time_utils.js
+├── build_user_auth_core.js
+├── build_user_auth_utils.js
+├── clean.sh
+├── code-intelligence
+│   ├── architecture-map
+│   ├── behavior-map
+│   ├── dependency-intelligence
+│   └── semantic-map
+├── cognitive-kernel
+│   ├── contracts.ts
+│   ├── decision
+│   ├── execution
+│   ├── intent
+│   ├── planning
+│   ├── reasoning
+│   └── reflection
+├── collaborative_ide.sh
+├── commands
+│   ├── code.sh
+│   ├── deploy.sh
+│   ├── doctor.sh
+│   ├── generate.sh
+│   ├── goal.sh
+│   ├── health.sh
+│   ├── help.sh
+│   ├── init.sh
+│   ├── plan.sh
+│   ├── plugin.sh
+│   ├── run.sh
+│   └── test.sh
+├── config
+│   ├── clients.json
+│   ├── constants.ts
+│   ├── default.env
+│   ├── kernel.config.json
+│   ├── logger.ts
+│   ├── services.yaml
+│   ├── supabase.env
+│   ├── supabase.ts
+│   └── workspace.ts
+├── config.ts
+├── configs
+│   └── models.env
+├── control-plane
+│   ├── coordination
+│   ├── orchestrator
+│   ├── policy
+│   └── resource
+├── core
+│   ├── ast-engine.ts
+│   ├── contracts
+│   ├── errors.ts
+│   ├── event-bus
+│   ├── kernel
+│   ├── memory.ts
+│   ├── multi_llm.sh
+│   ├── performance-monitor.ts
+│   ├── runtime
+│   └── scheduler
+├── core-contracts
+│   ├── agents
+│   ├── events
+│   ├── missions
+│   └── world
+├── core.klyn
+├── create_bridge.sh
+├── create_kernel.sh
+├── create_kernel_files.sh
+├── create_vfs.sh
+├── daemon.log
+├── dashboard
+│   ├── web_editor.sh
+│   └── web_editor.ts
+├── database
+│   └── migrations
+├── decision-engine
+├── declarations.d.ts
+├── dependency_graph.json
+├── deployment_guide.md
+├── developer_ecosystem.sh
+├── digital-twin
+│   ├── architecture
+│   ├── behavior
+│   ├── dependency
+│   ├── history
+│   ├── model
+│   ├── risk
+│   ├── simulation
+│   └── state
+├── digital-twin-engine
+│   ├── decision
+│   ├── prediction
+│   ├── simulation
+│   └── snapshot
+├── dist
+│   ├── klyn
+│   └── klyn_bundle.js
+├── docs
+│   └── TEST_MUTATION.md
+├── download_model.sh
+├── edit_all_files.sh
+├── edit_klyn_files.sh
+├── edit_query_files.sh
+├── engine.js
+├── engineering
+│   ├── analyzer
+│   ├── deployer
+│   ├── patcher
+│   └── tester
+├── engineering-intelligence
+│   ├── analysis
+│   ├── autonomous-fix
+│   ├── brain
+│   ├── simulation
+│   └── verification
+├── enterprise-plane
+│   ├── billing
+│   ├── compliance
+│   ├── policy
+│   ├── security
+│   └── tenant
+├── enterprise_grid.sh
+├── enterprise_hardening.sh
+├── evolution
+│   ├── evaluator
+│   ├── experiments
+│   └── optimizer
+├── evolution-engine
+│   ├── adaptation
+│   ├── benchmark
+│   ├── benchmarking
+│   ├── core
+│   ├── discovery
+│   ├── experiments
+│   ├── learning-loop
+│   ├── metrics
+│   ├── optimizer
+│   ├── self-improvement
+│   └── self-test
+├── example
+│   └── usage.ts
+├── example.ts
+├── example_healing.ts
+├── example_swarm.ts
+├── example_swarm_mesh.ts
+├── experiment-engine
+│   ├── comparison
+│   ├── metrics
+│   └── runner
+├── file_list.txt
+├── final_enterprise_improvement.sh
+├── fix-ci.sh
+├── fix_all.sh
+├── fix_all_ts.sh
+├── fix_bridge.sh
+├── fix_final_18.sh
+├── fix_kernel.sh
+├── fix_kernel_18.sh
+├── fix_klyn.sh
+├── fix_klyn_v2.sh
+├── fix_klyn_v5.js
+├── fix_pinpoint_errors.sh
+├── fly.toml
+├── full_autonomy.sh
+├── generate_report.sh
+├── global-state
+│   ├── history
+│   ├── snapshot
+│   └── transaction
+├── global_platform.sh
+├── governance
+│   ├── audit
+│   ├── compliance
+│   ├── permissions
+│   └── policy
+├── healed_test.js
+├── identity-engine
+│   ├── capabilities
+│   ├── goals
+│   └── profile
+├── index.d.ts
+├── index.js
+├── index.ts
+├── install_all_sonnet_files.sh
+├── install_deepseek.sh
+├── install_sonnet_modules.sh
+├── intelligence
+│   ├── agents
+│   ├── cognitive
+│   ├── learning
+│   ├── memory
+│   ├── models
+│   ├── orchestrator
+│   ├── planning
+│   ├── reasoning
+│   ├── swarm
+│   └── world-model
+├── intelligence-core
+│   ├── autonomy-engine
+│   ├── brain
+│   ├── consciousness
+│   ├── contracts
+│   ├── controller
+│   ├── learning-engine
+│   ├── reasoning-engine
+│   └── simulation-engine
+├── intelligence-fabric
+│   ├── communication
+│   ├── events
+│   ├── memory
+│   └── state
+├── intelligence-graph
+│   ├── entities
+│   ├── inference
+│   └── relations
+├── intelligence-loop
+├── intelligent-observability
+│   ├── diagnostics
+│   ├── health
+│   └── metrics
+├── keep_alive.sh
+├── kernel
+│   ├── backoff.ts
+│   ├── cognitive
+│   ├── dashboard-server.ts
+│   ├── event-bus
+│   ├── git-integration.ts
+│   ├── healer.ts
+│   ├── health-api.ts
+│   ├── ipc-mailbox.ts
+│   ├── kernel-entry.ts
+│   ├── logger.ts
+│   ├── metrics-store.ts
+│   ├── modules
+│   ├── orchestrator.ts
+│   ├── plugin-engine.ts
+│   ├── process-manager.ts
+│   ├── runtime
+│   ├── scheduler
+│   ├── secret-manager.ts
+│   ├── src
+│   ├── task-queue.ts
+│   ├── tests
+│   ├── token-vault.ts
+│   └── workflow.ts
+├── klyn-ai.sh
+├── klyn-core
+├── klyn-governance
+│   ├── audit
+│   ├── rules
+│   ├── security
+│   └── trust
+├── klyn-intelligence
+│   ├── action-engine
+│   ├── core
+│   ├── cycle
+│   ├── intelligence-memory
+│   ├── learning-engine
+│   ├── perception-engine
+│   ├── planning-engine
+│   └── reasoning-engine
+├── klyn-memory
+│   ├── experience
+│   ├── knowledge
+│   ├── long-term
+│   └── short-term
+├── klyn-os
+│   ├── architecture
+│   ├── constitution
+│   └── principles
+├── klyn-prime
+│   ├── cognition
+│   ├── contracts
+│   ├── events
+│   ├── evolution
+│   ├── identity
+│   ├── kernel
+│   ├── mission
+│   └── orchestrator
+├── klyn-runtime
+│   ├── boot
+│   ├── kernel
+│   └── services
+├── klyn-vault.android-arm64.node
+├── klyn.log
+├── klyn.sh
+├── klyn_agent_loop.js
+├── klyn_cli.js
+├── klyn_core.js
+├── klyn_daemon.js
+├── klyn_engine.js
+├── klyn_evolved_kernel.js
+├── klyn_hotfix.sh
+├── klyn_part_aa
+├── klyn_part_ab
+├── klyn_part_ac
+├── klyn_part_ad
+├── klyn_part_ae
+├── klyn_query.js
+├── klyn_server.js
+├── klyn_server.log
+├── knowledge-graph
+│   ├── edges
+│   ├── learning
+│   ├── nodes
+│   └── query
+├── lib
+│   ├── bootstrap.sh
+│   ├── core
+│   ├── logger.sh
+│   ├── pid.sh
+│   ├── queue.sh
+│   ├── retry.sh
+│   ├── service.sh
+│   └── utils
+├── mailbox
+│   └── kernel.queue
+├── master_klyn_fix.sh
+├── matrix_module.js
+├── memory
+│   ├── index.ts
+│   └── unified_memory.ts
+├── memory-engine
+│   ├── episodic
+│   ├── graph
+│   ├── index
+│   ├── intelligence
+│   ├── learning
+│   ├── long-term
+│   ├── procedural
+│   └── semantic
+├── migrate_js_to_ts.sh
+├── mission-intelligence
+│   ├── execution
+│   ├── planning
+│   ├── review
+│   └── understanding
+├── mission-system
+│   ├── execution
+│   ├── planner
+│   ├── result
+│   └── tracker
+├── mod_a.js
+├── mod_b.js
+├── multi_project_platform.sh
+├── multi_project_server.sh
+├── native
+│   └── kernel_core
+├── neural-bus
+│   ├── contracts
+│   ├── events
+│   ├── routing
+│   └── telemetry
+├── neural_fabric_core.js
+├── node_modules
+│   ├── @esbuild
+│   ├── @types
+│   ├── accepts
+│   ├── agent-base
+│   ├── asynckit
+│   ├── axios
+│   ├── balanced-match
+│   ├── body-parser
+│   ├── brace-expansion
+│   ├── bytes
+│   ├── call-bind-apply-helpers
+│   ├── call-bound
+│   ├── chokidar
+│   ├── combined-stream
+│   ├── content-disposition
+│   ├── content-type
+│   ├── cookie
+│   ├── cookie-signature
+│   ├── debug
+│   ├── delayed-stream
+│   ├── depd
+│   ├── dotenv
+│   ├── dunder-proto
+│   ├── ee-first
+│   ├── encodeurl
+│   ├── es-define-property
+│   ├── es-errors
+│   ├── es-object-atoms
+│   ├── es-set-tostringtag
+│   ├── esbuild
+│   ├── escape-html
+│   ├── etag
+│   ├── express
+│   ├── finalhandler
+│   ├── follow-redirects
+│   ├── form-data
+│   ├── forwarded
+│   ├── fresh
+│   ├── function-bind
+│   ├── get-intrinsic
+│   ├── get-proto
+│   ├── glob
+│   ├── gopd
+│   ├── has-symbols
+│   ├── has-tostringtag
+│   ├── hasown
+│   ├── http-errors
+│   ├── https-proxy-agent
+│   ├── iconv-lite
+│   ├── inherits
+│   ├── ipaddr.js
+│   ├── is-promise
+│   ├── lru-cache
+│   ├── math-intrinsics
+│   ├── media-typer
+│   ├── merge-descriptors
+│   ├── mime-db
+│   ├── mime-types
+│   ├── minimatch
+│   ├── minipass
+│   ├── ms
+│   ├── negotiator
+│   ├── object-inspect
+│   ├── on-finished
+│   ├── once
+│   ├── parseurl
+│   ├── path-scurry
+│   ├── path-to-regexp
+│   ├── proxy-addr
+│   ├── proxy-from-env
+│   ├── qs
+│   ├── range-parser
+│   ├── raw-body
+│   ├── readdirp
+│   ├── router
+│   ├── safer-buffer
+│   ├── send
+│   ├── serve-static
+│   ├── setprototypeof
+│   ├── side-channel
+│   ├── side-channel-list
+│   ├── side-channel-map
+│   ├── side-channel-weakmap
+│   ├── statuses
+│   ├── toidentifier
+│   ├── tsx
+│   ├── type-is
+│   ├── typescript
+│   ├── undici-types
+│   ├── unpipe
+│   ├── vary
+│   ├── wrappy
+│   └── ws
+├── observability
+│   ├── logs
+│   ├── metrics
+│   └── tracing
+├── open_nano_engine.sh
+├── package-lock.json
+├── package.json
+├── packages
+│   ├── agent-runtime
+│   ├── ai-gateway
+│   ├── ai-orchestrator
+│   └── workflow-engine
+├── patch_engine.js
+├── patch_klyn_os.sh
+├── pipeline_module.js
+├── platform
+│   ├── api
+│   ├── cli
+│   ├── dashboard
+│   └── marketplace
+├── plugins
+│   ├── auto_install.sh
+│   ├── docker
+│   ├── installed
+│   ├── marketplace
+│   ├── python
+│   └── react
+├── production-intelligence
+│   ├── auto-recovery
+│   ├── monitoring
+│   ├── optimization
+│   └── prediction
+├── project-tree.txt
+├── project_files_manifest.txt
+├── project_report.txt
+├── projects
+│   ├── my-react-app
+│   └── templates
+├── public
+├── push_git.sh
+├── quality-engine
+│   ├── performance
+│   ├── policy
+│   ├── security
+│   └── testing
+├── quantum_cluster_module.js
+├── quantum_v14_core.js
+├── reliability-core
+│   ├── fault-detection
+│   ├── recovery
+│   ├── rollback
+│   └── validation
+├── render.yaml
+├── render_deploy_setup.sh
+├── replit.nix
+├── repository-intelligence
+│   ├── architecture
+│   ├── dependency
+│   ├── indexer
+│   ├── knowledge
+│   ├── parser
+│   ├── risk
+│   ├── scanner
+│   └── understanding
+├── research-engine
+│   ├── discoveries
+│   ├── experiments
+│   └── papers
+├── run_all_tests.sh
+├── run_cli.sh
+├── run_daemon_autoheal_test.sh
+├── run_daemon_test.sh
+├── run_daemon_test_v3.2.sh
+├── run_kernel_tests.sh
+├── run_task_test.sh
+├── run_tx_test.sh
+├── run_v3_test.sh
+├── run_v4_hud.sh
+├── runtime-engine
+│   ├── boot
+│   ├── lifecycle
+│   └── scheduler
+├── scripts
+│   ├── ai_code_review.sh
+│   ├── backup.sh
+│   ├── backup_rotate.sh
+│   ├── benchmark.ts
+│   ├── bootstrap.sh
+│   ├── deploy_cloud.sh
+│   ├── dev_setup.sh
+│   ├── diagnostic_check.sh
+│   ├── doctor.sh
+│   ├── export_release.sh
+│   ├── health_check.sh
+│   ├── health_check.ts
+│   ├── metrics.sh
+│   ├── migrate.sh
+│   ├── model_status.sh
+│   ├── publish_plugins.sh
+│   ├── restore.sh
+│   └── run_tests.sh
+├── secret-patterns.txt
+├── security
+│   ├── audit
+│   ├── permissions
+│   └── vault
+├── self-evolution
+│   ├── experiment
+│   ├── improve
+│   ├── measure
+│   ├── observe
+│   └── remember
+├── self-healing
+│   ├── diagnosis
+│   ├── monitor
+│   └── recovery
+├── service-mesh
+│   ├── communication
+│   ├── discovery
+│   ├── health
+│   └── registry
+├── service-registry
+├── services
+│   ├── collaboration
+│   └── src
+├── setup-architecture.sh
+├── setup-env.sh
+├── setup.sh
+├── setup_cli.js
+├── setup_kernel_files.sh
+├── setup_klyn_environment.sh
+├── setup_klyn_modules.sh
+├── setup_layer1.sh
+├── setup_nano.sh
+├── setup_phase3.sh
+├── setup_rust_kernel.sh
+├── setup_test_suite.sh
+├── shared
+│   ├── crypto_utils.ts
+│   ├── protocol.sh
+│   └── protocol.ts
+├── simd_swarm_matrix.json
+├── simulation-gate
+├── software-factory
+│   ├── architect
+│   ├── builder
+│   ├── designer
+│   ├── releaser
+│   └── reviewer
+├── sovereign_upgrade.sh
+├── src
+│   ├── ai
+│   ├── cli
+│   ├── core
+│   ├── engine
+│   ├── graph
+│   ├── index.rs
+│   ├── index.ts
+│   ├── indexer
+│   ├── lib
+│   ├── lib.rs
+│   ├── main.ts
+│   ├── parser
+│   ├── query
+│   ├── services
+│   ├── simd.rs
+│   ├── storage.rs
+│   ├── types
+│   └── vault.rs
+├── swarm_cluster_module.js
+├── swarm_module.js
+├── swarm_v52.js
+├── system-contracts
+├── target
+│   ├── CACHEDIR.TAG
+│   ├── aarch64-linux-android
+│   ├── debug
+│   └── release
+├── test-gemini.mjs
+├── test-vault.js
+├── test.js
+├── test.ts
+├── test_bridge.cjs
+├── test_bridge.js
+├── test_build_payment_c_core.js
+├── test_build_payment_c_utils.js
+├── test_build_real_time_core.js
+├── test_build_real_time_utils.js
+├── test_build_user_auth_core.js
+├── test_build_user_auth_utils.js
+├── test_git_auto_commit.sh
+├── test_kernel_production.ts
+├── test_module.js
+├── test_patch.js
+├── test_router
+├── test_vfs.cjs
+├── testing-intelligence
+│   ├── chaos
+│   ├── coverage
+│   ├── simulation
+│   └── test-generation
+├── tests
+│   ├── test_cognitive_router.ts
+│   ├── test_evolution.ts
+│   ├── test_hybrid_llm.ts
+│   └── unit
+├── tools
+│   ├── agent-audit.sh
+│   ├── apply_dryrun_hotfix.sh
+│   ├── autonomous_dry_run.sh
+│   ├── deploy_enterprise_core.sh
+│   ├── deploy_subscription_arena.sh
+│   ├── enterprise_upgrade.sh
+│   ├── fix_ci_workflow.sh
+│   ├── git_sync.sh
+│   ├── github_workflow_cleaner.sh
+│   ├── load_env.sh
+│   ├── logrotate.sh
+│   ├── model-audit.sh
+│   ├── nuke_secrets_and_fix_ci.sh
+│   ├── publish_marketplace.sh
+│   ├── setup_env.sh
+│   ├── stabilize_klyn_os.sh
+│   └── swarm_dashboard.ts
+├── tsconfig.json
+├── update-fixed-files.sh
+├── update_v42.js
+├── upgrade_real_engine.js
+├── upgrade_v100.js
+├── upgrade_v110.js
+├── upgrade_v120.js
+├── upgrade_v121.js
+├── upgrade_v122.js
+├── upgrade_v123.js
+├── upgrade_v130.js
+├── upgrade_v131.js
+├── upgrade_v132.js
+├── upgrade_v133.js
+├── upgrade_v134.js
+├── upgrade_v135.js
+├── upgrade_v140.js
+├── upgrade_v141.js
+├── upgrade_v142.js
+├── upgrade_v150.js
+├── upgrade_v160.js
+├── upgrade_v2_engine.js
+├── upgrade_v3_engine.js
+├── upgrade_v41_engine.js
+├── upgrade_v42_engine.js
+├── upgrade_v43_engine.js
+├── upgrade_v44_engine.js
+├── upgrade_v45_engine.js
+├── upgrade_v4_engine.js
+├── upgrade_v50.js
+├── upgrade_v51.js
+├── upgrade_v52.js
+├── upgrade_v53.js
+├── upgrade_v54.js
+├── upgrade_v60.js
+├── upgrade_v70.js
+├── upgrade_v80.js
+├── upgrade_v90.js
+├── utils
+│   └── logger.ts
+├── verification-intelligence
+├── vscode-extension
+│   ├── extension.ts
+│   └── package.json
+├── worker.sh
+└── world-model
+    ├── causal
+    ├── causal-engine
+    ├── graph
+    ├── knowledge
+    ├── prediction
+    ├── reality
+    ├── simulation
+    ├── state
+    └── understanding
+
+549 directories, 614 files

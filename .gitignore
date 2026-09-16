@@ -1,0 +1,53 @@
+# ===============================
+# KLYN AI OS Enterprise Ignore
+# ===============================
+
+# Build outputs & cache
+.next/
+dist/
+build/
+.turbo/
+node_modules/
+*.log
+
+# Environment secrets
+.env
+.env.local
+.env.*
+!.env.example
+
+# Runtime logs
+klyn-runtime.log
+
+# Native build outputs
+target/
+
+# Backups
+backups/
+*.backup
+bin/*.backup
+
+# Generated dumps
+dump_*.sh
+*.dump
+
+# Repository intelligence exports
+repomix-output.xml
+klyn-codebase.txt
+klyn-codebase-lean.txt
+
+# KLYN internal runtime cache
+.klyn/
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+.DS_Store
+
+# Coverage
+coverage/
+
+# TypeScript cache
+*.tsbuildinfo
+*.zip

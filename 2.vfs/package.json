@@ -1,0 +1,14 @@
+{
+  "name": "@klyn/vfs",
+  "version": "3.0.0",
+  "description": "In-Memory Native Virtual File System for KLYN AI OS",
+  "main": "dist/vfs.js",
+  "types": "dist/vfs.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.0.0"
+  }
+}

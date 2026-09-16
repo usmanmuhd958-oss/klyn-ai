@@ -1,0 +1,16 @@
+{
+  "name": "klyn-ai-os",
+  "displayName": "Klyn AI OS",
+  "description": "Connect VSCode to your sovereign Klyn AI OS",
+  "version": "1.0.0",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "activationEvents": [],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [{
+      "command": "klyn.healthCheck",
+      "title": "Klyn: Health Check"
+    }]
+  }
+}

@@ -1,0 +1,74 @@
+name: P6.1 Cloud Certification
+
+on:
+  push:
+    branches: [p6.1/backend-kernel-hardening]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p6.1-certification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+          cache: pnpm
+
+      - name: Frozen Install Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm install --frozen-lockfile
+
+      - name: TypeScript Gate
+        run: >-
+          timeout --signal=TERM --kill-after=15s 300s
+          pnpm --filter @klyn/backend --filter @klyn/execution-runtime
+          --filter @klyn/cognitive-engine --filter @klyn/ai-engine typecheck
+
+      - name: Build Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm build
+
+      - name: Test Gate
+        run: >-
+          timeout --signal=TERM --kill-after=15s 600s
+          pnpm --filter @klyn/backend --filter @klyn/execution-runtime
+          --filter @klyn/cognitive-engine --filter @klyn/ai-engine test
+
+      - name: Real Lint Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm lint
+
+      - name: Backend Workspace Scope Audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -d apps/frontend
+          test ! -d apps/studio
+          test ! -d apps/web
+          if git ls-files | grep -E '(^|/)(apps/frontend|apps/studio|apps/web)(/|$)|\.(tsx|jsx|css|scss|sass)$'; then
+            echo 'Frontend/UI file remnants detected.'
+            exit 1
+          fi
+          if grep -E '"(next|react|react-dom|vite|tailwindcss|@vitejs|@next)"' package.json pnpm-workspace.yaml; then
+            echo 'Frontend dependency/reference detected in root workspace configuration.'
+            exit 1
+          fi
+
+      - name: Lockfile SHA-256
+        run: sha256sum pnpm-lock.yaml

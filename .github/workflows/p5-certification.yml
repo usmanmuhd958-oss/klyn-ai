@@ -1,0 +1,42 @@
+name: P5 Cloud Certification
+on:
+  push:
+    branches: [p5/durable-execution-kernel]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: p5-certification-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+          cache: pnpm
+      - name: Frozen Install Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm install --frozen-lockfile
+      - name: TypeScript Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm typecheck
+      - name: Build Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm build
+      - name: Test Gate
+        run: timeout --signal=TERM --kill-after=15s 600s pnpm test
+      - name: Real Lint Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm lint
+      - name: Backend-only scope audit
+        run: |
+          test ! -d apps/frontend
+          test ! -d apps/studio
+          test ! -d apps/web
+      - name: Lockfile SHA-256
+        run: sha256sum pnpm-lock.yaml

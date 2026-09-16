@@ -1,0 +1,42 @@
+{
+  "id": "v674",
+  "name": "Autonomous AI Engineering Factory Layer",
+  "codename": "AIEngineeringFactory",
+  "mission": "A continuous-production factory that designs, builds, tests, and ships software with zero human tickets.",
+  "principles": [
+    "Throughput is the product",
+    "Quality gates are non-negotiable",
+    "Every order is traceable"
+  ],
+  "dependsOn": [
+    "v673"
+  ],
+  "modules": [
+    "AIEngineeringFactoryKernel",
+    "FactoryPipelineOrchestrator",
+    "EngineeringFactoryRuntime",
+    "FactoryQualityController",
+    "AssemblyLineEngine",
+    "ProductionOrderRegistry",
+    "FactoryCoordinationHub",
+    "FactoryTelemetryObserver",
+    "ToolchainEnvironmentAdapter",
+    "AIEngineeringFactoryPlatform"
+  ],
+  "contracts": [
+    "v674.engine.tick",
+    "v674.order.scheduled",
+    "v674.artifact.shipped",
+    "v674.metric.recorded"
+  ],
+  "policies": {
+    "maxEntities": 512,
+    "tickMs": 25,
+    "batchSize": 64,
+    "ringSize": 512,
+    "consensusThreshold": 0.7,
+    "compactionThreshold": 0.5,
+    "quota": 1024
+  },
+  "commitMessage": "feat(genesis): v674 autonomous ai engineering factory layer"
+}

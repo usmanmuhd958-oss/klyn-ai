@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd ~/klyn
+echo "=== 1. FROZEN INSTALL ==="
+pnpm install --frozen-lockfile
+
+echo "=== 2. TYPECHECK ==="
+pnpm typecheck
+
+echo "=== 3. BACKEND BUILD ==="
+pnpm --filter @klyn/backend build
+
+echo "=== 4. BACKEND TESTS ==="
+pnpm --filter @klyn/backend test
+
+echo "=== 5. BACKEND LINT ==="
+pnpm --filter @klyn/backend lint
+

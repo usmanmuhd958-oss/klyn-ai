@@ -1,0 +1,139 @@
+name: P9.2 Goal Decomposition Certification
+
+on:
+  push:
+    branches: [p9.1/task-graph-planner]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: read
+
+concurrency:
+  group: p9.2-decomposition-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NODE_OPTIONS: --unhandled-rejections=strict
+      PNPM_VERSION: 11.24.0
+      NODE_VERSION: '22'
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify runtime
+        run: |
+          set -euo pipefail
+          node --version
+          pnpm --version
+          test "$(node --version | cut -d. -f1)" = "v${NODE_VERSION}"
+          test "$(pnpm --version)" = "${PNPM_VERSION}"
+
+      - name: Warm pnpm store
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm config set store-dir "$HOME/.pnpm-store"
+          pnpm fetch --prefer-offline --frozen-lockfile || pnpm fetch --frozen-lockfile
+
+      - name: Offline-first frozen install
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm install --offline --frozen-lockfile || pnpm install --prefer-offline --frozen-lockfile
+
+      - name: TypeScript Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm --filter @klyn/ai-engine typecheck
+
+      - name: Build Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm --filter @klyn/ai-engine build
+
+      - name: Test Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm --filter @klyn/ai-engine test
+
+      - name: Lint Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm --filter @klyn/ai-engine exec eslint "src/**/*.ts" "tests/**/*.ts" --ignore-pattern "**/*.d.ts" --max-warnings 0
+
+      - name: Backend Scope Audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main --depth=1
+          BASE_SHA="$(git merge-base HEAD origin/main)"
+          test -n "$BASE_SHA"
+          git diff --name-only "$BASE_SHA"...HEAD > /tmp/klyn-p92-files.txt
+          if grep -E '(^|/)(apps/frontend|apps/studio|apps/web|packages/frontend)(/|$)|\.(tsx|jsx|css|scss|sass|html)$' /tmp/klyn-p92-files.txt; then
+            echo "Frontend or UI files detected in the backend scope."
+            exit 1
+          fi
+          cat /tmp/klyn-p92-files.txt
+
+      - name: Phase 9 Wiring Audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f packages/ai-engine/src/orchestrator/planner-bridge.ts
+          test -f packages/ai-engine/src/runtime/spatial-bus.ts
+          test -f packages/ai-engine/src/runtime/supabase-planner-state-store.ts
+          test -f packages/ai-engine/src/types/planner-bridge.types.ts
+          test -f packages/ai-engine/src/types/planner-persistence.types.ts
+          test -f packages/ai-engine/src/types/spatial-bus.types.ts
+          grep -q 'pending' packages/ai-engine/src/types/planner-bridge.types.ts
+          grep -q 'queued' packages/ai-engine/src/types/planner-bridge.types.ts
+          grep -q 'executing' packages/ai-engine/src/types/planner-bridge.types.ts
+          grep -q 'SupabasePlannerStateStore' packages/ai-engine/src/index.ts
+          grep -q 'ImmutableTaskStateStore' packages/ai-engine/src/index.ts
+
+      - name: Type Safety Audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -R -nE '(:[[:space:]]*any\b|[[:space:]]as[[:space:]]+any\b|<any>|Array<[[:space:]]*any[[:space:]]*>)|@ts-ignore|@ts-nocheck' packages/ai-engine/src packages/ai-engine/tests; then
+            echo "Forbidden TypeScript escape hatches detected in ai-engine."
+            exit 1
+          fi
+
+      - name: Lifecycle and persistence audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -R -nE '"ready"|"running"' packages/ai-engine/src/types/planner-bridge.types.ts packages/ai-engine/src/orchestrator/planner-bridge.ts packages/ai-engine/src/runtime/spatial-bus.ts
+          grep -q 'state_version' supabase/migrations/20260915210000_planner_execution_cas_and_timestamps.sql
+          grep -q 'planner_execution_states_version_guard' supabase/migrations/20260915210000_planner_execution_cas_and_timestamps.sql
+          grep -q 'updated_at' supabase/migrations/20260915210000_planner_execution_cas_and_timestamps.sql
+
+      - name: Workflow Language Audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -nP '[^\x00-\x7F]' .github/workflows/p9.2-decomposition-certification.yml; then
+            echo "Non-ASCII workflow text detected."
+            exit 1
+          fi
+
+  certification-report:
+    if: github.event_name == 'pull_request'
+    needs: certify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish certification summary
+        run: |
+          echo "Planner execution hardening gates completed successfully."

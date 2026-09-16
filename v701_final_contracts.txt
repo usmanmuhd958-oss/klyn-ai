@@ -1,0 +1,519 @@
+=== 1.brain/vector_arena.ts ===
+/**
+ * =============================================================================
+ * KLYN AI OS — Brain Layer — Float32 SoA Vector Arena
+ * File: 1.brain/vector_arena.ts
+ * Version: 1.0.0
+ *
+ * Structure-of-Arrays (SoA) dense vector arena. Every vector lives in one
+ * contiguous Float32Array (row-major, `dimensions` per row) with cached L2
+ * norms, so a search is a linear sweep over flat memory — no boxed number[],
+ * no per-record objects, no full-sort allocation (bounded top-k selection).
+ *
+ * A dense-prefix invariant (swap-with-last removal) keeps rows 0..count-1
+ * contiguous, so the whole matrix can be handed to the native Rust kernel
+ * (0.kernel SimdEngine/MmapMatrix `dotBatch`) as a single zero-copy slice.
+ * When the napi addon has been built it is loaded lazily and used for the
+ * score pass; otherwise a JIT-friendly scalar loop runs.
+ * =============================================================================
+ */
+
+import { existsSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { createRequire } from 'node:module';
+
+export interface ArenaSearchHit {
+  row: number;
+  score: number;
+}
+
+/** Native kernel dot-product batch: query x dense matrix -> row scores. */
+export interface NativeDotBatch {
+  (query: Float32Array, matrix: Float32Array, dims: number): Float32Array | null;
+}
+
+export interface VectorArenaOptions {
+  dimensions: number;
+  capacity?: number;
+  trackHeat?: boolean;
+}
+
+export interface ArenaRowSnapshot {
+  id: string;
+  metadata: Record<string, unknown>;
+  createdAt: number;
+  vector: number[];
+}
+
+const DEFAULT_CAPACITY = 1 << 16;
+
+export class VectorArena {
+  private data: Float32Array;
+  private norms: Float32Array;
+  private heat: Uint32Array;
+  private createdAt: Float64Array;
+  private readonly dims: number;
+  private capacity: number;
+  private used = 0;
+  private readonly trackHeat: boolean;
+  private rowOfId = new Map<string, number>();
+  private idOfRow: Array<string | null> = [];
+  private metaOfRow: Array<Record<string, unknown> | null> = [];
+  private native: NativeDotBatch | null = null;
+  private triedNative = false;
+
+  constructor(options: VectorArenaOptions) {
+    this.dims = options.dimensions;
+    if (this.dims < 1) throw new Error('VectorArena dimensions must be >= 1');
+    this.capacity = options.capacity ?? DEFAULT_CAPACITY;
+    if (this.capacity < 1) throw new Error('VectorArena capacity must be >= 1');
+    this.trackHeat = options.trackHeat ?? true;
+    this.data = new Float32Array(this.capacity * this.dims);
+    this.norms = new Float32Array(this.capacity);
+    this.heat = new Uint32Array(this.capacity);
+    this.createdAt = new Float64Array(this.capacity);
+  }
+
+  /** Install an explicit native dotBatch (zero-copy matrix slice). */
+  public attachNative(fn: NativeDotBatch | null): void {
+    this.native = fn;
+  }
+
+  /**
+   * Lazily probe the built 0.kernel napi addon
+   * (`0.kernel/target/release/klyn_kernel_core.*.node`). No-op when absent.
+   */
+  public tryAttachNative(): void {
+    if (this.triedNative) return;
+    this.triedNative = true;
+    try {
+      const dir = join(process.cwd(), '0.kernel', 'target', 'release');
+      if (!existsSync(dir)) return;
+      const file = readdirSync(dir).find((f) => f.endsWith('.node') && f.startsWith('klyn_kernel_core'));
+      if (!file) return;
+      const require_ = createRequire(join(process.cwd(), 'package.json'));
+      const mod = require_(join(dir, file)) as { dot_batch?: NativeDotBatch };
+      if (typeof mod.dot_batch === 'function') {
+        this.native = mod.dot_batch;
+      }
+    } catch {
+      this.native = null;
+    }
+  }
+
+  public get dimensions(): number {
+    return this.dims;
+  }
+
+  public get count(): number {
+    return this.used;
+  }
+
+  public get nativeAccel(): boolean {
+    return this.native !== null;
+  }
+
+  public has(id: string): boolean {
+    return this.rowOfId.has(id);
+  }
+
+  /** Add or replace a vector; returns its row. */
+  public upsert(
+    id: string,
+    vector: ArrayLike<number>,
+    metadata: Record<string, unknown> = {},
+    createdAt = Date.now()
+  ): number {
+    const existing = this.rowOfId.get(id);
+    const row = existing ?? this.allocRow();
+    if (existing === undefined) {
+      this.idOfRow[row] = id;
+      this.rowOfId.set(id, row);
+    }
+    this.metaOfRow[row] = metadata;
+    this.createdAt[row] = createdAt;
+    this.writeRow(row, vector);
+    return row;
+  }
+
+  public getRow(id: string): number {
+    const row = this.rowOfId.get(id);
+    return row === undefined ? -1 : row;
+  }
+
+  public idAt(row: number): string {
+    return this.idOfRow[row]!;
+  }
+
+  public metaAt(row: number): Record<string, unknown> | null {
+    return this.metaOfRow[row];
+  }
+
+  public createdAtAt(row: number): number {
+    return this.createdAt[row];
+  }
+
+  /** Materialized copy of a row as a plain number[] (persistence path). */
+  public getVector(id: string): number[] | null {
+    const row = this.rowOfId.get(id);
+    if (row === undefined) return null;
+    const out = new Array<number>(this.dims);
+    const off = row * this.dims;
+    for (let i = 0; i < this.dims; i++) out[i] = this.data[off + i];
+    return out;
+  }
+
+  public getMetadata(id: string): Record<string, unknown> | null {
+    const row = this.rowOfId.get(id);
+    return row === undefined ? null : this.metaOfRow[row];
+  }
+
+  /** Zero-copy read view of a row. */
+  public rowView(row: number): Float32Array {
+    return this.data.subarray(row * this.dims, (row + 1) * this.dims);
+  }
+
+  public heatOf(row: number): number {
+    return this.heat[row];
+  }
+
+  /** Swap-with-last removal keeps the dense prefix [0, count) contiguous. */
+  public remove(id: string): boolean {
+    const row = this.rowOfId.get(id);
+    if (row === undefined) return false;
+    const last = this.used - 1;
+    if (row !== last) {
+      const dst = row * this.dims;
+      const src = last * this.dims;
+      for (let i = 0; i < this.dims; i++) this.data[dst + i] = this.data[src + i];
+      this.norms[row] = this.norms[last];
+      this.heat[row] = this.heat[last];
+      this.createdAt[row] = this.createdAt[last];
+      const movedId = this.idOfRow[last]!;
+      this.idOfRow[row] = movedId;
+      this.metaOfRow[row] = this.metaOfRow[last];
+      this.rowOfId.set(movedId, row);
+    }
+    this.idOfRow[last] = null;
+    this.metaOfRow[last] = null;
+    this.rowOfId.delete(id);
+    this.used--;
+    return true;
+  }
+
+  public clear(): void {
+    this.data.fill(0);
+    this.norms.fill(0);
+    this.heat.fill(0);
+    this.rowOfId.clear();
+    this.idOfRow.length = 0;
+    this.metaOfRow.length = 0;
+    this.used = 0;
+  }
+
+  /**
+   * Exact cosine similarity top-k over the dense prefix.
+   * Returns { row, score } descending. Optional metadata filter (hot-only path).
+   */
+  public search(
+    query: ArrayLike<number>,
+    topK = 5,
+    filter?: (meta: Record<string, unknown>) => boolean
+  ): ArenaSearchHit[] {
+    const k = Math.max(1, topK | 0);
+    if (this.used === 0) return [];
+    const q = toFloat32(query, this.dims);
+    const qn = norm(q);
+    if (qn === 0) return [];
+
+    // Native SIMD path: the dense prefix is handed over as one slice.
+    if (this.native !== null && filter === undefined) {
+      try {
+        const raw = this.native(q, this.data.subarray(0, this.used * this.dims), this.dims);
+        if (raw !== null && raw.length >= this.used) {
+          return this.selectTop(raw, qn, k);
+        }
+      } catch {
+        /* fall through to scalar */
+      }
+    }
+
+    const bestScores = new Array<number>(k).fill(-Infinity);
+    const bestRows = new Int32Array(k);
+    for (let row = 0; row < this.used; row++) {
+      if (filter !== undefined) {
+        const meta = this.metaOfRow[row];
+        if (!meta || !filter(meta)) continue;
+      }
+      const score = this.dotRow(row, q) / (qn * this.norms[row]);
+      insertCandidate(bestScores, bestRows, score, row);
+    }
+    return materialize(bestScores, bestRows, k);
+  }
+
+  /**
+   * Indices of the coldest rows (lowest heat), for compaction demotion.
+   * Only invoked by background compaction, never the hot path.
+   */
+  public coldest(n: number): number[] {
+    if (n <= 0 || this.used === 0) return [];
+    const rows = new Array<number>(this.used);
+    for (let r = 0; r < this.used; r++) rows[r] = r;
+
+=== 1.brain/swarm/AgentSwarm.ts ===
+/**
+ * =============================================================================
+ * KLYN AI OS — 1.brain — Distributed Agent Swarm Consensus (Phase 9)
+ * File: 1.brain/swarm/AgentSwarm.ts
+ *
+ * Four specialist agents operate CONCURRENTLY on private overlay forks:
+ *
+ *   Architect      — plans the atomic mutation (PatchPlanner, read-only).
+ *   Code Modder    — applies the plan to its own fork (validates apply-ability).
+ *   SecurityAuditor— applies the plan, compiles the projected state, votes
+ *                    against any error diagnostics.
+ *   TestGenerator  — applies the plan, adds a virtual smoke-import test, and
+ *                    votes on the combined compile.
+ *
+ * Zero lock contention: every agent writes only to its own `fork()` overlay
+ * (per-transaction overlays in TransactionalPatcher). The ONLY serialization
+ * point is the coordinator's epoch merge → atomic commit (or inverse replay
+ * rollback on a dissenting vote).
+ * =============================================================================
+ */
+import { PatchPlanner, type PatchPlan, type ExecPlan } from '../patch_planner.js';
+import { TransactionalPatcher } from '../../2.body/transactional_patcher.js';
+import { compileProjection, type SpecDiagnostic } from '../../2.body/execution/spec_exec.js';
+import type { RouteDecision } from '../cognitive_router.js';
+import type { FileOperation } from '../patch_generator.js';
+import { join, dirname, basename, isAbsolute } from 'node:path';
+
+export type SwarmRole = 'architect' | 'modder' | 'auditor' | 'tester';
+
+export interface SwarmVote {
+  agent: string;
+  role: SwarmRole;
+  approved: boolean;
+  reason: string;
+}
+
+export interface EpochOptions {
+  /** Repo root for relative plan paths (default process.cwd()). */
+  repoRoot?: string;
+  /** Optional external diagnostics provider (e.g. LSP daemon-backed);
+   *  defaults to the in-process virtual-host compiler. */
+  diagnose?: (projected: Map<string, string>, repoRoot: string) => Promise<SpecDiagnostic[]>;
+  /** Require the Tester's approval (default true). */
+  requireTester?: boolean;
+}
+
+export interface EpochResult {
+  success: boolean;
+  committed: boolean;
+  votes: SwarmVote[];
+  filesWritten: string[];
+  errors: string[];
+  plan: PatchPlan | null;
+}
+
+const AGENT_NAMES: Record<SwarmRole, string> = {
+  architect: 'Architect',
+  modder: 'CodeModder',
+  auditor: 'SecurityAuditor',
+  tester: 'TestGenerator',
+};
+
+const TS_EXT = /\.(ts|tsx|mts|cts)$/;
+
+export class AgentSwarm {
+  private patcher: TransactionalPatcher;
+
+  constructor(private planner: PatchPlanner, patcher?: TransactionalPatcher) {
+    this.patcher = patcher ?? new TransactionalPatcher();
+  }
+
+  get patcherCounts(): { active: number; committed: number } {
+    return { active: this.patcher.activeCount, committed: this.patcher.committed };
+  }
+
+  /** Run a consensus epoch over explicit operations (test-friendly). */
+  async runEpochOps(operations: FileOperation[], query: string, options: EpochOptions = {}): Promise<EpochResult> {
+    const plan = this.planner.planFromOperations(operations, query, 'modify');
+    return this.consensus(plan, query, options);
+  }
+
+  /** Run a consensus epoch over a route decision (planner-driven). */
+  async runEpoch(route: RouteDecision, query: string, options: EpochOptions = {}): Promise<EpochResult> {
+    const plan = await this.planner.plan(route, query);
+    return this.consensus(plan, query, options);
+  }
+
+  // -------------------------------------------------------------------------
+  // INTERNAL — epoch consensus
+  // -------------------------------------------------------------------------
+
+  private async consensus(plan: PatchPlan, query: string, options: EpochOptions): Promise<EpochResult> {
+    const repoRoot = options.repoRoot ?? process.cwd();
+    const votes: SwarmVote[] = [];
+    const errors: string[] = [];
+
+    // 1. Architect — plan validity (read-only, no fork required).
+    votes.push({
+      agent: AGENT_NAMES.architect,
+      role: 'architect',
+      approved: plan.operations.length > 0,
+      reason: plan.operations.length > 0 ? `${plan.operations.length} op(s), ${plan.files.length} file(s)` : 'empty plan',
+    });
+    if (plan.operations.length === 0) {
+      return { success: false, committed: false, votes, filesWritten: [], errors: ['Architect produced an empty plan'], plan };
+    }
+
+    // 2. Epoch transaction + three private forks — agents run concurrently,
+    //    each on its own overlay. No shared mutable state ⇒ no contention.
+    const epochTx = this.patcher.begin();
+    const roles: SwarmRole[] = ['modder', 'auditor', 'tester'];
+    const forks = await Promise.all(roles.map(() => this.patcher.fork(epochTx)));
+
+    const projected = PatchPlanner.project(plan, repoRoot);
+    const diagnose = options.diagnose ?? (async (p: Map<string, string>, root: string) => compileProjection(p, root));
+
+    const [modVote, audVote, tesVote] = await Promise.all([
+      this.runModder(forks[0], plan),
+      this.runAuditor(forks[1], plan, projected, repoRoot, diagnose),
+      this.runTester(forks[2], plan, projected, repoRoot, diagnose),
+    ]);
+    votes.push(modVote, audVote, tesVote);
+
+    const requireTester = options.requireTester ?? true;
+    const approved = votes.every((v) => v.approved) && (!requireTester || votes.every((v) => v.role !== 'tester' || v.approved));
+
+    if (!approved) {
+      await this.patcher.rollback(epochTx);
+      for (const fork of forks) this.patcher.abort(fork);
+      errors.push(...votes.filter((v) => !v.approved).map((v) => `${v.agent}: ${v.reason}`));
+      return { success: false, committed: false, votes, filesWritten: [], errors, plan };
+    }
+
+    // 3. Consensus reached — fold the approved forks into the epoch tx and
+    //    commit atomically. Conflicts (overlay drift) abort the epoch.
+    const { conflicts } = await this.patcher.merge(forks, epochTx);
+    if (conflicts.length > 0) {
+      await this.patcher.rollback(epochTx);
+      for (const fork of forks) this.patcher.abort(fork);
+      errors.push(...conflicts);
+      return { success: false, committed: false, votes, filesWritten: [], errors, plan };
+    }
+    const result = await this.patcher.commit(epochTx);
+    for (const fork of forks) this.patcher.abort(fork);
+    return {
+      success: result.success,
+      committed: result.success,
+      votes,
+      filesWritten: result.filesWritten,
+      errors: result.errors,
+      plan,
+    };
+  }
+
+  /** Code Modder: apply the plan to its private fork; conflicts → dissent. */
+  private async runModder(fork: string, plan: PatchPlan): Promise<SwarmVote> {
+    try {
+      for (const op of plan.operations) {
+        await this.patcher.apply(fork, op);
+      }
+      return { agent: AGENT_NAMES.modder, role: 'modder', approved: true, reason: 'applied cleanly' };
+    } catch (error) {
+      return {
+        agent: AGENT_NAMES.modder,
+        role: 'modder',
+        approved: false,
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /** Security Auditor: compile the projected state; any error → dissent. */
+  private async runAuditor(
+    fork: string,
+    plan: PatchPlan,
+    projected: Map<string, string>,
+    repoRoot: string,
+    diagnose: (p: Map<string, string>, root: string) => Promise<SpecDiagnostic[]>
+  ): Promise<SwarmVote> {
+    try {
+      for (const op of plan.operations) await this.patcher.apply(fork, op);
+      const diags = await diagnose(projected, repoRoot);
+      const errors = diags.filter((d) => d.category === 'error');
+      return {
+        agent: AGENT_NAMES.auditor,
+        role: 'auditor',
+        approved: errors.length === 0,
+        reason: errors.length === 0 ? 'projected state compiles clean' : `${errors.length} error(s): ${errors[0].message.slice(0, 120)}`,
+      };
+    } catch (error) {
+      return {
+        agent: AGENT_NAMES.auditor,
+        role: 'auditor',
+        approved: false,
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /** Test Generator: compile the projection + a virtual smoke-import per
+   *  projected module; any compile failure → dissent. Nothing is written. */
+  private async runTester(
+    fork: string,
+    plan: PatchPlan,
+    projected: Map<string, string>,
+    repoRoot: string,
+    diagnose: (p: Map<string, string>, root: string) => Promise<SpecDiagnostic[]>
+  ): Promise<SwarmVote> {
+    try {
+      for (const op of plan.operations) await this.patcher.apply(fork, op);
+      const tested = new Map(projected);
+      let added = 0;
+      for (const [absPath] of projected) {
+        if (!TS_EXT.test(absPath)) continue;
+        const dir = dirname(absPath);
+        const moduleName = basename(absPath).replace(TS_EXT, '');
+        const testPath = join(dir, `__swarm_${moduleName.replace(/\W+/g, '_')}.smoke.test.ts`);
+        if (tested.has(testPath)) continue;
+        const importSpec = isAbsolute(absPath)
+          ? `./${basename(absPath).replace(TS_EXT, '')}.js`
+          : absPath;
+        tested.set(
+          testPath,
+          `import * as mod from '${importSpec.replace(/\\/g, '/')}';\nvoid mod; // swarm smoke import\n`
+        );
+        added++;
+      }
+      const diags = await diagnose(tested, repoRoot);
+      const errors = diags.filter((d) => d.category === 'error');
+      return {
+        agent: AGENT_NAMES.tester,
+        role: 'tester',
+        approved: errors.length === 0,
+        reason: errors.length === 0
+          ? `${added} smoke import(s) compile`
+          : `${errors.length} error(s): ${errors[0].message.slice(0, 120)}`,
+      };
+    } catch (error) {
+      return {
+        agent: AGENT_NAMES.tester,
+        role: 'tester',
+        approved: false,
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+}
+
+export default AgentSwarm;
+
+=== 0.kernel/build.rs ===
+extern crate napi_build;
+
+fn main() {
+    napi_build::setup();
+}

@@ -1,0 +1,31 @@
+{
+  "modules": {
+    "AgentRuntime": {
+      "layer": "execution",
+      "criticality": "maximum",
+      "dependencies": [],
+      "dependents": [
+        "AIOrchestrator"
+      ],
+      "change_policy": "protected"
+    },
+
+    "AIEngine": {
+      "layer": "gateway",
+      "criticality": "maximum",
+      "change_policy": "review-required"
+    },
+
+    "WorkflowEngine": {
+      "layer": "automation",
+      "criticality": "high",
+      "change_policy": "validated"
+    },
+
+    "MemoryEngine": {
+      "layer": "intelligence",
+      "criticality": "maximum",
+      "change_policy": "protected"
+    }
+  }
+}

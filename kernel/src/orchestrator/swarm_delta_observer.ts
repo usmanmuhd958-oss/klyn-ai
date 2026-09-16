@@ -1,0 +1,1711 @@
+/**
+ * @fileoverview SwarmDeltaObserver - Real-time incremental codebase update system
+ * @module kernel/orchestrator/swarm_delta_observer
+ * 
+ * Enables real-time delta notifications across Swarm Mesh Agents without full re-indexing.
+ * Tracks file mutations, recalculates Merkle DAG hashes, re-parses AST incrementally,
+ * and notifies affected agents for context invalidation.
+ * 
+ * @author Klyn AI OS Core Team
+ * @version 1.0.0
+ */
+
+import { EventEmitter } from 'events';
+import { watch, FSWatcher, Stats } from 'fs';
+import { promises as fs } from 'fs';
+import { resolve, dirname, relative } from 'path';
+import type {
+  MerkleDAG,
+  ASTGraph,
+  ASTNode,
+  FileNode,
+  ModuleDependency,
+} from '../indexer/index';
+
+/* ===========================
+ * Type Definitions
+ * =========================== */
+
+/**
+ * Unique identifier for Swarm Mesh agents
+ */
+export type AgentID = string;
+
+/**
+ * File mutation event types
+ */
+export type FileMutationType = 'created' | 'modified' | 'deleted' | 'renamed';
+
+/**
+ * Symbol change type
+ */
+export type SymbolChangeType = 'added' | 'modified' | 'removed';
+
+/**
+ * File mutation event payload
+ */
+export interface FileMutationEvent {
+  /** File path relative to workspace root */
+  readonly filePath: string;
+  
+  /** Mutation type */
+  readonly mutationType: FileMutationType;
+  
+  /** New content (undefined for deletions) */
+  readonly content?: string;
+  
+  /** Previous file hash */
+  readonly previousHash?: string;
+  
+  /** New file hash */
+  readonly newHash?: string;
+  
+  /** Timestamp of mutation */
+  readonly timestamp: number;
+  
+  /** Source of mutation (agent ID or 'filesystem') */
+  readonly source: string;
+}
+
+/**
+ * Symbol change information
+ */
+export interface SymbolChange {
+  /** Symbol name */
+  readonly symbolName: string;
+  
+  /** File path where symbol is defined */
+  readonly filePath: string;
+  
+  /** Change type */
+  readonly changeType: SymbolChangeType;
+  
+  /** AST node type */
+  readonly nodeType?: string;
+  
+  /** Previous signature (for modifications) */
+  readonly previousSignature?: string;
+  
+  /** New signature */
+  readonly newSignature?: string;
+  
+  /** Whether symbol is exported */
+  readonly isExported: boolean;
+}
+
+/**
+ * AST delta - changes in AST structure
+ */
+export interface ASTDelta {
+  /** File path */
+  readonly filePath: string;
+  
+  /** Added symbols */
+  readonly addedSymbols: ReadonlyArray<SymbolChange>;
+  
+  /** Modified symbols */
+  readonly modifiedSymbols: ReadonlyArray<SymbolChange>;
+  
+  /** Removed symbols */
+  readonly removedSymbols: ReadonlyArray<SymbolChange>;
+  
+  /** Added dependencies */
+  readonly addedDependencies: ReadonlyArray<string>;
+  
+  /** Removed dependencies */
+  readonly removedDependencies: ReadonlyArray<string>;
+  
+  /** Total symbols before change */
+  readonly previousSymbolCount: number;
+  
+  /** Total symbols after change */
+  readonly newSymbolCount: number;
+}
+
+/**
+ * Merkle DAG delta - hash changes
+ */
+export interface MerkleDAGDelta {
+  /** File path */
+  readonly filePath: string;
+  
+  /** Previous hash */
+  readonly previousHash?: string;
+  
+  /** New hash */
+  readonly newHash: string;
+  
+  /** Affected parent nodes (files that import this) */
+  readonly affectedParents: ReadonlyArray<string>;
+  
+  /** Hash recalculation time in ms */
+  readonly recalculationTimeMs: number;
+}
+
+/**
+ * Context delta report - complete change summary
+ */
+export interface ContextDeltaReport {
+  /** Mutation event that triggered this delta */
+  readonly mutation: FileMutationEvent;
+  
+  /** Merkle DAG changes */
+  readonly merkleDAGDelta: MerkleDAGDelta;
+  
+  /** AST changes */
+  readonly astDelta: ASTDelta;
+  
+  /** Agent IDs affected by this change */
+  readonly affectedAgents: ReadonlyArray<AgentID>;
+  
+  /** Affected file paths (transitive dependencies) */
+  readonly affectedFiles: ReadonlyArray<string>;
+  
+  /** Total processing time in ms */
+  readonly processingTimeMs: number;
+  
+  /** Timestamp of delta calculation */
+  readonly timestamp: number;
+  
+  /** Whether this delta requires context window refresh */
+  readonly requiresContextRefresh: boolean;
+}
+
+/**
+ * Agent context metadata - tracks what an agent has in context
+ */
+export interface AgentContextMetadata {
+  /** Agent ID */
+  readonly agentId: AgentID;
+  
+  /** File paths in agent's context */
+  readonly filePathsInContext: ReadonlySet<string>;
+  
+  /** Symbols in agent's context */
+  readonly symbolsInContext: ReadonlySet<string>;
+  
+  /** Last context update timestamp */
+  readonly lastUpdated: number;
+  
+  /** Agent role */
+  readonly role?: string;
+  
+  /** Current task description */
+  readonly taskDescription?: string;
+}
+
+/**
+ * Swarm mesh state - tracks all active agents
+ */
+export interface SwarmMeshState {
+  /** Active agents mapped by ID */
+  readonly agents: ReadonlyMap<AgentID, AgentContextMetadata>;
+  
+  /** Mesh creation timestamp */
+  readonly createdAt: number;
+  
+  /** Mesh ID */
+  readonly meshId: string;
+  
+  /** Total agent count */
+  readonly agentCount: number;
+}
+
+/**
+ * Observer configuration
+ */
+export interface SwarmDeltaObserverConfig {
+  /** Workspace root directory */
+  readonly workspaceRoot: string;
+  
+  /** File patterns to watch (glob patterns) */
+  readonly watchPatterns?: ReadonlyArray<string>;
+  
+  /** File patterns to ignore */
+  readonly ignorePatterns?: ReadonlyArray<string>;
+  
+  /** Debounce delay for file changes (ms) */
+  readonly debounceDelayMs?: number;
+  
+  /** Maximum concurrent delta calculations */
+  readonly maxConcurrentDeltas?: number;
+  
+  /** Enable filesystem watching */
+  readonly enableFileSystemWatch?: boolean;
+  
+  /** Enable verbose logging */
+  readonly enableLogging?: boolean;
+  
+  /** Maximum symbol cache size */
+  readonly maxSymbolCacheSize?: number;
+  
+  /** Enable delta batching */
+  readonly enableBatching?: boolean;
+  
+  /** Batch window size (ms) */
+  readonly batchWindowMs?: number;
+}
+
+/**
+ * File watch event
+ */
+interface FileWatchEvent {
+  eventType: 'change' | 'rename';
+  filename: string;
+  timestamp: number;
+}
+
+/**
+ * Delta calculation job
+ */
+interface DeltaCalculationJob {
+  filePath: string;
+  content: string;
+  source: string;
+  mutationType: FileMutationType;
+  timestamp: number;
+}
+
+/**
+ * Symbol metadata for caching
+ */
+interface SymbolMetadata {
+  name: string;
+  signature: string;
+  nodeType: string;
+  isExported: boolean;
+  filePath: string;
+}
+
+/* ===========================
+ * Event Types
+ * =========================== */
+
+/**
+ * SwarmDeltaObserver event map
+ */
+export interface SwarmDeltaObserverEvents {
+  'swarm:context-invalidated': (
+    affectedAgents: ReadonlyArray<AgentID>,
+    delta: ContextDeltaReport
+  ) => void;
+  
+  'swarm:delta-calculated': (delta: ContextDeltaReport) => void;
+  
+  'swarm:file-mutated': (event: FileMutationEvent) => void;
+  
+  'swarm:ast-updated': (astDelta: ASTDelta) => void;
+  
+  'swarm:merkle-updated': (merkleDelta: MerkleDAGDelta) => void;
+  
+  'swarm:error': (error: Error, context?: unknown) => void;
+  
+  'swarm:batch-processed': (
+    deltaReports: ReadonlyArray<ContextDeltaReport>
+  ) => void;
+}
+
+/* ===========================
+ * Main Implementation
+ * =========================== */
+
+/**
+ * SwarmDeltaObserver - Real-time incremental update system for Swarm Mesh
+ * 
+ * Monitors file mutations, incrementally recalculates Merkle DAG and AST,
+ * and notifies affected agents for context invalidation.
+ * 
+ * @example
+ * ```typescript
+ * const observer = new SwarmDeltaObserver(
+ *   merkleDAG,
+ *   astGraph,
+ *   { workspaceRoot: '/path/to/workspace' }
+ * );
+ * 
+ * observer.on('swarm:context-invalidated', (agents, delta) => {
+ *   console.log(`Invalidating context for ${agents.length} agents`);
+ * });
+ * 
+ * await observer.start();
+ * 
+ * const delta = await observer.handleFileMutation(
+ *   'src/auth.ts',
+ *   newContent
+ * );
+ * ```
+ */
+export class SwarmDeltaObserver extends EventEmitter {
+  private readonly merkleDAG: MerkleDAG;
+  private readonly astGraph: ASTGraph;
+  private readonly config: Required<SwarmDeltaObserverConfig>;
+  
+  // State management
+  private readonly agentContexts: Map<AgentID, AgentContextMetadata>;
+  private readonly symbolToAgents: Map<string, Set<AgentID>>;
+  private readonly fileToSymbols: Map<string, Set<SymbolMetadata>>;
+  private readonly fileToAgents: Map<string, Set<AgentID>>;
+  
+  // File watching
+  private fileWatchers: Map<string, FSWatcher>;
+  private watchDebounceTimers: Map<string, NodeJS.Timeout>;
+  
+  // Delta processing
+  private deltaQueue: DeltaCalculationJob[];
+  private processingDeltas: Set<string>;
+  private batchTimer: NodeJS.Timeout | null;
+  
+  // Statistics
+  private stats: {
+    totalMutations: number;
+    totalDeltas: number;
+    totalInvalidations: number;
+    avgProcessingTimeMs: number;
+  };
+  
+  private isStarted: boolean;
+  private isShuttingDown: boolean;
+
+  /**
+   * Creates a new SwarmDeltaObserver
+   * 
+   * @param merkleDAG - Merkle DAG instance
+   * @param astGraph - AST Graph instance
+   * @param config - Observer configuration
+   */
+  constructor(
+    merkleDAG: MerkleDAG,
+    astGraph: ASTGraph,
+    config: SwarmDeltaObserverConfig
+  ) {
+    super();
+    
+    this.merkleDAG = merkleDAG;
+    this.astGraph = astGraph;
+    
+    this.config = {
+      workspaceRoot: resolve(config.workspaceRoot),
+      watchPatterns: config.watchPatterns ?? ['**/*.{ts,tsx,js,jsx}'],
+      ignorePatterns: config.ignorePatterns ?? [
+        '**/node_modules/**',
+        '**/.git/**',
+        '**/dist/**',
+        '**/build/**',
+      ],
+      debounceDelayMs: config.debounceDelayMs ?? 100,
+      maxConcurrentDeltas: config.maxConcurrentDeltas ?? 5,
+      enableFileSystemWatch: config.enableFileSystemWatch ?? true,
+      enableLogging: config.enableLogging ?? false,
+      maxSymbolCacheSize: config.maxSymbolCacheSize ?? 10000,
+      enableBatching: config.enableBatching ?? true,
+      batchWindowMs: config.batchWindowMs ?? 50,
+    };
+    
+    // Initialize state
+    this.agentContexts = new Map();
+    this.symbolToAgents = new Map();
+    this.fileToSymbols = new Map();
+    this.fileToAgents = new Map();
+    
+    this.fileWatchers = new Map();
+    this.watchDebounceTimers = new Map();
+    
+    this.deltaQueue = [];
+    this.processingDeltas = new Set();
+    this.batchTimer = null;
+    
+    this.stats = {
+      totalMutations: 0,
+      totalDeltas: 0,
+      totalInvalidations: 0,
+      avgProcessingTimeMs: 0,
+    };
+    
+    this.isStarted = false;
+    this.isShuttingDown = false;
+    
+    this.setupErrorHandlers();
+  }
+
+  /* ===========================
+   * Lifecycle Methods
+   * =========================== */
+
+  /**
+   * Starts the delta observer
+   * 
+   * @throws {Error} If already started or workspace root doesn't exist
+   */
+  public async start(): Promise<void> {
+    if (this.isStarted) {
+      throw new Error('SwarmDeltaObserver already started');
+    }
+    
+    this.log('Starting SwarmDeltaObserver...');
+    
+    // Validate workspace root
+    await this.validateWorkspaceRoot();
+    
+    // Initialize file-to-symbols cache
+    await this.initializeSymbolCache();
+    
+    // Start filesystem watchers if enabled
+    if (this.config.enableFileSystemWatch) {
+      await this.startFileSystemWatch();
+    }
+    
+    this.isStarted = true;
+    this.log('SwarmDeltaObserver started successfully');
+  }
+
+  /**
+   * Stops the delta observer and cleans up resources
+   */
+  public async stop(): Promise<void> {
+    if (!this.isStarted || this.isShuttingDown) {
+      return;
+    }
+    
+    this.log('Stopping SwarmDeltaObserver...');
+    this.isShuttingDown = true;
+    
+    // Clear batch timer
+    if (this.batchTimer) {
+      clearTimeout(this.batchTimer);
+      this.batchTimer = null;
+    }
+    
+    // Clear debounce timers
+    for (const timer of this.watchDebounceTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.watchDebounceTimers.clear();
+    
+    // Stop file watchers
+    for (const watcher of this.fileWatchers.values()) {
+      watcher.close();
+    }
+    this.fileWatchers.clear();
+    
+    // Process remaining deltas
+    if (this.deltaQueue.length > 0) {
+      this.log(`Processing ${this.deltaQueue.length} remaining deltas...`);
+      await this.processDeltaBatch();
+    }
+    
+    // Clear state
+    this.agentContexts.clear();
+    this.symbolToAgents.clear();
+    this.fileToSymbols.clear();
+    this.fileToAgents.clear();
+    this.deltaQueue = [];
+    this.processingDeltas.clear();
+    
+    this.isStarted = false;
+    this.isShuttingDown = false;
+    
+    this.log('SwarmDeltaObserver stopped successfully');
+  }
+
+  /* ===========================
+   * Public API Methods
+   * =========================== */
+
+  /**
+   * Handles a file mutation event and calculates delta
+   * 
+   * @param filePath - Path to the mutated file
+   * @param content - New file content (undefined for deletions)
+   * @param source - Source of mutation (agent ID or 'filesystem')
+   * @returns Promise resolving to context delta report
+   * @throws {Error} If observer not started or processing fails
+   */
+  public async handleFileMutation(
+    filePath: string,
+    content?: string,
+    source: string = 'manual'
+  ): Promise<ContextDeltaReport> {
+    this.ensureStarted();
+    
+    const normalizedPath = this.normalizePath(filePath);
+    const mutationType = await this.determineMutationType(normalizedPath, content);
+    
+    this.log(`Handling ${mutationType} for ${normalizedPath} (source: ${source})`);
+    
+    const job: DeltaCalculationJob = {
+      filePath: normalizedPath,
+      content: content ?? '',
+      source,
+      mutationType,
+      timestamp: Date.now(),
+    };
+    
+    // Process immediately if batching disabled
+    if (!this.config.enableBatching) {
+      return this.processDeltaJob(job);
+    }
+    
+    // Add to batch queue
+    this.deltaQueue.push(job);
+    this.scheduleBatchProcessing();
+    
+    // Wait for batch processing to complete
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Delta calculation timeout'));
+      }, 30000);
+      
+      const handler = (delta: ContextDeltaReport) => {
+        if (delta.mutation.filePath === normalizedPath) {
+          clearTimeout(timeout);
+          this.off('swarm:delta-calculated', handler);
+          resolve(delta);
+        }
+      };
+      
+      this.on('swarm:delta-calculated', handler);
+    });
+  }
+
+  /**
+   * Gets list of agent IDs affected by mutated symbols
+   * 
+   * @param mutatedSymbols - Array of mutated symbol names
+   * @param activeSwarm - Current swarm mesh state
+   * @returns Array of affected agent IDs
+   */
+  public getAffectedAgents(
+    mutatedSymbols: ReadonlyArray<string>,
+    activeSwarm: SwarmMeshState
+  ): AgentID[] {
+    const affectedAgents = new Set<AgentID>();
+    
+    for (const symbol of mutatedSymbols) {
+      const agents = this.symbolToAgents.get(symbol);
+      if (agents) {
+        for (const agentId of agents) {
+          // Only include if agent is still active in swarm
+          if (activeSwarm.agents.has(agentId)) {
+            affectedAgents.add(agentId);
+          }
+        }
+      }
+    }
+    
+    return Array.from(affectedAgents);
+  }
+
+  /**
+   * Registers an agent's context for tracking
+   * 
+   * @param metadata - Agent context metadata
+   */
+  public registerAgentContext(metadata: AgentContextMetadata): void {
+    this.ensureStarted();
+    
+    this.log(`Registering context for agent ${metadata.agentId}`);
+    
+    // Store agent metadata
+    this.agentContexts.set(metadata.agentId, metadata);
+    
+    // Update symbol -> agents mapping
+    for (const symbol of metadata.symbolsInContext) {
+      if (!this.symbolToAgents.has(symbol)) {
+        this.symbolToAgents.set(symbol, new Set());
+      }
+      this.symbolToAgents.get(symbol)!.add(metadata.agentId);
+    }
+    
+    // Update file -> agents mapping
+    for (const filePath of metadata.filePathsInContext) {
+      if (!this.fileToAgents.has(filePath)) {
+        this.fileToAgents.set(filePath, new Set());
+      }
+      this.fileToAgents.get(filePath)!.add(metadata.agentId);
+    }
+  }
+
+  /**
+   * Unregisters an agent's context
+   * 
+   * @param agentId - Agent ID to unregister
+   */
+  public unregisterAgentContext(agentId: AgentID): void {
+    const metadata = this.agentContexts.get(agentId);
+    if (!metadata) {
+      return;
+    }
+    
+    this.log(`Unregistering context for agent ${agentId}`);
+    
+    // Remove from symbol -> agents mapping
+    for (const symbol of metadata.symbolsInContext) {
+      const agents = this.symbolToAgents.get(symbol);
+      if (agents) {
+        agents.delete(agentId);
+        if (agents.size === 0) {
+          this.symbolToAgents.delete(symbol);
+        }
+      }
+    }
+    
+    // Remove from file -> agents mapping
+    for (const filePath of metadata.filePathsInContext) {
+      const agents = this.fileToAgents.get(filePath);
+      if (agents) {
+        agents.delete(agentId);
+        if (agents.size === 0) {
+          this.fileToAgents.delete(filePath);
+        }
+      }
+    }
+    
+    // Remove agent metadata
+    this.agentContexts.delete(agentId);
+  }
+
+  /**
+   * Updates an agent's context (efficient incremental update)
+   * 
+   * @param agentId - Agent ID
+   * @param addedFiles - Files added to context
+   * @param removedFiles - Files removed from context
+   * @param addedSymbols - Symbols added to context
+   * @param removedSymbols - Symbols removed from context
+   */
+  public updateAgentContext(
+    agentId: AgentID,
+    addedFiles: ReadonlyArray<string> = [],
+    removedFiles: ReadonlyArray<string> = [],
+    addedSymbols: ReadonlyArray<string> = [],
+    removedSymbols: ReadonlyArray<string> = []
+  ): void {
+    const metadata = this.agentContexts.get(agentId);
+    if (!metadata) {
+      throw new Error(`Agent ${agentId} not registered`);
+    }
+    
+    // Create updated metadata
+    const updatedFiles = new Set(metadata.filePathsInContext);
+    const updatedSymbols = new Set(metadata.symbolsInContext);
+    
+    // Apply file changes
+    for (const file of addedFiles) {
+      updatedFiles.add(file);
+      if (!this.fileToAgents.has(file)) {
+        this.fileToAgents.set(file, new Set());
+      }
+      this.fileToAgents.get(file)!.add(agentId);
+    }
+    
+    for (const file of removedFiles) {
+      updatedFiles.delete(file);
+      const agents = this.fileToAgents.get(file);
+      if (agents) {
+        agents.delete(agentId);
+        if (agents.size === 0) {
+          this.fileToAgents.delete(file);
+        }
+      }
+    }
+    
+    // Apply symbol changes
+    for (const symbol of addedSymbols) {
+      updatedSymbols.add(symbol);
+      if (!this.symbolToAgents.has(symbol)) {
+        this.symbolToAgents.set(symbol, new Set());
+      }
+      this.symbolToAgents.get(symbol)!.add(agentId);
+    }
+    
+    for (const symbol of removedSymbols) {
+      updatedSymbols.delete(symbol);
+      const agents = this.symbolToAgents.get(symbol);
+      if (agents) {
+        agents.delete(agentId);
+        if (agents.size === 0) {
+          this.symbolToAgents.delete(symbol);
+        }
+      }
+    }
+    
+    // Update metadata
+    this.agentContexts.set(agentId, {
+      ...metadata,
+      filePathsInContext: updatedFiles,
+      symbolsInContext: updatedSymbols,
+      lastUpdated: Date.now(),
+    });
+  }
+
+  /**
+   * Gets observer statistics
+   */
+  public getStats(): Readonly<typeof this.stats> {
+    return { ...this.stats };
+  }
+
+  /* ===========================
+   * Delta Calculation Engine
+   * =========================== */
+
+  /**
+   * Processes a single delta calculation job
+   */
+  private async processDeltaJob(
+    job: DeltaCalculationJob
+  ): Promise<ContextDeltaReport> {
+    const startTime = performance.now();
+    
+    try {
+      this.processingDeltas.add(job.filePath);
+      
+      // Step 1: Get previous state
+      const previousState = await this.captureFileState(job.filePath);
+      
+      // Step 2: Recalculate Merkle DAG hash
+      const merkleDAGDelta = await this.recalculateMerkleDAG(
+        job.filePath,
+        job.content,
+        previousState.hash
+      );
+      
+      this.emit('swarm:merkle-updated', merkleDAGDelta);
+      
+      // Step 3: Re-parse AST for affected file only
+      const astDelta = await this.recalculateAST(
+        job.filePath,
+        job.content,
+        job.mutationType,
+        previousState.symbols
+      );
+      
+      this.emit('swarm:ast-updated', astDelta);
+      
+      // Step 4: Update internal caches
+      await this.updateSymbolCache(job.filePath, astDelta);
+      
+      // Step 5: Determine affected files (transitive dependencies)
+      const affectedFiles = await this.getAffectedFiles(
+        job.filePath,
+        astDelta
+      );
+      
+      // Step 6: Determine affected agents
+      const affectedAgents = this.determineAffectedAgents(
+        job.filePath,
+        astDelta,
+        affectedFiles
+      );
+      
+      // Step 7: Create mutation event
+      const mutationEvent: FileMutationEvent = {
+        filePath: job.filePath,
+        mutationType: job.mutationType,
+        content: job.mutationType !== 'deleted' ? job.content : undefined,
+        previousHash: previousState.hash,
+        newHash: merkleDAGDelta.newHash,
+        timestamp: job.timestamp,
+        source: job.source,
+      };
+      
+      this.emit('swarm:file-mutated', mutationEvent);
+      
+      // Step 8: Build delta report
+      const processingTimeMs = performance.now() - startTime;
+      const deltaReport: ContextDeltaReport = {
+        mutation: mutationEvent,
+        merkleDAGDelta,
+        astDelta,
+        affectedAgents,
+        affectedFiles,
+        processingTimeMs,
+        timestamp: Date.now(),
+        requiresContextRefresh: this.shouldRefreshContext(astDelta),
+      };
+      
+      // Update statistics
+      this.updateStats(processingTimeMs);
+      
+      // Emit delta calculated
+      this.emit('swarm:delta-calculated', deltaReport);
+      
+      // Emit context invalidation if agents affected
+      if (affectedAgents.length > 0) {
+        this.stats.totalInvalidations++;
+        this.emit('swarm:context-invalidated', affectedAgents, deltaReport);
+      }
+      
+      this.log(
+        `Delta calculated for ${job.filePath}: ` +
+        `${affectedAgents.length} agents affected, ` +
+        `${processingTimeMs.toFixed(2)}ms`
+      );
+      
+      return deltaReport;
+    } catch (error) {
+      const errorMsg = this.getErrorMessage(error);
+      this.log(`Error processing delta for ${job.filePath}: ${errorMsg}`);
+      this.emit('swarm:error', error instanceof Error ? error : new Error(errorMsg), job);
+      throw error;
+    } finally {
+      this.processingDeltas.delete(job.filePath);
+    }
+  }
+
+  /**
+   * Processes batch of delta jobs
+   */
+  private async processDeltaBatch(): Promise<void> {
+    if (this.deltaQueue.length === 0) {
+      return;
+    }
+    
+    const batch = this.deltaQueue.splice(0, this.config.maxConcurrentDeltas);
+    this.log(`Processing batch of ${batch.length} deltas`);
+    
+    const startTime = performance.now();
+    
+    try {
+      const deltaReports = await Promise.all(
+        batch.map(job => this.processDeltaJob(job))
+      );
+      
+      const processingTimeMs = performance.now() - startTime;
+      this.log(`Batch processed in ${processingTimeMs.toFixed(2)}ms`);
+      
+      this.emit('swarm:batch-processed', deltaReports);
+      
+      // Schedule next batch if queue not empty
+      if (this.deltaQueue.length > 0) {
+        this.scheduleBatchProcessing();
+      }
+    } catch (error) {
+      this.log(`Error processing batch: ${this.getErrorMessage(error)}`);
+      this.emit('swarm:error', error instanceof Error ? error : new Error('Batch processing failed'));
+    }
+  }
+
+  /**
+   * Schedules batch processing with debouncing
+   */
+  private scheduleBatchProcessing(): void {
+    if (this.batchTimer) {
+      return; // Already scheduled
+    }
+    
+    this.batchTimer = setTimeout(() => {
+      this.batchTimer = null;
+      this.processDeltaBatch().catch(error => {
+        this.emit('swarm:error', error instanceof Error ? error : new Error('Batch processing failed'));
+      });
+    }, this.config.batchWindowMs);
+  }
+
+  /* ===========================
+   * Merkle DAG Recalculation
+   * =========================== */
+
+  /**
+   * Recalculates Merkle DAG hash for a file
+   */
+  private async recalculateMerkleDAG(
+    filePath: string,
+    content: string,
+    previousHash?: string
+  ): Promise<MerkleDAGDelta> {
+    const startTime = performance.now();
+    
+    // Update file in Merkle DAG
+    const newHash = await (this.merkleDAG as any).updateFile(filePath, content);
+    
+    // Get affected parent nodes (files that import this file)
+    const affectedParents = await (this.merkleDAG as any).getParentNodes(filePath);
+    
+    const recalculationTimeMs = performance.now() - startTime;
+    
+    return {
+      filePath,
+      previousHash,
+      newHash,
+      affectedParents: affectedParents.map(node => node.path),
+      recalculationTimeMs,
+    };
+  }
+
+  /* ===========================
+   * AST Recalculation
+   * =========================== */
+
+  /**
+   * Re-parses AST for a single file and calculates delta
+   */
+  private async recalculateAST(
+    filePath: string,
+    content: string,
+    mutationType: FileMutationType,
+    previousSymbols: Set<SymbolMetadata>
+  ): Promise<ASTDelta> {
+    // Handle deletion
+    if (mutationType === 'deleted') {
+      return this.createDeletionDelta(filePath, previousSymbols);
+    }
+    
+    // Re-parse AST for this file only
+    await this.astGraph.parseFile(filePath);
+    
+    // Get new symbols
+    const newSymbols = await this.extractSymbols(filePath);
+    
+    // Calculate symbol changes
+    const symbolChanges = this.calculateSymbolChanges(
+      previousSymbols,
+      newSymbols
+    );
+    
+    // Get dependency changes
+    const dependencyChanges = await this.calculateDependencyChanges(filePath);
+    
+    return {
+      filePath,
+      addedSymbols: symbolChanges.added,
+      modifiedSymbols: symbolChanges.modified,
+      removedSymbols: symbolChanges.removed,
+      addedDependencies: dependencyChanges.added,
+      removedDependencies: dependencyChanges.removed,
+      previousSymbolCount: previousSymbols.size,
+      newSymbolCount: newSymbols.length,
+    };
+  }
+
+  /**
+   * Creates deletion delta
+   */
+  private createDeletionDelta(
+    filePath: string,
+    previousSymbols: Set<SymbolMetadata>
+  ): ASTDelta {
+    const removedSymbols: SymbolChange[] = Array.from(previousSymbols).map(
+      symbol => ({
+        symbolName: symbol.name,
+        filePath,
+        changeType: 'removed' as const,
+        nodeType: symbol.nodeType,
+        previousSignature: symbol.signature,
+        isExported: symbol.isExported,
+      })
+    );
+    
+    return {
+      filePath,
+      addedSymbols: [],
+      modifiedSymbols: [],
+      removedSymbols,
+      addedDependencies: [],
+      removedDependencies: [],
+      previousSymbolCount: previousSymbols.size,
+      newSymbolCount: 0,
+    };
+  }
+
+  /**
+   * Extracts symbols from a file
+   */
+  private async extractSymbols(filePath: string): Promise<SymbolMetadata[]> {
+    const symbols: SymbolMetadata[] = [];
+    
+    try {
+      const astNodes = await (this.astGraph as any).getAllSymbols(filePath);
+      
+      for (const node of astNodes) {
+        symbols.push({
+          name: node.name ?? 'anonymous',
+          signature: this.extractSignature(node),
+          nodeType: node.kind,
+          isExported: this.isExported(node),
+          filePath,
+        });
+      }
+    } catch (error) {
+      this.log(`Warning: Failed to extract symbols from ${filePath}`);
+    }
+    
+    return symbols;
+  }
+
+  /**
+   * Calculates symbol changes between old and new state
+   */
+  private calculateSymbolChanges(
+    previousSymbols: Set<SymbolMetadata>,
+    newSymbols: SymbolMetadata[]
+  ): {
+    added: SymbolChange[];
+    modified: SymbolChange[];
+    removed: SymbolChange[];
+  } {
+    const added: SymbolChange[] = [];
+    const modified: SymbolChange[] = [];
+    const removed: SymbolChange[] = [];
+    
+    const previousMap = new Map<string, SymbolMetadata>();
+    for (const symbol of previousSymbols) {
+      previousMap.set(symbol.name, symbol);
+    }
+    
+    const newMap = new Map<string, SymbolMetadata>();
+    for (const symbol of newSymbols) {
+      newMap.set(symbol.name, symbol);
+    }
+    
+    // Find added and modified
+    for (const [name, newSymbol] of newMap) {
+      const prevSymbol = previousMap.get(name);
+      
+      if (!prevSymbol) {
+        // Symbol added
+        added.push({
+          symbolName: name,
+          filePath: newSymbol.filePath,
+          changeType: 'added',
+          nodeType: newSymbol.nodeType,
+          newSignature: newSymbol.signature,
+          isExported: newSymbol.isExported,
+        });
+      } else if (prevSymbol.signature !== newSymbol.signature) {
+        // Symbol modified
+        modified.push({
+          symbolName: name,
+          filePath: newSymbol.filePath,
+          changeType: 'modified',
+          nodeType: newSymbol.nodeType,
+          previousSignature: prevSymbol.signature,
+          newSignature: newSymbol.signature,
+          isExported: newSymbol.isExported,
+        });
+      }
+    }
+    
+    // Find removed
+    for (const [name, prevSymbol] of previousMap) {
+      if (!newMap.has(name)) {
+        removed.push({
+          symbolName: name,
+          filePath: prevSymbol.filePath,
+          changeType: 'removed',
+          nodeType: prevSymbol.nodeType,
+          previousSignature: prevSymbol.signature,
+          isExported: prevSymbol.isExported,
+        });
+      }
+    }
+    
+    return { added, modified, removed };
+  }
+
+  /**
+   * Calculates dependency changes for a file
+   */
+  private async calculateDependencyChanges(
+    filePath: string
+  ): Promise<{ added: string[]; removed: string[] }> {
+    // This would ideally track previous dependencies
+    // For now, return current dependencies as "added"
+    try {
+      const dependencies = await this.astGraph.getDependencies(filePath);
+      return {
+        added: Array.from(dependencies || []).map((dep: any) => typeof dep === "string" ? dep : dep?.target || dep),
+        removed: [],
+      };
+    } catch (error) {
+      return { added: [], removed: [] };
+    }
+  }
+
+  /**
+   * Extracts signature from AST node
+   */
+  private extractSignature(node: ASTNode): string {
+    // Extract type signature, excluding implementation
+    if (node.text) {
+      // Simple heuristic: take everything before opening brace
+      const match = node.text.match(/^([^{]+)/);
+      if (match) {
+        return match[1].trim();
+      }
+    }
+    
+    return `${node.kind} ${node.name ?? 'anonymous'}`;
+  }
+
+  /**
+   * Checks if AST node is exported
+   */
+  private isExported(node: ASTNode): boolean {
+    if (!node.modifiers) {
+      return false;
+    }
+    
+    return node.modifiers.some(mod => 
+      mod === 'export' || mod === 'default'
+    );
+  }
+
+  /* ===========================
+   * Affected Files & Agents
+   * =========================== */
+
+  /**
+   * Gets files affected by a change (transitive dependencies)
+   */
+  private async getAffectedFiles(
+    filePath: string,
+    astDelta: ASTDelta
+  ): Promise<string[]> {
+    const affected = new Set<string>();
+    
+    // Add the changed file itself
+    affected.add(filePath);
+    
+    // Add files that import this file (immediate parents)
+    try {
+      const parents = await (this.merkleDAG as any).getParentNodes(filePath);
+      for (const parent of parents) {
+        affected.add(parent.path);
+      }
+    } catch (error) {
+      this.log(`Warning: Failed to get parent nodes for ${filePath}`);
+    }
+    
+    // If exported symbols changed, trace through dependency graph
+    const hasExportedChanges = [
+      ...astDelta.addedSymbols,
+      ...astDelta.modifiedSymbols,
+      ...astDelta.removedSymbols,
+    ].some(change => change.isExported);
+    
+    if (hasExportedChanges) {
+      try {
+        const transitiveAffected = await this.getTransitiveAffectedFiles(filePath);
+        for (const file of transitiveAffected) {
+          affected.add(file);
+        }
+      } catch (error) {
+        this.log(`Warning: Failed to get transitive affected files for ${filePath}`);
+      }
+    }
+    
+    return Array.from(affected);
+  }
+
+  /**
+   * Gets transitively affected files via dependency graph
+   */
+  private async getTransitiveAffectedFiles(
+    filePath: string,
+    maxDepth: number = 3
+  ): Promise<string[]> {
+    const affected = new Set<string>();
+    const visited = new Set<string>();
+    
+    const traverse = async (currentPath: string, depth: number): Promise<void> => {
+      if (visited.has(currentPath) || depth >= maxDepth) {
+        return;
+      }
+      
+      visited.add(currentPath);
+      
+      try {
+        const parents = await (this.merkleDAG as any).getParentNodes(currentPath);
+        for (const parent of parents) {
+          affected.add(parent.path);
+          await traverse(parent.path, depth + 1);
+        }
+      } catch (error) {
+        // Silently skip
+      }
+    };
+    
+    await traverse(filePath, 0);
+    return Array.from(affected);
+  }
+
+  /**
+   * Determines agents affected by a file change
+   */
+  private determineAffectedAgents(
+    filePath: string,
+    astDelta: ASTDelta,
+    affectedFiles: ReadonlyArray<string>
+  ): AgentID[] {
+    const affectedAgents = new Set<AgentID>();
+    
+    // Method 1: Check agents with this file in context
+    const fileAgents = this.fileToAgents.get(filePath);
+    if (fileAgents) {
+      for (const agentId of fileAgents) {
+        affectedAgents.add(agentId);
+      }
+    }
+    
+    // Method 2: Check agents with affected files in context
+    for (const affectedFile of affectedFiles) {
+      const agents = this.fileToAgents.get(affectedFile);
+      if (agents) {
+        for (const agentId of agents) {
+          affectedAgents.add(agentId);
+        }
+      }
+    }
+    
+    // Method 3: Check agents using changed symbols
+    const changedSymbols = [
+      ...astDelta.addedSymbols,
+      ...astDelta.modifiedSymbols,
+      ...astDelta.removedSymbols,
+    ].map(change => change.symbolName);
+    
+    for (const symbol of changedSymbols) {
+      const agents = this.symbolToAgents.get(symbol);
+      if (agents) {
+        for (const agentId of agents) {
+          affectedAgents.add(agentId);
+        }
+      }
+    }
+    
+    return Array.from(affectedAgents);
+  }
+
+  /**
+   * Determines if context refresh is required
+   */
+  private shouldRefreshContext(astDelta: ASTDelta): boolean {
+    // Require refresh if exported symbols changed
+    const exportedChanges = [
+      ...astDelta.addedSymbols,
+      ...astDelta.modifiedSymbols,
+      ...astDelta.removedSymbols,
+    ].filter(change => change.isExported);
+    
+    return exportedChanges.length > 0;
+  }
+
+  /* ===========================
+   * File System Watching
+   * =========================== */
+
+  /**
+   * Starts filesystem watching
+   */
+  private async startFileSystemWatch(): Promise<void> {
+    this.log('Starting filesystem watch...');
+    
+    try {
+      // Watch workspace root recursively
+      const watcher = watch(
+        this.config.workspaceRoot,
+        { recursive: true },
+        (eventType, filename) => {
+          if (filename) {
+            this.handleFileSystemEvent(eventType, filename);
+          }
+        }
+      );
+      
+      this.fileWatchers.set(this.config.workspaceRoot, watcher);
+      this.log('Filesystem watch started');
+    } catch (error) {
+      this.log(`Warning: Failed to start filesystem watch: ${this.getErrorMessage(error)}`);
+    }
+  }
+
+  /**
+   * Handles filesystem events
+   */
+  private handleFileSystemEvent(
+    eventType: 'change' | 'rename',
+    filename: string
+  ): void {
+    const fullPath = resolve(this.config.workspaceRoot, filename);
+    const normalizedPath = this.normalizePath(fullPath);
+    
+    // Ignore patterns
+    if (this.shouldIgnoreFile(normalizedPath)) {
+      return;
+    }
+    
+    // Debounce rapid changes
+    this.debounceFileEvent(normalizedPath, eventType);
+  }
+
+  /**
+   * Debounces file events to avoid processing rapid changes
+   */
+  private debounceFileEvent(
+    filePath: string,
+    eventType: 'change' | 'rename'
+  ): void {
+    const existingTimer = this.watchDebounceTimers.get(filePath);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+    }
+    
+    const timer = setTimeout(() => {
+      this.watchDebounceTimers.delete(filePath);
+      this.processFileSystemEvent(filePath, eventType);
+    }, this.config.debounceDelayMs);
+    
+    this.watchDebounceTimers.set(filePath, timer);
+  }
+
+  /**
+   * Processes debounced filesystem event
+   */
+  private async processFileSystemEvent(
+    filePath: string,
+    eventType: 'change' | 'rename'
+  ): Promise<void> {
+    try {
+      // Read file content
+      const content = await fs.readFile(filePath, 'utf-8');
+      
+      // Process as mutation
+      await this.handleFileMutation(filePath, content, 'filesystem');
+    } catch (error) {
+      // File might have been deleted
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        await this.handleFileMutation(filePath, undefined, 'filesystem');
+      } else {
+        this.log(`Error processing file event for ${filePath}: ${this.getErrorMessage(error)}`);
+      }
+    }
+  }
+
+  /**
+   * Checks if file should be ignored
+   */
+  private shouldIgnoreFile(filePath: string): boolean {
+    const relativePath = relative(this.config.workspaceRoot, filePath);
+    
+    // Check ignore patterns
+    for (const pattern of this.config.ignorePatterns) {
+      if (this.matchesPattern(relativePath, pattern)) {
+        return true;
+      }
+    }
+    
+    // Check watch patterns (if specified, only watch matching files)
+    if (this.config.watchPatterns.length > 0) {
+      let matches = false;
+      for (const pattern of this.config.watchPatterns) {
+        if (this.matchesPattern(relativePath, pattern)) {
+          matches = true;
+          break;
+        }
+      }
+      if (!matches) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+
+  /**
+   * Simple glob pattern matching
+   */
+  private matchesPattern(path: string, pattern: string): boolean {
+    // Convert glob pattern to regex
+    const regexPattern = pattern
+      .replace(/\*\*/g, '.*')
+      .replace(/\*/g, '[^/]*')
+      .replace(/\?/g, '.')
+      .replace(/\./g, '\\.');
+    
+    const regex = new RegExp(`^${regexPattern}$`);
+    return regex.test(path);
+  }
+
+  /* ===========================
+   * State Management
+   * =========================== */
+
+  /**
+   * Captures current state of a file before mutation
+   */
+  private async captureFileState(
+    filePath: string
+  ): Promise<{ hash?: string; symbols: Set<SymbolMetadata> }> {
+    const hash = await (this.merkleDAG as any).getFileHash(filePath).catch(() => undefined);
+    const symbols = this.fileToSymbols.get(filePath) ?? new Set();
+    
+    return { hash, symbols };
+  }
+
+  /**
+   * Determines mutation type for a file
+   */
+  private async determineMutationType(
+    filePath: string,
+    content?: string
+  ): Promise<FileMutationType> {
+    const exists = await this.fileExists(filePath);
+    
+    if (content === undefined) {
+      return 'deleted';
+    }
+    
+    if (!exists) {
+      return 'created';
+    }
+    
+    return 'modified';
+  }
+
+  /**
+   * Checks if file exists
+   */
+  private async fileExists(filePath: string): Promise<boolean> {
+    try {
+      await fs.access(filePath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Updates symbol cache after AST recalculation
+   */
+  private async updateSymbolCache(
+    filePath: string,
+    astDelta: ASTDelta
+  ): Promise<void> {
+    const currentSymbols = this.fileToSymbols.get(filePath) ?? new Set();
+    
+    // Remove deleted symbols
+    for (const removed of astDelta.removedSymbols) {
+      for (const symbol of currentSymbols) {
+        if (symbol.name === removed.symbolName) {
+          currentSymbols.delete(symbol);
+        }
+      }
+    }
+    
+    // Add new symbols
+    for (const added of astDelta.addedSymbols) {
+      currentSymbols.add({
+        name: added.symbolName,
+        signature: added.newSignature ?? '',
+        nodeType: added.nodeType ?? 'Unknown',
+        isExported: added.isExported,
+        filePath,
+      });
+    }
+    
+    // Update modified symbols
+    for (const modified of astDelta.modifiedSymbols) {
+      for (const symbol of currentSymbols) {
+        if (symbol.name === modified.symbolName) {
+          currentSymbols.delete(symbol);
+          currentSymbols.add({
+            ...symbol,
+            signature: modified.newSignature ?? symbol.signature,
+          });
+        }
+      }
+    }
+    
+    // Update cache
+    if (currentSymbols.size > 0) {
+      this.fileToSymbols.set(filePath, currentSymbols);
+    } else {
+      this.fileToSymbols.delete(filePath);
+    }
+    
+    // Enforce cache size limit
+    this.enforceCacheSizeLimit();
+  }
+
+  /**
+   * Enforces symbol cache size limit (LRU eviction)
+   */
+  private enforceCacheSizeLimit(): void {
+    if (this.fileToSymbols.size <= this.config.maxSymbolCacheSize) {
+      return;
+    }
+    
+    // Simple LRU: delete oldest entries
+    const toDelete = this.fileToSymbols.size - this.config.maxSymbolCacheSize;
+    let deleted = 0;
+    
+    for (const filePath of this.fileToSymbols.keys()) {
+      if (deleted >= toDelete) {
+        break;
+      }
+      
+      // Only delete if no agents are using this file
+      if (!this.fileToAgents.has(filePath)) {
+        this.fileToSymbols.delete(filePath);
+        deleted++;
+      }
+    }
+  }
+
+  /**
+   * Initializes symbol cache from existing index
+   */
+  private async initializeSymbolCache(): Promise<void> {
+    this.log('Initializing symbol cache...');
+    
+    try {
+      const allFiles = await this.merkleDAG.getAllFiles();
+      
+      let cached = 0;
+      for (const file of allFiles) {
+        if (this.shouldIgnoreFile(file.path)) {
+          continue;
+        }
+        
+        try {
+          const symbols = await this.extractSymbols(file.path);
+          this.fileToSymbols.set(
+            file.path,
+            new Set(symbols)
+          );
+          cached++;
+        } catch (error) {
+          // Skip files that fail to parse
+        }
+      }
+      
+      this.log(`Symbol cache initialized with ${cached} files`);
+    } catch (error) {
+      this.log(`Warning: Failed to initialize symbol cache: ${this.getErrorMessage(error)}`);
+    }
+  }
+
+  /* ===========================
+   * Utilities
+   * =========================== */
+
+  /**
+   * Normalizes file path
+   */
+  private normalizePath(filePath: string): string {
+    return resolve(filePath);
+  }
+
+  /**
+   * Validates workspace root exists
+   */
+  private async validateWorkspaceRoot(): Promise<void> {
+    try {
+      const stats: Stats = await fs.stat(this.config.workspaceRoot);
+      if (!stats.isDirectory()) {
+        throw new Error('Workspace root is not a directory');
+      }
+    } catch (error) {
+      throw new Error(
+        `Invalid workspace root: ${this.getErrorMessage(error)}`
+      );
+    }
+  }
+
+  /**
+   * Ensures observer is started
+   */
+  private ensureStarted(): void {
+    if (!this.isStarted) {
+      throw new Error('SwarmDeltaObserver not started. Call start() first.');
+    }
+    
+    if (this.isShuttingDown) {
+      throw new Error('SwarmDeltaObserver is shutting down');
+    }
+  }
+
+  /**
+   * Updates statistics
+   */
+  private updateStats(processingTimeMs: number): void {
+    this.stats.totalMutations++;
+    this.stats.totalDeltas++;
+    
+    // Update rolling average
+    const prevAvg = this.stats.avgProcessingTimeMs;
+    const count = this.stats.totalDeltas;
+    this.stats.avgProcessingTimeMs = 
+      (prevAvg * (count - 1) + processingTimeMs) / count;
+  }
+
+  /**
+   * Sets up error handlers
+   */
+  private setupErrorHandlers(): void {
+    this.on('error', (error) => {
+      this.log(`Unhandled error: ${this.getErrorMessage(error)}`);
+    });
+  }
+
+  /**
+   * Logs message if logging enabled
+   */
+  private log(message: string): void {
+    if (this.config.enableLogging) {
+      console.log(`[SwarmDeltaObserver] ${message}`);
+    }
+  }
+
+  /**
+   * Safely extracts error message
+   */
+  private getErrorMessage(error: unknown): string {
+    if (error instanceof Error) {
+      return error.message;
+    }
+    if (typeof error === 'string') {
+      return error;
+    }
+    return 'Unknown error';
+  }
+}
+
+/* ===========================
+ * Factory & Exports
+ * =========================== */
+
+/**
+ * Creates a new SwarmDeltaObserver instance
+ * 
+ * @param merkleDAG - Merkle DAG instance
+ * @param astGraph - AST Graph instance
+ * @param config - Observer configuration
+ * @returns SwarmDeltaObserver instance
+ */
+export function createSwarmDeltaObserver(
+  merkleDAG: MerkleDAG,
+  astGraph: ASTGraph,
+  config: SwarmDeltaObserverConfig
+): SwarmDeltaObserver {
+  return new SwarmDeltaObserver(merkleDAG, astGraph, config);
+}
+
+/**
+ * Type guard for checking if object is a FileMutationEvent
+ */
+export function isFileMutationEvent(obj: unknown): obj is FileMutationEvent {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    'filePath' in obj &&
+    'mutationType' in obj &&
+    'timestamp' in obj
+  );
+}
+
+/**
+ * Default export
+ */
+export default SwarmDeltaObserver;

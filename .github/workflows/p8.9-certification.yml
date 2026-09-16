@@ -1,0 +1,82 @@
+name: P8.9 Vector Memory Embeddings Engine Certification
+
+on:
+  push:
+    branches: [p8.9/vector-memory-embeddings-engine]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p8.9-certification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NODE_OPTIONS: --unhandled-rejections=strict
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+          cache: pnpm
+      - name: Frozen Install Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm install --frozen-lockfile
+      - name: TypeScript Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm --filter @klyn/ai-engine --filter @klyn/cognitive-engine --filter @klyn/backend typecheck
+      - name: Build Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm build
+      - name: Test Gate
+        run: timeout --signal=TERM --kill-after=15s 600s pnpm --filter @klyn/ai-engine --filter @klyn/cognitive-engine --filter @klyn/backend test
+      - name: Real Lint Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm lint
+      - name: Backend Scope Audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_SHA="${{ github.event.pull_request.base.sha || '737d00f9839740a25321cfac1cbf4a805a30d383' }}"
+          git diff --name-only "$BASE_SHA"...HEAD > /tmp/klyn-p89-files.txt
+          if grep -E '(^|/)(apps/frontend|apps/studio|apps/web|packages/frontend)(/|$)|\.(tsx|jsx|css|scss|sass|html)$' /tmp/klyn-p89-files.txt; then exit 1; fi
+          cat /tmp/klyn-p89-files.txt
+      - name: Vector Dimension Audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'class ContextEmbeddingEngine' packages/ai-engine/src/vector-memory.ts
+          grep -q 'Vector dimension mismatch' packages/ai-engine/src/vector-memory.ts
+          grep -q 'cosineSimilarity' packages/ai-engine/src/vector-memory.ts
+      - name: Namespace Isolation Audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'class CrossAgentKnowledgeBus' packages/ai-engine/src/vector-memory.ts
+          grep -q 'record.namespace !== namespace' packages/ai-engine/src/vector-memory.ts
+          grep -q 'namespace fencing' apps/backend/tests/phase8.9-vector-memory.test.ts
+      - name: Memory GC Audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'expiresAt' packages/ai-engine/src/vector-memory.ts
+          grep -q 'gc(now' packages/ai-engine/src/vector-memory.ts
+          grep -q 'garbage-collected' apps/backend/tests/phase8.9-vector-memory.test.ts
+      - name: Process Exception Audit
+        run: test "${NODE_OPTIONS}" = "--unhandled-rejections=strict"
+      - name: Lockfile SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sha256sum pnpm-lock.yaml | awk '{print $1}')" = "e80ae0addcd6a8c877aa5088837d8ba0d19f622f6ba139c4781a9f48c49bc73f"

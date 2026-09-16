@@ -1,0 +1,42 @@
+{
+  "id": "v696",
+  "name": "AI Civilization Management Layer",
+  "codename": "AICivilizationManagement",
+  "mission": "Govern the civilization itself: domains, policies, growth, and long-horizon stewardship.",
+  "principles": [
+    "Stewardship over control",
+    "Long-horizon planning",
+    "Policy is code"
+  ],
+  "dependsOn": [
+    "v695"
+  ],
+  "modules": [
+    "AICivilizationManagementKernel",
+    "CivilizationManagementOrchestrator",
+    "AICivilizationRuntime",
+    "CivilizationGovernanceController",
+    "CivilizationPolicyEngine",
+    "CivilizationDomainRegistry",
+    "CivilizationManagementHub",
+    "CivilizationTelemetryObserver",
+    "CivilizationSystemAdapter",
+    "AICivilizationManagementPlatform"
+  ],
+  "contracts": [
+    "v696.engine.tick",
+    "v696.domain.admitted",
+    "v696.policy.enforced",
+    "v696.metric.recorded"
+  ],
+  "policies": {
+    "maxEntities": 1024,
+    "tickMs": 40,
+    "batchSize": 48,
+    "ringSize": 256,
+    "consensusThreshold": 0.66,
+    "compactionThreshold": 0.55,
+    "quota": 512
+  },
+  "commitMessage": "feat(genesis): v696 ai civilization management layer"
+}

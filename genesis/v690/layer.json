@@ -1,0 +1,42 @@
+{
+  "id": "v690",
+  "name": "Universal AI Operating Fabric Layer",
+  "codename": "AIOperatingFabric",
+  "mission": "A universal fabric weaving compute, memory, and intelligence into one coherent operating surface.",
+  "principles": [
+    "Weave, do not stack",
+    "Every thread is addressable",
+    "Fabric heals itself"
+  ],
+  "dependsOn": [
+    "v689"
+  ],
+  "modules": [
+    "AIOperatingFabricKernel",
+    "FabricWeaveOrchestrator",
+    "AIOperatingFabricRuntime",
+    "FabricGovernanceController",
+    "FabricExecutionEngine",
+    "FabricResourceRegistry",
+    "FabricCoordinationHub",
+    "FabricTelemetryObserver",
+    "FabricHostAdapter",
+    "UniversalAIOperatingFabricPlatform"
+  ],
+  "contracts": [
+    "v690.engine.tick",
+    "v690.thread.woven",
+    "v690.fabric.repaired",
+    "v690.metric.recorded"
+  ],
+  "policies": {
+    "maxEntities": 65536,
+    "tickMs": 8,
+    "batchSize": 256,
+    "ringSize": 2048,
+    "consensusThreshold": 0.7,
+    "compactionThreshold": 0.25,
+    "quota": 16384
+  },
+  "commitMessage": "feat(genesis): v690 universal ai operating fabric layer"
+}

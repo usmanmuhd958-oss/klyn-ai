@@ -1,0 +1,42 @@
+{
+  "id": "v671",
+  "name": "Autonomous Enterprise Civilization Platform Layer",
+  "codename": "EnterpriseCivilization",
+  "mission": "Operate the enterprise as a self-governing civilization of autonomous business units, policies, and value flows.",
+  "principles": [
+    "Policy-first governance",
+    "Entity autonomy with collective constraints",
+    "Continuous value accounting"
+  ],
+  "dependsOn": [
+    "v670"
+  ],
+  "modules": [
+    "EnterpriseCivilizationKernel",
+    "AutonomousEnterpriseOrchestrator",
+    "EnterpriseCivilizationRuntime",
+    "CivilizationGovernanceController",
+    "AutonomousOperationsEngine",
+    "EnterpriseEntityRegistry",
+    "CivilizationCoordinationHub",
+    "EnterpriseTelemetryObserver",
+    "EnterpriseSystemAdapter",
+    "AutonomousCivilizationPlatform"
+  ],
+  "contracts": [
+    "v671.engine.tick",
+    "v671.unit.provisioned",
+    "v671.policy.applied",
+    "v671.metric.recorded"
+  ],
+  "policies": {
+    "maxEntities": 2048,
+    "tickMs": 25,
+    "batchSize": 64,
+    "ringSize": 512,
+    "consensusThreshold": 0.75,
+    "compactionThreshold": 0.5,
+    "quota": 1024
+  },
+  "commitMessage": "feat(genesis): v671 autonomous enterprise civilization platform layer"
+}

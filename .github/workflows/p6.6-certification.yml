@@ -1,0 +1,70 @@
+name: P6.6 Cloud Certification
+
+on:
+  push:
+    branches: [p6.6/e2e-backend-integration]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p6.6-certification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+          cache: pnpm
+      - name: Frozen Install Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm install --frozen-lockfile
+      - name: TypeScript Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm --filter @klyn/backend --filter @klyn/execution-runtime --filter @klyn/cognitive-engine --filter @klyn/ai-engine typecheck
+      - name: Build Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm build
+      - name: Test Gate
+        run: timeout --signal=TERM --kill-after=15s 600s pnpm --filter @klyn/backend --filter @klyn/execution-runtime --filter @klyn/cognitive-engine --filter @klyn/ai-engine test
+      - name: Real Lint Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm lint
+      - name: Backend Workspace Scope Audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_SHA="${{ github.event.pull_request.base.sha || '5572df5b7e8e420ce7da83c386edf5c8806772a7' }}"
+          git diff --name-only "$BASE_SHA"...HEAD > /tmp/klyn-phase66-changed-files.txt
+          if grep -E '(^|/)(apps/frontend|apps/studio|apps/web|packages/frontend)(/|$)|\.(tsx|jsx|css|scss|sass|html)$' /tmp/klyn-phase66-changed-files.txt; then
+            echo 'Frontend/UI files changed in Phase 6.6 diff.'
+            exit 1
+          fi
+          echo 'Phase 6.6 changed files:'
+          cat /tmp/klyn-phase66-changed-files.txt
+      - name: E2E Harness Scope Audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f apps/backend/tests/e2e-orchestration.test.ts
+          grep -q '@klyn/ai-engine' apps/backend/tests/e2e-orchestration.test.ts
+          grep -q '@klyn/execution-runtime' apps/backend/tests/e2e-orchestration.test.ts
+          grep -q 'DagOrchestrator' apps/backend/tests/e2e-orchestration.test.ts
+          grep -q 'SupabaseExecutionLedgerSync' apps/backend/tests/e2e-orchestration.test.ts
+          grep -q 'JsonRpcAgentIpcTransport' apps/backend/tests/e2e-orchestration.test.ts
+          grep -q 'recovery' apps/backend/tests/e2e-orchestration.test.ts
+          grep -q 'unhandledRejection' apps/backend/tests/e2e-orchestration.test.ts
+      - name: Lockfile SHA-256
+        run: sha256sum pnpm-lock.yaml

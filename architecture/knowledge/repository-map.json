@@ -1,0 +1,24 @@
+{
+  "repository": "klyn-ai-os",
+  "layers": {
+    "runtime": [
+      "packages/agent-runtime"
+    ],
+    "gateway": [
+      "packages/ai-gateway"
+    ],
+    "orchestration": [
+      "packages/ai-orchestrator"
+    ],
+    "workflow": [
+      "packages/workflow-engine"
+    ],
+    "intelligence": [
+      "intelligence",
+      "core"
+    ],
+    "kernel": [
+      "kernel"
+    ]
+  }
+}

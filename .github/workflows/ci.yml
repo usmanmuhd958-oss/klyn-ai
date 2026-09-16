@@ -1,0 +1,59 @@
+name: Klyn Backend CI
+
+on:
+  push:
+    branches: [main, master, p2/agent-swarm-runtime-hardening]
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: klyn-backend-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+          run_install: false
+
+      - name: Validate workspace contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f pnpm-workspace.yaml
+          test -f pnpm-lock.yaml || { echo "::error::pnpm-lock.yaml is required. Generate it with pnpm install and commit it."; exit 1; }
+          test -f turbo.json
+          test -f apps/backend/package.json
+
+      - name: Frozen Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Test
+        run: pnpm test
+
+      - name: Lint
+        run: pnpm lint

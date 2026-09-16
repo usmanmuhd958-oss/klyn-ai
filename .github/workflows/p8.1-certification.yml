@@ -1,0 +1,61 @@
+name: P8.1 Distributed Scheduler Context Certification
+on:
+  push:
+    branches: [p8.1/distributed-scheduler-context-plane]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: p8.1-certification-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NODE_OPTIONS: --unhandled-rejections=strict
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with: { version: 11.24.0 }
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with: { node-version: 22.23.2, cache: pnpm }
+      - name: Frozen Install Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm install --frozen-lockfile
+      - name: TypeScript Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm --filter @klyn/backend --filter @klyn/execution-runtime --filter @klyn/cognitive-engine --filter @klyn/ai-engine typecheck
+      - name: Build Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm build
+      - name: Test Gate
+        run: timeout --signal=TERM --kill-after=15s 600s pnpm --filter @klyn/backend --filter @klyn/execution-runtime --filter @klyn/cognitive-engine --filter @klyn/ai-engine test
+      - name: Real Lint Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm lint
+      - name: Backend Scope Audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_SHA="${{ github.event.pull_request.base.sha || 'c8732933c9846008c360682dd94ef13bd2561f16' }}"
+          git diff --name-only "$BASE_SHA"...HEAD > /tmp/klyn-p81-files.txt
+          if grep -E '(^|/)(apps/frontend|apps/studio|apps/web|packages/frontend)(/|$)|\.(tsx|jsx|css|scss|sass|html)$' /tmp/klyn-p81-files.txt; then exit 1; fi
+          cat /tmp/klyn-p81-files.txt
+      - name: Lease and Context Export Audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'LeaseScheduler' packages/execution-runtime/src/index.ts
+          grep -q 'WorkerHeartbeat' packages/execution-runtime/src/index.ts
+          grep -q 'LeaseReaper' packages/execution-runtime/src/index.ts
+          grep -q 'ContextBudgetManager' packages/ai-engine/src/index.ts
+          grep -q 'ContextCompactor' packages/ai-engine/src/index.ts
+          grep -q 'ReadyQueue' packages/cognitive-engine/src/index.ts
+      - name: Process Exception Audit
+        run: |
+          test "${NODE_OPTIONS}" = "--unhandled-rejections=strict"
+      - name: Lockfile SHA-256
+        run: sha256sum pnpm-lock.yaml

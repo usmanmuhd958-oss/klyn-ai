@@ -1,0 +1,42 @@
+{
+  "id": "v697",
+  "name": "Recursive Enterprise Evolution Layer",
+  "codename": "RecursiveEnterpriseEvolution",
+  "mission": "The enterprise that rewrites itself: each generation improves the mechanism that improves it.",
+  "principles": [
+    "Recursion is the growth engine",
+    "Each generation benchmarks the last",
+    "Self-modification is gated"
+  ],
+  "dependsOn": [
+    "v696"
+  ],
+  "modules": [
+    "RecursiveEvolutionKernel",
+    "RecursiveEvolutionOrchestrator",
+    "RecursiveEvolutionRuntime",
+    "RecursiveGovernanceController",
+    "SelfImprovementEngine",
+    "EvolutionGenerationRegistry",
+    "RecursiveCoordinationHub",
+    "RecursiveTelemetryObserver",
+    "EvolutionEnvironmentAdapter",
+    "RecursiveEnterpriseEvolutionPlatform"
+  ],
+  "contracts": [
+    "v697.engine.tick",
+    "v697.generation.evolved",
+    "v697.fitness.recorded",
+    "v697.metric.recorded"
+  ],
+  "policies": {
+    "maxEntities": 4096,
+    "tickMs": 16,
+    "batchSize": 128,
+    "ringSize": 1024,
+    "consensusThreshold": 0.75,
+    "compactionThreshold": 0.35,
+    "quota": 4096
+  },
+  "commitMessage": "feat(genesis): v697 recursive enterprise evolution layer"
+}

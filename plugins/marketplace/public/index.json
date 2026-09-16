@@ -1,0 +1,5 @@
+{
+  "docker": "https://raw.githubusercontent.com/your-org/plugins/main/docker/install.sh",
+  "python": "https://raw.githubusercontent.com/your-org/plugins/main/python/install.sh",
+  "react": "https://raw.githubusercontent.com/your-org/plugins/main/react/install.sh"
+}
