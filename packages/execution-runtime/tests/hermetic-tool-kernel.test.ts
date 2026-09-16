@@ -82,7 +82,7 @@ test("AST patching is deterministic and audit-hashed", async () => {
       },
     });
 
-    assert.deepEqual(await readFile(join(root, "fixture.ts"), "utf8"), "const alpha = 4;\nconst beta = 3;\n");
+    assert.equal(await readFile(join(root, "fixture.ts"), "utf8"), "const alpha = 4;\nconst beta = 3;\n");
     assert.equal(result.audit.sequence, 1);
     assert.equal(result.audit.requestHash.length, 64);
     assert.equal(result.audit.resultHash.length, 64);
@@ -110,8 +110,8 @@ test("git status is constrained to the declared workspace", async () => {
       args: { operation: "status" },
     });
 
-    assert.equal(typeof result.result.exitCode, "number");
-    assert.match(result.result.stdout, /On branch|HEAD detached|No commits yet|fatal: not a git repository/);
+    assert.equal(result.result.exitCode, 128);
+    assert.match(result.result.stderr, /not a git repository/);
   });
 });
 
