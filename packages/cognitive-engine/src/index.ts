@@ -15,6 +15,7 @@ export * from "./EpistemicAuditEngine.js";
 export * from "./GovernancePolicyEngine.js";
 export * from "./PromotionController.js";
 export * from "./GovernanceOrchestrator.js";
+export * from "./benchmark/IntentBenchmarkSuite.js";
 export * from "./CognitiveKernel.js";
 export * from "./CognitiveState.js";
 export * from "./GoalManager.js";
