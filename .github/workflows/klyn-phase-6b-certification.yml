@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - main
+      - phase/6a-hermetic-tool-execution
     paths:
       - "packages/agent-core/**"
       - "packages/execution-runtime/**"
