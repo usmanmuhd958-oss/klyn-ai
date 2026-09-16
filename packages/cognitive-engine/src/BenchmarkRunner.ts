@@ -96,11 +96,20 @@ function freezeObservationSet(observations: readonly EvidenceObservation[]): rea
   );
 }
 
-function deriveOutcome(auditState: GovernanceExecutionResult["audit"]["state"], promotionState: PromotionState): ExpectedEpistemicOutcome {
-  if (auditState === "VERIFIED") return "VERIFIED";
-  if (auditState === "REJECTED") return "REJECTED";
-  if (promotionState === "REJECTED_GOVERNANCE" && auditState !== "VERIFIED") return auditState;
-  return auditState;
+function deriveOutcome(auditState: GovernanceExecutionResult["audit"]["state"]): ExpectedEpistemicOutcome {
+  switch (auditState) {
+    case "VERIFIED":
+      return "VERIFIED";
+    case "REJECTED":
+      return "REJECTED";
+    case "UNKNOWN":
+    case "CLAIMED":
+    case "OBSERVED":
+    case "EVIDENCE-SUPPORTED":
+      return "UNKNOWN";
+    default:
+      return auditState;
+  }
 }
 
 type GovernanceTaskExecutionLike = Awaited<ReturnType<GovernanceExecutionAdapter["execute"]>>;
@@ -187,7 +196,7 @@ export class BenchmarkRunner {
       createdAt,
     };
     const governanceResult = await orchestrator.executeIntentToVerifiedReality(executableIntent, governanceOptions);
-    const observedKlynOutcome = deriveOutcome(governanceResult.audit.state, governanceResult.promotion.state);
+    const observedKlynOutcome = deriveOutcome(governanceResult.audit.state);
     const observations = freezeObservationSet(governanceResult.observations);
     const observationHash = digest(observations);
 
