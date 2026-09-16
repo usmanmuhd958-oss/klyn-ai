@@ -149,8 +149,12 @@ function standardBaselineClassification(
   signal: "PASS" | "FAIL",
   expectedOutcome: ExpectedEpistemicOutcome,
 ): ConfusionMatrixCategory {
-  const observed = signal === "PASS" ? "VERIFIED" : "UNKNOWN";
-  return classify(signal, expectedOutcome, observed);
+  if (signal === "PASS") {
+    return expectedOutcome === "VERIFIED" ? "TRUE_VERIFIED" : "FALSE_COMPLETION";
+  }
+  if (expectedOutcome === "VERIFIED") return "FALSE_REJECTION";
+  if (expectedOutcome === "REJECTED") return "VALID_REJECTION";
+  return "UNRESOLVED_UNKNOWN";
 }
 
 export class OracleStandardLlmBaseline implements StandardLlmBaselineEvaluator {
