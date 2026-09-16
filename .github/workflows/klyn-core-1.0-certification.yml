@@ -1,0 +1,71 @@
+name: KLYN Core 1.0 Certification
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "packages/cognitive-engine/**"
+      - "packages/execution-runtime/**"
+      - "packages/ai-engine/**"
+      - "apps/backend/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "turbo.json"
+  push:
+    branches:
+      - phase/3-release-candidate
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: klyn-core-1-certification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core-certification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.23.2"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+          run_install: false
+
+      - name: Frozen install
+        run: pnpm install --frozen-lockfile
+
+      - name: Cognitive engine typecheck
+        run: pnpm --filter @klyn/cognitive-engine typecheck
+
+      - name: Execution runtime typecheck
+        run: pnpm --filter @klyn/execution-runtime typecheck
+
+      - name: Cognitive engine build
+        run: pnpm --filter @klyn/cognitive-engine build
+
+      - name: Execution runtime build
+        run: pnpm --filter @klyn/execution-runtime build
+
+      - name: Cognitive engine tests
+        run: pnpm --filter @klyn/cognitive-engine test
+
+      - name: Execution runtime tests
+        run: pnpm --filter @klyn/execution-runtime test
+
+      - name: Core lint
+        run: pnpm exec eslint packages/cognitive-engine packages/execution-runtime --max-warnings 0

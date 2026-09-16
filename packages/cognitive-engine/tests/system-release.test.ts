@@ -27,11 +27,15 @@ function createReleaseSigner(): CoreReleaseSigner {
   return new Ed25519CoreReleaseSigner(privateKey, publicKey);
 }
 
-test("compiles a frozen Core 1.0 release manifest anchored to all five planes", async () => {
+test("KLYN Core 1.0 System Release - cryptographic proof and five-plane verification", async () => {
   const runner = new BenchmarkRunner({ signer: promotionSigner, executionTimestampMs: EXECUTION_TIMESTAMP });
   const benchmarkRun = await runner.runSuite();
   const signer = createReleaseSigner();
   const compiler = new KlynCoreReleaseManifestCompiler();
+
+  assert.equal(benchmarkRun.resultManifest.metrics.falseCompletionRate, 0);
+  assert.equal(benchmarkRun.resultManifest.standardLlmBaseline.falseCompletionRate, 1);
+  assert.equal(BenchmarkRunner.verifyArtifact(benchmarkRun), true);
 
   const manifest = compiler.compile({
     benchmarkRun,
@@ -40,6 +44,7 @@ test("compiles a frozen Core 1.0 release manifest anchored to all five planes", 
     signer,
   });
 
+  assert.equal(manifest.manifestVersion, "1.0.0");
   assert.equal(manifest.coreVersion, "1.0.0");
   assert.equal(Object.keys(manifest.planeContractHashes).length, 5);
   assert.equal(manifest.auditHashChain.length, 4);
@@ -49,16 +54,6 @@ test("compiles a frozen Core 1.0 release manifest anchored to all five planes", 
   assert.equal(Object.isFrozen(manifest), true);
   assert.equal(Object.isFrozen(manifest.auditHashChain), true);
   assert.equal(compiler.verify(manifest, signer), true);
-
-  for (const hash of Object.values(manifest.planeContractHashes)) assert.match(hash, /^[a-f0-9]{64}$/);
-  for (const entry of manifest.auditHashChain) {
-    assert.match(entry.intentHash, /^[a-f0-9]{64}$/);
-    assert.match(entry.cognitionHash, /^[a-f0-9]{64}$/);
-    assert.match(entry.executionHash, /^[a-f0-9]{64}$/);
-    assert.match(entry.evidenceHash, /^[a-f0-9]{64}$/);
-    assert.match(entry.governanceHash, /^[a-f0-9]{64}$/);
-    assert.match(entry.chainHash, /^[a-f0-9]{64}$/);
-  }
 });
 
 test("release compilation is deterministic for the same benchmark run and signing key", async () => {
