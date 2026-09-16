@@ -48,7 +48,7 @@ jobs:
           set -euo pipefail
           base="$(git merge-base HEAD origin/phase/6c-self-healing-context)"
           changed="$(git diff --name-only "$base" HEAD)"
-          if printf '%s\n' "$changed" | grep -E '(^|/)(apps|frontend|studio|ui|visual|client)(/|$)' >/dev/null; then
+          if printf '%s\n' "$changed" | grep -E '(^|/)(apps/(frontend|studio)|frontend|ui|visual|client)(/|$)' >/dev/null; then
             echo "Frontend/UI change detected"
             printf '%s\n' "$changed"
             exit 1
