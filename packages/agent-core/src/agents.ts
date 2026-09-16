@@ -25,5 +25,5 @@ export interface AgentOrchestrationContracts {
 }
 
 export const AGENT_ROLES: AgentOrchestrationContracts = Object.freeze({
-  roles: ["planner", "coder", "reviewer", "sandbox-runner"],
+  roles: ["planner", "coder", "reviewer", "sandbox-runner"] as const,
 });
