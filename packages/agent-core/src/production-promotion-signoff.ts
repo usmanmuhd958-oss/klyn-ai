@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 
 export interface ProductionTestSummary {
-  readonly cognitiveEngine: { readonly passed: 79; readonly total: 79 };
-  readonly executionRuntime: { readonly passed: 25; readonly total: 25 };
-  readonly agentCore: { readonly passed: 7; readonly total: 7 };
+  readonly cognitiveEngine: { readonly passed: number; readonly total: number };
+  readonly executionRuntime: { readonly passed: number; readonly total: number };
+  readonly agentCore: { readonly passed: number; readonly total: number };
 }
 
 export interface ProductionPromotionSignoffInput {
