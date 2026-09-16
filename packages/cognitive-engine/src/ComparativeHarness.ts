@@ -6,7 +6,6 @@ import {
 } from "./BenchmarkRunner.js";
 import {
   EpistemicMetricEvaluator,
-  OracleStandardLlmBaseline,
   type BenchmarkResultManifest,
   type StandardLlmBaselineEvaluation,
 } from "./EpistemicMetricEvaluator.js";
