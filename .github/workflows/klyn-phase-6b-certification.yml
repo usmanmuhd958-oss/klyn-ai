@@ -1,0 +1,70 @@
+name: KLYN Phase 6B Certification
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "packages/agent-core/**"
+      - "packages/execution-runtime/**"
+      - "packages/cognitive-engine/**"
+      - "packages/agent-runtime/**"
+      - "pnpm-workspace.yaml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: klyn-phase-6b-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  phase-6b-certification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.23.2"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+          run_install: false
+
+      - name: Install backend workspace
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Agent core typecheck
+        run: pnpm --filter @klyn/agent-core typecheck
+
+      - name: Execution runtime typecheck
+        run: pnpm --filter @klyn/execution-runtime typecheck
+
+      - name: Agent core build
+        run: pnpm --filter @klyn/agent-core build
+
+      - name: Execution runtime build
+        run: pnpm --filter @klyn/execution-runtime build
+
+      - name: Agent core tests
+        run: pnpm --filter @klyn/agent-core test
+
+      - name: Execution runtime tests
+        run: pnpm --filter @klyn/execution-runtime test
+
+      - name: Backend lint
+        run: pnpm exec eslint packages/agent-core packages/execution-runtime --max-warnings 0
+
+      - name: Cognitive engine non-regression tests
+        run: pnpm --filter @klyn/cognitive-engine test

@@ -27,6 +27,8 @@ export type { PolicyGovernedSandboxRequest, PolicyGovernedSandboxResult, PolicyG
 export { ObservationCollector, SYSTEM_CLOCK } from "./ObservationCollector.js";
 export type { ObservationClock, ObservationEvent, ObservationEventInput, ObservationEventType, ObservationSessionMetadata, ObservationSnapshot } from "./ObservationCollector.js";
 export { HermeticToolKernel, HermeticToolError } from "./hermetic-tool-kernel.js";
+export { AgentTrajectoryAuditLedger } from "./agent-trajectory-audit-ledger.js";
+export type { AgentTrajectoryAuditLink } from "./agent-trajectory-audit-ledger.js";
 export type {
   AstPatchArgs,
   AstPatchReplacement,
@@ -45,7 +47,6 @@ export type {
   GitDiffArgs,
   GitResult,
   GitStatusArgs,
-  GitToolArgs,
   HermeticToolCall,
   HermeticToolResult,
   HermeticToolKernelOptions,

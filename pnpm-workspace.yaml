@@ -2,6 +2,7 @@
 # Do not use wildcard workspace globs: client/UI applications are intentionally excluded.
 packages:
   - "apps/backend"
+  - "packages/agent-core"
   - "packages/agent-runtime"
   - "packages/ai-engine"
   - "packages/ai-gateway"
