@@ -46,7 +46,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          base="$(git merge-base HEAD phase/6c-self-healing-context)"
+          base="$(git merge-base HEAD origin/phase/6c-self-healing-context)"
           changed="$(git diff --name-only "$base" HEAD)"
           if printf '%s\n' "$changed" | grep -E '(^|/)(apps|frontend|studio|ui|visual|client)(/|$)' >/dev/null; then
             echo "Frontend/UI change detected"
@@ -62,7 +62,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          base="$(git merge-base HEAD phase/6c-self-healing-context)"
+          base="$(git merge-base HEAD origin/phase/6c-self-healing-context)"
           if ! git diff --quiet "$base" HEAD -- \
             packages/cognitive-engine/src/IntentStateMachine.ts \
             packages/cognitive-engine/src/ConsensusArbitrator.ts \
