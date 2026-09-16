@@ -60,3 +60,4 @@ export * from "./dynamic-dag.js";
 export * from "./consensus/AgentConsensusEngine.js";
 export * from "./consensus/DeadlockDetector.js";
 export * from "./consensus/SelfHealingStateResolver.js";
+export * from "./CodeGraphIndexer.js";
