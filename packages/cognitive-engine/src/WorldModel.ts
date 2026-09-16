@@ -1,5 +1,50 @@
 import type { Dependency, IntentSpec, ResourceBudget } from "./IntentSpec.js";
 
+export interface WorldEntity {
+  id: string;
+  type: "file" | "module" | "service" | "dependency" | "runtime";
+  name: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface WorldRelationship {
+  from: string;
+  to: string;
+  relation: "depends_on" | "imports" | "calls" | "contains";
+}
+
+export interface WorldModel {
+  entities: WorldEntity[];
+  relationships: WorldRelationship[];
+  lastUpdated: Date;
+}
+
+export class WorldModelEngine {
+  private model: WorldModel;
+
+  constructor() {
+    this.model = { entities: [], relationships: [], lastUpdated: new Date() };
+  }
+
+  addEntity(entity: WorldEntity): void {
+    this.model.entities.push(entity);
+    this.touch();
+  }
+
+  addRelationship(relationship: WorldRelationship): void {
+    this.model.relationships.push(relationship);
+    this.touch();
+  }
+
+  getModel(): WorldModel {
+    return this.model;
+  }
+
+  private touch(): void {
+    this.model.lastUpdated = new Date();
+  }
+}
+
 export type EpistemicStatus = "ASSUMED" | "OBSERVED" | "DERIVED" | "UNKNOWN";
 export type WorldSlotKind = "OBJECTIVE" | "CONSTRAINT" | "ASSUMPTION" | "DEPENDENCY" | "RESOURCE" | "ACCEPTANCE" | "EVIDENCE";
 
@@ -38,6 +83,7 @@ export interface EpistemicWorldModel {
 
 export class WorldModelValidationError extends Error {
   readonly code = "WORLD_MODEL_VALIDATION_ERROR" as const;
+
   constructor(message: string) {
     super(message);
     this.name = "WorldModelValidationError";
@@ -91,7 +137,7 @@ export class WorldModelBuilder {
     const relations: WorldRelation[] = [
       { from: "objective", to: "outcome", relation: "SUPPORTS" },
       ...intent.constraints.map((constraint) => ({ from: `constraint:${constraint.id}`, to: "objective", relation: "CONSTRAINS" as const })),
-      ...intent.dependencies.map((dependency) => ({ from: "objective", to: `dependency:${dependency.id}`, relation: "DEPENDS_ON" as const })),
+      ...intent.dependencies.map((dependency) => ({ from: `objective`, to: `dependency:${dependency.id}`, relation: "DEPENDS_ON" as const })),
       ...intent.requiredEvidence.map((evidence) => ({ from: "objective", to: `evidence:${evidence.id}`, relation: "REQUIRES_EVIDENCE" as const })),
     ];
 
