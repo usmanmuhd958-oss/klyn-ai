@@ -98,20 +98,24 @@ jobs:
           import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
           import { tmpdir } from "node:os";
           import { join } from "node:path";
-          import {
+          import { pathToFileURL } from "node:url";
+
+          const root = process.cwd();
+          const importFromRoot = (path: string): string => pathToFileURL(join(root, path)).href;
+          const {
             AgentDAGScheduler,
             AgentToolExecutor,
             AgentTrajectoryLedger,
             SelfHealingController,
             ProductionPromotionSignoffEngine,
-          } from "./packages/agent-core/src/index.ts";
-          import {
+          } = await import(importFromRoot("packages/agent-core/src/index.ts"));
+          const {
             CodeGraphIndexer,
             ConsensusPromotionController,
             PHASE_7A_CERTIFIED_SUBSTRATES,
             PHASE_7A_EXPECTED_TESTS,
-          } from "./packages/cognitive-engine/src/index.ts";
-          import { HermeticToolKernel } from "./packages/execution-runtime/src/hermetic-tool-kernel.ts";
+          } = await import(importFromRoot("packages/cognitive-engine/src/index.ts"));
+          const { HermeticToolKernel } = await import(importFromRoot("packages/execution-runtime/src/hermetic-tool-kernel.ts"));
 
           const sha256 = (value: string): string => createHash("sha256").update(value, "utf8").digest("hex");
           const intentId = "intent-phase-7a-e2e";
@@ -148,7 +152,7 @@ jobs:
                   dependsOn: [],
                   readPaths: ["src/index.ts"],
                   writePaths: [],
-                  run: async (context) => {
+                  run: async (context: { readonly runId: string; readonly agentId: string; readonly intentId: string; readonly role: "planner" }) => {
                     const execution = await executor.execute({
                       call: {
                         callId: "context-read",
@@ -197,7 +201,7 @@ jobs:
                       operation: "apply-replacements" as const,
                       path: "src/target.ts",
                       expectedSha256,
-                      replacements: [{ start: start + 2, end: start + 3, replacement: " 1" }],
+                      replacements: [{ start: start + 2, end: start + 3, replacement: "1;" }],
                     },
                   };
                 },
