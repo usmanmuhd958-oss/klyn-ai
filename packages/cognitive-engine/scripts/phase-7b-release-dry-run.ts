@@ -6,7 +6,7 @@ import { spawn } from "node:child_process";
 import {
   ConsensusPromotionController,
   PHASE_7A_CERTIFIED_SUBSTRATES,
-  PHASE_7A_EXPECTED_TESTS,
+  PHASE_7C_EXPECTED_TESTS,
 } from "../src/index.ts";
 import { ProductionPromotionSignoffEngine } from "../../agent-core/src/index.ts";
 import { HermeticToolKernel } from "../../execution-runtime/src/hermetic-tool-kernel.ts";
@@ -35,7 +35,7 @@ const sha256 = (value: unknown): string =>
     .update(JSON.stringify(canonicalize(value)), "utf8")
     .digest("hex");
 
-const readTapSummary = async (path: string, suite: keyof typeof PHASE_7A_EXPECTED_TESTS) => {
+const readTapSummary = async (path: string, suite: keyof typeof PHASE_7C_EXPECTED_TESTS) => {
   const text = await readFile(path, "utf8");
   const pick = (name: string): number => {
     const matches = [...text.matchAll(new RegExp(`# ${name} (\\d+)`, "g"))];
@@ -69,13 +69,13 @@ const main = async (): Promise<void> => {
     "agent-core": await readTapSummary("/tmp/klyn-7b-agent.tap", "agent-core"),
   } as const;
 
-  const workspace = await mkdtemp(join(tmpdir(), "klyn-7b-"));
+  const workspace = await mkdtemp(join(tmpdir(), "klyn-7c-"));
   try {
     await writeFile(join(workspace, "target.ts"), "export const value = 1;\n", "utf8");
     const kernel = new HermeticToolKernel({ workspaceRoot: workspace, enableBash: false });
-    const intentId = "intent-phase-7b-release-dry-run";
+    const intentId = "intent-phase-7c-release-final";
     for (const callId of ["release-context-read", "release-proof-read"]) {
-      await kernel.execute({ callId, agentId: "release-validator-7b", intentId, workingDirectory: ".", tool: "file-tree", args: { operation: "read", path: "target.ts" } });
+      await kernel.execute({ callId, agentId: "release-validator-7c", intentId, workingDirectory: ".", tool: "file-tree", args: { operation: "read", path: "target.ts" } });
     }
 
     const auditTrail = kernel.getAuditTrail();
@@ -111,14 +111,15 @@ const main = async (): Promise<void> => {
     }
 
     const manifestBody = {
-      manifestVersion: "7B-1.0.0" as const,
+      manifestVersion: "7C-1.0.0" as const,
+      identifier: "KLYN-CORE-1.0-RELEASE-FINAL" as const,
       status: decision.state === "APPROVED" ? "RELEASE_READY" : "BLOCKED",
       targetCommit: TARGET_COMMIT,
       phase7aHead: PHASE_7A_HEAD,
       validatedPRHeads: PR_HEADS,
       certifiedSubstrates: PHASE_7A_CERTIFIED_SUBSTRATES,
       testEvidence,
-      expectedTestEvidence: PHASE_7A_EXPECTED_TESTS,
+      expectedTestEvidence: PHASE_7C_EXPECTED_TESTS,
       lockfileSha256: lockfileHash,
       backendOnly: true,
       processSandboxManagerModified: false,
@@ -133,7 +134,7 @@ const main = async (): Promise<void> => {
     const outputPath = join(outputDir, `release-manifest.${manifest.manifestHash}.json`);
     await writeFile(outputPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 
-    console.log(JSON.stringify({ status: manifest.status, manifestHash: manifest.manifestHash, decision: decision.state, testEvidence, expectedTestEvidence: PHASE_7A_EXPECTED_TESTS, auditChainValid: decision.auditChain.valid, lockfileSha256: lockfileHash, outputPath, reasons: decision.reasons }, null, 2));
+    console.log(JSON.stringify({ status: manifest.status, manifestHash: manifest.manifestHash, decision: decision.state, testEvidence, expectedTestEvidence: PHASE_7C_EXPECTED_TESTS, auditChainValid: decision.auditChain.valid, lockfileSha256: lockfileHash, signoffArtifactHash: signoff?.artifactHash ?? null, outputPath, reasons: decision.reasons }, null, 2));
     if (decision.state !== "APPROVED") process.exitCode = 2;
   } finally {
     await rm(workspace, { recursive: true, force: true });
