@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import {
   ConsensusPromotionController,
@@ -12,6 +12,7 @@ import { ProductionPromotionSignoffEngine } from "../../agent-core/src/index.ts"
 import { HermeticToolKernel } from "../../execution-runtime/src/hermetic-tool-kernel.ts";
 
 const TARGET_COMMIT = process.env.KLYN_TARGET_COMMIT ?? "";
+const ROOT = process.env.GITHUB_WORKSPACE ?? resolve(process.cwd(), "../..");
 const PHASE_7A_HEAD = "a4fbf2debd1d2853d4efea9d0adf9eea50d68387";
 const PR_HEADS = Object.freeze({
   "51": "fb9f11eb8882f6d427855f54ed56d0ed793722fd",
@@ -42,24 +43,15 @@ const readTapSummary = async (path: string, suite: keyof typeof PHASE_7A_EXPECTE
     if (!match) throw new Error(`Missing TAP '${name}' summary for ${suite}`);
     return Number(match[1]);
   };
-  return Object.freeze({
-    suite,
-    passed: pick("pass"),
-    total: pick("tests"),
-    failed: pick("fail"),
-    skipped: pick("skipped"),
-  });
+  return Object.freeze({ suite, passed: pick("pass"), total: pick("tests"), failed: pick("fail"), skipped: pick("skipped") });
 };
 
 const assertGitAncestry = async (): Promise<void> => {
   for (const [label, sha] of Object.entries({ ...PR_HEADS, "7A": PHASE_7A_HEAD })) {
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn("git", ["merge-base", "--is-ancestor", sha, "HEAD"]);
+    await new Promise<void>((resolvePromise, reject) => {
+      const child = spawn("git", ["-C", ROOT, "merge-base", "--is-ancestor", sha, "HEAD"]);
       child.once("error", reject);
-      child.once("exit", (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`${label} substrate ${sha} is not an ancestor of HEAD`));
-      });
+      child.once("exit", (code) => code === 0 ? resolvePromise() : reject(new Error(`${label} substrate ${sha} is not an ancestor of HEAD`)));
     });
   }
 };
@@ -69,7 +61,7 @@ const main = async (): Promise<void> => {
   if (TARGET_COMMIT !== process.env.GITHUB_SHA) throw new Error("Target commit must equal GITHUB_SHA");
   await assertGitAncestry();
 
-  const lockfile = await readFile("pnpm-lock.yaml", "utf8");
+  const lockfile = await readFile(join(ROOT, "pnpm-lock.yaml"), "utf8");
   const lockfileHash = sha256(lockfile);
   const tap = {
     "cognitive-engine": await readTapSummary("/tmp/klyn-7b-cognitive.tap", "cognitive-engine"),
@@ -82,39 +74,22 @@ const main = async (): Promise<void> => {
     await writeFile(join(workspace, "target.ts"), "export const value = 1;\n", "utf8");
     const kernel = new HermeticToolKernel({ workspaceRoot: workspace, enableBash: false });
     const intentId = "intent-phase-7b-release-dry-run";
-
-    await kernel.execute({
-      callId: "release-context-read",
-      agentId: "release-validator-7b",
-      intentId,
-      workingDirectory: ".",
-      tool: "file-tree",
-      args: { operation: "read", path: "target.ts" },
-    });
-    await kernel.execute({
-      callId: "release-proof-read",
-      agentId: "release-validator-7b",
-      intentId,
-      workingDirectory: ".",
-      tool: "file-tree",
-      args: { operation: "read", path: "target.ts" },
-    });
+    for (const callId of ["release-context-read", "release-proof-read"]) {
+      await kernel.execute({ callId, agentId: "release-validator-7b", intentId, workingDirectory: ".", tool: "file-tree", args: { operation: "read", path: "target.ts" } });
+    }
 
     const auditTrail = kernel.getAuditTrail();
     const testEvidence = [tap["cognitive-engine"], tap["execution-runtime"], tap["agent-core"]];
     const controller = new ConsensusPromotionController();
-    const decision = controller.evaluate(
-      {
-        intentId,
-        auditTrail,
-        testEvidence,
-        selfHealing: { attempts: 1, maxAttempts: 3, recovered: true, exhausted: false, unhandledErrors: 0 },
-        noFrontendChanges: true,
-        coreInvariantsUnmodified: true,
-        certifiedSubstrates: PHASE_7A_CERTIFIED_SUBSTRATES,
-      },
-      TARGET_COMMIT,
-    );
+    const decision = controller.evaluate({
+      intentId,
+      auditTrail,
+      testEvidence,
+      selfHealing: { attempts: 1, maxAttempts: 3, recovered: true, exhausted: false, unhandledErrors: 0 },
+      noFrontendChanges: true,
+      coreInvariantsUnmodified: true,
+      certifiedSubstrates: PHASE_7A_CERTIFIED_SUBSTRATES,
+    }, TARGET_COMMIT);
 
     let signoff: ReturnType<ProductionPromotionSignoffEngine["create"]> | null = null;
     if (decision.state === "APPROVED") {
@@ -149,32 +124,16 @@ const main = async (): Promise<void> => {
       processSandboxManagerModified: false,
       coreInvariantsModified: false,
       auditChain: decision.auditChain,
-      decision: {
-        state: decision.state,
-        evidenceHash: decision.evidenceHash,
-        decisionHash: decision.decisionHash,
-        reasons: decision.reasons,
-      },
+      decision: { state: decision.state, evidenceHash: decision.evidenceHash, decisionHash: decision.decisionHash, reasons: decision.reasons },
       productionSignoff: signoff,
     };
     const manifest = Object.freeze({ ...manifestBody, manifestHash: sha256(manifestBody) });
-    const outputDir = "artifacts/phase-7b";
+    const outputDir = join(ROOT, "artifacts/phase-7b");
     await mkdir(outputDir, { recursive: true });
-    const outputPath = `${outputDir}/release-manifest.${manifest.manifestHash}.json`;
+    const outputPath = join(outputDir, `release-manifest.${manifest.manifestHash}.json`);
     await writeFile(outputPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 
-    console.log(JSON.stringify({
-      status: manifest.status,
-      manifestHash: manifest.manifestHash,
-      decision: decision.state,
-      testEvidence,
-      expectedTestEvidence: PHASE_7A_EXPECTED_TESTS,
-      auditChainValid: decision.auditChain.valid,
-      lockfileSha256: lockfileHash,
-      outputPath,
-      reasons: decision.reasons,
-    }, null, 2));
-
+    console.log(JSON.stringify({ status: manifest.status, manifestHash: manifest.manifestHash, decision: decision.state, testEvidence, expectedTestEvidence: PHASE_7A_EXPECTED_TESTS, auditChainValid: decision.auditChain.valid, lockfileSha256: lockfileHash, outputPath, reasons: decision.reasons }, null, 2));
     if (decision.state !== "APPROVED") process.exitCode = 2;
   } finally {
     await rm(workspace, { recursive: true, force: true });
