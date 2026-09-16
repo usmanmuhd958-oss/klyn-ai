@@ -20,3 +20,38 @@ export { RuntimeSnapshotEngine } from "./runtime-snapshot-engine.js";
 export type { RuntimeSnapshot } from "./runtime-snapshot-engine.js";
 export { EphemeralSandboxRuntime } from "./ephemeral-sandbox-runtime.js";
 export type { EphemeralSandboxRequest, EphemeralSandboxRuntimeOptions } from "./ephemeral-sandbox-runtime.js";
+export { SandboxPolicyEngine, DEFAULT_SANDBOX_POLICY_CEILINGS, SandboxPolicyViolation } from "./SandboxPolicyEngine.js";
+export type { GovernedSandboxPolicy, IntentResourceBudget, SandboxFilesystemAccess, SandboxPolicyCeilings, SandboxPolicyContext, SandboxPolicyRequest, SandboxViolationCode } from "./SandboxPolicyEngine.js";
+export { PolicyGovernedSandbox } from "./PolicyGovernedSandbox.js";
+export type { PolicyGovernedSandboxRequest, PolicyGovernedSandboxResult, PolicyGovernedSandboxOptions } from "./PolicyGovernedSandbox.js";
+export { ObservationCollector, SYSTEM_CLOCK } from "./ObservationCollector.js";
+export type { ObservationClock, ObservationEvent, ObservationEventInput, ObservationEventType, ObservationSessionMetadata, ObservationSnapshot } from "./ObservationCollector.js";
+export { HermeticToolKernel, HermeticToolError } from "./hermetic-tool-kernel.js";
+export type {
+  AstPatchArgs,
+  AstPatchReplacement,
+  AstPatchResult,
+  BashResult,
+  BashToolArgs,
+  FileDeleteArgs,
+  FileMkdirArgs,
+  FileMoveArgs,
+  FileMutationResult,
+  FileReadArgs,
+  FileReadResult,
+  FileTreeToolArgs,
+  FileWriteArgs,
+  GitApplyArgs,
+  GitDiffArgs,
+  GitResult,
+  GitStatusArgs,
+  GitToolArgs,
+  HermeticToolCall,
+  HermeticToolResult,
+  HermeticToolKernelOptions,
+  ToolAuditRecord,
+  ToolCall,
+  ToolCallMetadata,
+  ToolExecutionKernel,
+  ToolName,
+} from "./hermetic-tool-contracts.js";
