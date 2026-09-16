@@ -1,4 +1,4 @@
-import type { Dependency, IntentSpec, ResourceBudget } from "./IntentSpec.js";
+import { deriveDeterministicIntentId, verifyIntentContentHash, type Dependency, type IntentSpec, type ResourceBudget } from "./IntentSpec.js";
 
 export interface WorldEntity {
   id: string;
@@ -95,8 +95,11 @@ export class WorldModelBuilder {
     if (intent.state !== "FROZEN" && intent.state !== "EXECUTABLE") {
       throw new WorldModelValidationError(`Intent ${intent.intentId} must be FROZEN or EXECUTABLE; received ${intent.state}`);
     }
-    if (!/^[a-f0-9]{64}$/.test(intent.contentHash)) {
-      throw new WorldModelValidationError("Intent contentHash must be a SHA-256 digest");
+    if (!verifyIntentContentHash(intent)) {
+      throw new WorldModelValidationError(`Intent ${intent.intentId} content hash does not match canonical content`);
+    }
+    if (deriveDeterministicIntentId(intent.contentHash) !== intent.intentId) {
+      throw new WorldModelValidationError(`Intent ${intent.intentId} identity does not match its content hash`);
     }
 
     const slots: WorldSlot[] = [
@@ -137,7 +140,7 @@ export class WorldModelBuilder {
     const relations: WorldRelation[] = [
       { from: "objective", to: "outcome", relation: "SUPPORTS" },
       ...intent.constraints.map((constraint) => ({ from: `constraint:${constraint.id}`, to: "objective", relation: "CONSTRAINS" as const })),
-      ...intent.dependencies.map((dependency) => ({ from: `objective`, to: `dependency:${dependency.id}`, relation: "DEPENDS_ON" as const })),
+      ...intent.dependencies.map((dependency) => ({ from: "objective", to: `dependency:${dependency.id}`, relation: "DEPENDS_ON" as const })),
       ...intent.requiredEvidence.map((evidence) => ({ from: "objective", to: `evidence:${evidence.id}`, relation: "REQUIRES_EVIDENCE" as const })),
     ];
 
