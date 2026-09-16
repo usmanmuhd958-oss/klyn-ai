@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, lstat, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import {
   DEFAULT_PROCESS_SANDBOX_POLICY,
@@ -290,8 +290,13 @@ export class HermeticToolKernel implements ToolExecutionKernel {
     if (!sameWorkspace(this.workspaceRoot, absolutePath)) throw new HermeticToolError(`Path escapes workspace root: ${candidate}`);
 
     const realRoot = await realpath(this.workspaceRoot);
-    const existing = await this.exists(absolutePath);
-    if (existing || existingRequired) {
+    const entry = await lstat(absolutePath).catch((error) => {
+      const code = error instanceof Error && "code" in error ? error.code : undefined;
+      if (code === "ENOENT") return null;
+      throw error;
+    });
+
+    if (entry !== null || existingRequired) {
       const real = await realpath(absolutePath);
       if (!sameWorkspace(realRoot, real)) throw new HermeticToolError(`Symlink escapes workspace root: ${candidate}`);
       return real;
