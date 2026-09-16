@@ -320,7 +320,6 @@ export class SwarmDagOrchestrator {
 
     return new Promise((resolve, reject) => {
       let settled = false;
-      let timer: ReturnType<typeof setTimeout> | undefined;
       const taskController = new AbortController();
       const taskContext: AgentTaskContext = {
         ...context,
@@ -328,7 +327,7 @@ export class SwarmDagOrchestrator {
       };
 
       const cleanup = () => {
-        if (timer !== undefined) clearTimeout(timer);
+        clearTimeout(timer);
         signal.removeEventListener("abort", onAbort);
       };
 
@@ -351,7 +350,7 @@ export class SwarmDagOrchestrator {
 
       signal.addEventListener("abort", onAbort, { once: true });
 
-      timer = setTimeout(() => {
+      const timer = setTimeout(() => {
         if (settled) return;
         const error = new DagTimeoutError(task.id, timeoutMs);
         taskController.abort(error);
