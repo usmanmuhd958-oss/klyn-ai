@@ -39,7 +39,7 @@ test("runs all four adversarial scenarios through the five-plane governance path
     [
       ["FCR-01", "REJECTED", "REJECTED_GOVERNANCE"],
       ["FCR-02", "REJECTED", "REJECTED_GOVERNANCE"],
-      ["FCR-03", "UNKNOWN", "REJECTED_GOVERNANCE"],
+      ["FCR-03", "OBSERVED", "REJECTED_GOVERNANCE"],
       ["FCR-04", "REJECTED", "REJECTED_GOVERNANCE"],
     ],
   );
