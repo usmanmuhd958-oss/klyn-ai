@@ -37,6 +37,7 @@ function canonicalParts(task: TaskSpec, target: HardwareTarget, resources: Runti
     String(task.priority),
     target.targetId,
     target.backend,
+    [...target.isolationModes].sort().join(","),
     String(resources.cpuCores),
     String(resources.cpuMillis),
     String(resources.memoryBytes),
@@ -55,15 +56,17 @@ function canonicalParts(task: TaskSpec, target: HardwareTarget, resources: Runti
 }
 
 function chooseIsolation(task: TaskSpec, target: HardwareTarget, policy: SandboxPolicy): IsolationMode {
-  if (!task.signals.requiresIsolation) return policy.defaultIsolation;
-  if (!target.supportsIsolation) {
-    throw new RuntimeBoundaryViolation("ISOLATION_REQUIRED", "Selected target cannot provide isolation");
+  const allowed = [...policy.allowedIsolationModes]
+    .filter((mode) => target.isolationModes.includes(mode))
+    .sort((left, right) => left.localeCompare(right));
+  if (allowed.length === 0) {
+    throw new RuntimeBoundaryViolation("ISOLATION_POLICY", `Target ${target.targetId} has no compatible sandbox mode`);
   }
+
   const preferred: IsolationMode = target.backend === "REMOTE_CLUSTER" ? "REMOTE_SANDBOX" : policy.defaultIsolation;
-  if (!policy.allowedIsolationModes.includes(preferred)) {
-    throw new RuntimeBoundaryViolation("ISOLATION_POLICY", `Isolation mode ${preferred} is not permitted`);
-  }
-  return preferred;
+  if (allowed.includes(preferred)) return preferred;
+  if (task.signals.requiresIsolation || preferred === policy.defaultIsolation) return allowed[0]!;
+  return allowed[0]!;
 }
 
 export class DeterministicSandboxPlanner {
