@@ -17,11 +17,13 @@ function requireString(value: unknown, field: string): string {
   return value;
 }
 
-function requireStringArray(value: unknown, field: string): readonly string[] {
+function requireStringArray(value: unknown, field: string, unique = false): readonly string[] {
   if (!Array.isArray(value) || value.some((item) => typeof item !== 'string' || item.length === 0)) {
     throw new MissionValidationError(`${field} must be an array of non-empty strings`);
   }
-  return Object.freeze([...value]);
+  const items = [...value] as string[];
+  if (unique && new Set(items).size !== items.length) throw new MissionValidationError(`${field} must not contain duplicates`);
+  return Object.freeze(items);
 }
 
 function requireState(value: unknown, field: string): MissionState {
@@ -29,6 +31,13 @@ function requireState(value: unknown, field: string): MissionState {
     throw new MissionValidationError(`${field} is not a supported mission state`);
   }
   return value as MissionState;
+}
+
+function requireDigest(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) {
+    throw new MissionValidationError(`${field} must be a SHA-256 hex digest`);
+  }
+  return value;
 }
 
 export function parseMissionGraph(input: unknown): MissionGraph {
@@ -43,8 +52,8 @@ export function parseMissionGraph(input: unknown): MissionGraph {
     return Object.freeze({
       nodeId: requireString(raw.nodeId, `nodes[${index}].nodeId`),
       state: requireState(raw.state, `nodes[${index}].state`),
-      invariantIds: requireStringArray(raw.invariantIds, `nodes[${index}].invariantIds`),
-      dependsOn: requireStringArray(raw.dependsOn, `nodes[${index}].dependsOn`),
+      invariantIds: requireStringArray(raw.invariantIds, `nodes[${index}].invariantIds`, true),
+      dependsOn: requireStringArray(raw.dependsOn, `nodes[${index}].dependsOn`, true),
     });
   });
   const invariants: MissionInvariant[] = input.invariants.map((raw, index) => {
@@ -54,9 +63,7 @@ export function parseMissionGraph(input: unknown): MissionGraph {
       statement: requireString(raw.statement, `invariants[${index}].statement`),
     });
   });
-  if (typeof input.graphDigest !== 'string' || !/^[a-f0-9]{64}$/.test(input.graphDigest)) {
-    throw new MissionValidationError('graphDigest must be a SHA-256 hex digest');
-  }
+  const graphDigest = requireDigest(input.graphDigest, 'graphDigest');
   const nodeIds = new Set(nodes.map((node) => node.nodeId));
   const invariantIds = new Set(invariants.map((invariant) => invariant.invariantId));
   if (nodeIds.size !== nodes.length) throw new MissionValidationError('duplicate nodeId');
@@ -65,7 +72,7 @@ export function parseMissionGraph(input: unknown): MissionGraph {
     for (const dependency of node.dependsOn) if (!nodeIds.has(dependency)) throw new MissionValidationError(`unknown dependency: ${dependency}`);
     for (const invariantId of node.invariantIds) if (!invariantIds.has(invariantId)) throw new MissionValidationError(`unknown invariant: ${invariantId}`);
   }
-  return Object.freeze({ schemaVersion: MISSION_SCHEMA_VERSION, missionId, objectiveId, nodes: Object.freeze(nodes), invariants: Object.freeze(invariants), graphDigest: input.graphDigest });
+  return Object.freeze({ schemaVersion: MISSION_SCHEMA_VERSION, missionId, objectiveId, nodes: Object.freeze(nodes), invariants: Object.freeze(invariants), graphDigest });
 }
 
 export function parseMissionEvidence(input: unknown): MissionEvidence {
@@ -74,8 +81,7 @@ export function parseMissionEvidence(input: unknown): MissionEvidence {
   if (typeof kind !== 'string' || !EVIDENCE_KINDS.includes(kind as MissionEvidence['kind'])) throw new MissionValidationError('unsupported evidence kind');
   const issuedAtEpochMs = input.issuedAtEpochMs;
   if (typeof issuedAtEpochMs !== 'number' || !Number.isSafeInteger(issuedAtEpochMs) || issuedAtEpochMs < 0) throw new MissionValidationError('issuedAtEpochMs must be a non-negative safe integer');
-  const payloadDigest = input.payloadDigest;
-  if (typeof payloadDigest !== 'string' || !/^[a-f0-9]{64}$/.test(payloadDigest)) throw new MissionValidationError('payloadDigest must be a SHA-256 hex digest');
+  const payloadDigest = requireDigest(input.payloadDigest, 'payloadDigest');
   if (input.signatureBase64 !== undefined && (typeof input.signatureBase64 !== 'string' || input.signatureBase64.length === 0)) throw new MissionValidationError('signatureBase64 must be non-empty when provided');
   const evidence: MissionEvidence = {
     evidenceId: requireString(input.evidenceId, 'evidenceId'),
@@ -85,9 +91,9 @@ export function parseMissionEvidence(input: unknown): MissionEvidence {
     kind: kind as MissionEvidence['kind'],
     statement: requireString(input.statement, 'statement'),
     payloadDigest,
-    ...(input.artifactDigest === undefined ? {} : { artifactDigest: requireString(input.artifactDigest, 'artifactDigest') }),
-    invariantIds: requireStringArray(input.invariantIds, 'invariantIds'),
-    predecessorEvidenceIds: requireStringArray(input.predecessorEvidenceIds, 'predecessorEvidenceIds'),
+    ...(input.artifactDigest === undefined ? {} : { artifactDigest: requireDigest(input.artifactDigest, 'artifactDigest') }),
+    invariantIds: requireStringArray(input.invariantIds, 'invariantIds', true),
+    predecessorEvidenceIds: requireStringArray(input.predecessorEvidenceIds, 'predecessorEvidenceIds', true),
     issuedAtEpochMs,
     verifierId: requireString(input.verifierId, 'verifierId'),
     ...(input.signatureBase64 === undefined ? {} : { signatureBase64: input.signatureBase64 }),
