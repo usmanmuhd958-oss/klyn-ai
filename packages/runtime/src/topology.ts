@@ -7,6 +7,7 @@ import type {
   HardwareTarget,
   HardwareTopologyProvider,
   HardwareTopologySnapshot,
+  IsolationMode,
   RemoteCluster,
   TaskClassification,
   TaskSpec,
@@ -28,16 +29,16 @@ function targetScore(
   accelerator: AcceleratorKind,
   latency: number,
   capacity: ComputeCapacity,
-  supportsIsolation: boolean,
+  isolationModes: readonly IsolationMode[],
   requiresIsolation: boolean,
 ): number {
   let score = 0;
   if (classification.taskClass === "LATENCY_SENSITIVE") score += Math.max(0, 10_000 - latency * 50);
   if (classification.taskClass === "HIGH_MEMORY") score += Math.min(5_000, Math.floor(capacity.memoryBytes / (1024 * 1024 * 1024)) * 250);
   if (classification.taskClass === "BATCH") score += 2_000;
-  if (classification.taskClass === "ISOLATED_SANDBOX") score += supportsIsolation ? 5_000 : -100_000;
+  if (classification.taskClass === "ISOLATED_SANDBOX") score += isolationModes.length > 0 ? 5_000 : -100_000;
   if (accelerator === "GPU") score += capacity.gpuCount > 0 ? 3_000 : -100_000;
-  if (requiresIsolation && !supportsIsolation) score -= 100_000;
+  if (requiresIsolation && isolationModes.length === 0) score -= 100_000;
   return score;
 }
 
@@ -48,7 +49,7 @@ function acceptsTask(target: HardwareTarget, task: TaskSpec): boolean {
   if (target.capacity.gpuCount < request.gpuCount) return false;
   if (target.capacity.gpuMemoryBytes < request.minGpuMemoryBytes) return false;
   if (task.signals.requiresGpu && target.accelerator !== "GPU") return false;
-  if (task.signals.requiresIsolation && !target.supportsIsolation) return false;
+  if (task.signals.requiresIsolation && target.isolationModes.length === 0) return false;
   return true;
 }
 
@@ -118,9 +119,9 @@ export class HardwareTopologyResolver {
           estimatedLatencyMillis: 1,
           capacity,
           accelerator: "GPU" as AcceleratorKind,
-          supportsIsolation: snapshot.localIsolationModes.length > 0,
+          isolationModes: [...snapshot.localIsolationModes],
           gpuIds: [gpu.id],
-          score: targetScore(classification, "GPU", 1, capacity, snapshot.localIsolationModes.length > 0, task.signals.requiresIsolation),
+          score: targetScore(classification, "GPU", 1, capacity, snapshot.localIsolationModes, task.signals.requiresIsolation),
         });
         if (acceptsTask(target, task)) targets.push(target);
       }
@@ -134,9 +135,9 @@ export class HardwareTopologyResolver {
       estimatedLatencyMillis: 1,
       capacity: local,
       accelerator: acceleratorForGpu(0),
-      supportsIsolation: snapshot.localIsolationModes.length > 0,
+      isolationModes: [...snapshot.localIsolationModes],
       gpuIds: [],
-      score: targetScore(classification, "CPU", 1, local, snapshot.localIsolationModes.length > 0, task.signals.requiresIsolation),
+      score: targetScore(classification, "CPU", 1, local, snapshot.localIsolationModes, task.signals.requiresIsolation),
     });
     if (acceptsTask(localTarget, task)) targets.push(localTarget);
 
@@ -150,9 +151,9 @@ export class HardwareTopologyResolver {
         estimatedLatencyMillis: cluster.estimatedLatencyMillis,
         capacity: cluster.capacity,
         accelerator,
-        supportsIsolation: cluster.supportsIsolation,
+        isolationModes: [...cluster.isolationModes],
         gpuIds: [],
-        score: targetScore(classification, accelerator, cluster.estimatedLatencyMillis, cluster.capacity, cluster.supportsIsolation, task.signals.requiresIsolation),
+        score: targetScore(classification, accelerator, cluster.estimatedLatencyMillis, cluster.capacity, cluster.isolationModes, task.signals.requiresIsolation),
       });
       if (acceptsTask(target, task)) targets.push(target);
     }
