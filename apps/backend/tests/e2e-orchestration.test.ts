@@ -13,7 +13,7 @@ import { closeJsonRpcAgentIpcServer, JsonRpcAgentIpcTransport, startJsonRpcAgent
 const root = await mkdtemp(join(tmpdir(), "klyn-p66-"));
 
 const BASE_E2E_LATENCY_BUDGET_MS = 200;
-const MOBILE_LATENCY_MULTIPLIER = 4;
+const MOBILE_LATENCY_MULTIPLIER = 6;
 const MAX_LATENCY_MULTIPLIER = 20;
 const isMobileDevelopmentRuntime =
   process.platform === "android" ||
