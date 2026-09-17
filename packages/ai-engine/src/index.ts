@@ -5,9 +5,11 @@ export { ProviderError } from "./providers/http.js";
 export { OpenAIAdapter } from "./providers/openai.js";
 export { AnthropicAdapter } from "./providers/anthropic.js";
 export { GeminiAdapter } from "./providers/gemini.js";
-export { ReplicateAdapter } from "./providers/replicate.js";
+export { OllamaAdapter } from "./providers/ollama.js";
 export { UniversalChatAdapter, createUniversalAdapter } from "./providers/universal.js";
-export type { UniversalProviderConfig } from "./providers/universal.js";
+export { createBuiltinProvider, createDefaultBuiltinProvider } from "./providers/builtins.js";
+export type { BuiltinProviderConfig } from "./providers/builtins.js";
+export { ReplicateAdapter } from "./providers/replicate.js";
 export { AIProviderRouter } from "./router.js";
 export { ProviderCircuitBreaker, ProviderCircuitOpenError } from "./circuit-breaker.js";
 export type { CircuitBreakerOptions } from "./circuit-breaker.js";
@@ -44,3 +46,32 @@ export { SpatialBusError } from "./types/spatial-bus.types.js";
 export { PlannerStateConflictError } from "./types/planner-persistence.types.js";
 export type { SpatialBusErrorCode, SpatialBusEvent, SpatialBusEventType, SpatialCanvasNodeState, SpatialExecutionBusOptions, SpatialExecutionInput, SpatialNodeStatus, SpatialRuntimeListener, SpatialRuntimeStream, SpatialTaskExecutor } from "./types/spatial-bus.types.js";
 export type { PlannerStateCompareAndSwapInput, PlannerStatePersistence, PlannerStatePersistenceConfig, PlannerStatePersistenceRow } from "./types/planner-persistence.types.js";
+export {
+  AiEngine,
+  ProviderHealthTracker,
+  TokenCostMeter,
+  ContextSelector,
+  AiEngineError,
+} from "./control-plane/index.js";
+export type {
+  AiEngineOptions,
+  AiEngineErrorCode,
+  AiEngineErrorOptions,
+  AiEngineProvider,
+  AiCompletionRequest,
+  AiCompletionResult,
+  ContextItem,
+  ContextPriority,
+  ContextSelectionPolicy,
+  ContextSelectionResult,
+  MeterStatus,
+  ModelCapabilityName,
+  ModelDefinition,
+  ModelPricing,
+  ProviderHealthPolicy,
+  ProviderHealthSnapshot,
+  ProviderHealthState,
+  RoutingObjective,
+  RoutingPolicy,
+  TokenMeterRecord,
+} from "./control-plane/index.js";
