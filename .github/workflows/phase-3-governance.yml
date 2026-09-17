@@ -38,8 +38,10 @@ jobs:
         run: timeout --signal=TERM --kill-after=15s 300s pnpm install --frozen-lockfile
       - name: TypeScript Gate
         run: timeout --signal=TERM --kill-after=15s 300s pnpm exec tsc -p packages/governance/tsconfig.json --noEmit
+      - name: Test Compile Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm exec tsc -p packages/governance/tsconfig.test.json
       - name: Test Gate
-        run: timeout --signal=TERM --kill-after=15s 300s pnpm exec tsx --test --test-timeout=15000 packages/governance/tests/governance.test.ts
+        run: timeout --signal=TERM --kill-after=15s 300s node --test --test-timeout=15000 /tmp/klyn-governance-test-dist/tests/governance.test.js
       - name: Build Gate
         run: timeout --signal=TERM --kill-after=15s 300s pnpm exec tsc -p packages/governance/tsconfig.json
       - name: Strict Type Audit
