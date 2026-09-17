@@ -18,6 +18,16 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Mirror to GitLab
+      - name: Set up SSH Key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.GITLAB_SSH_KEY }}
+
+      - name: Add GitLab to Known Hosts
         run: |
-          git push --force https://gitlab-ci-token:$\{\{ secrets.GITLAB_TOKEN }}@gitlab.com/usmanmuhd958-oss/klyn-ai.git main:main
+          mkdir -p ~/.ssh
+          ssh-keyscan gitlab.com >> ~/.ssh/known_hosts
+
+      - name: Push to GitLab
+        run: |
+          git push --force git@gitlab.com:usmanmuhd958-oss/klyn-ai.git main:main
