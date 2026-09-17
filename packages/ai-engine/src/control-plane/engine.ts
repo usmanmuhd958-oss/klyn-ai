@@ -155,7 +155,8 @@ export class AiEngine {
 
     let attempts = 0;
     let lastError: unknown;
-    for (const provider of candidates.slice(0, routing.maxAttempts)) {
+    for (const provider of candidates) {
+      if (attempts >= routing.maxAttempts) break;
       if (!this.health.canAttempt(provider.id)) continue;
       attempts += 1;
       const started = performance.now();
