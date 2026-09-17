@@ -27,7 +27,7 @@ function topology(): HardwareTopologySnapshot {
     localGpus: Object.freeze([
       Object.freeze({ id: "gpu0", vendor: "TestGPU", model: "T24", memoryBytes: 24 * GB }),
     ]),
-    localIsolationModes: Object.freeze(["PROCESS", "CONTAINER"]),
+    localIsolationModes: Object.freeze(["PROCESS", "CONTAINER"] as const),
     remoteClusters: Object.freeze([
       Object.freeze({
         id: "lowlat",
