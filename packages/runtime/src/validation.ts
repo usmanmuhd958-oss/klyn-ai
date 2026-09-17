@@ -5,7 +5,9 @@ import type {
   HardwareTopologySnapshot,
   RemoteCluster,
   ResourceRequest,
+  RuntimeExecutionObservation,
   RuntimeLimits,
+  RuntimeResourceUsage,
   TaskSignals,
   TaskSpec,
 } from "./types.js";
@@ -118,6 +120,39 @@ export function parseTaskSpec(input: unknown): TaskSpec {
     args: expectStringArray(object.args, "task.args"),
     priority: priorityValue as 0 | 1 | 2 | 3,
     signals: parseSignals(object.signals),
+  });
+}
+
+function parseUsage(input: unknown): RuntimeResourceUsage {
+  const object = expectObject(input, "observation.usage");
+  return freezeDeep({
+    cpuMillis: expectInteger(object.cpuMillis, "observation.usage.cpuMillis", 0),
+    memoryBytes: expectInteger(object.memoryBytes, "observation.usage.memoryBytes", 0),
+    wallClockMillis: expectInteger(object.wallClockMillis, "observation.usage.wallClockMillis", 0),
+    gpuCount: expectInteger(object.gpuCount, "observation.usage.gpuCount", 0),
+    gpuMemoryBytes: expectInteger(object.gpuMemoryBytes, "observation.usage.gpuMemoryBytes", 0),
+    networkRequests: expectInteger(object.networkRequests, "observation.usage.networkRequests", 0),
+    artifactBytes: expectInteger(object.artifactBytes, "observation.usage.artifactBytes", 0),
+  });
+}
+
+export function parseExecutionObservation(input: unknown): RuntimeExecutionObservation {
+  const object = expectObject(input, "observation");
+  const exitCodeInput = object.exitCode;
+  const exitCode = exitCodeInput === null ? null : expectInteger(exitCodeInput, "observation.exitCode", 0);
+  const verification = expectObject(object.verification, "observation.verification");
+  const outputDigest = expectString(object.outputDigest, "observation.outputDigest");
+  if (!/^[a-f0-9]{64}$/.test(outputDigest)) {
+    throw new RuntimeBoundaryViolation("INVALID_OUTPUT_DIGEST", "observation.outputDigest must be SHA-256 hex");
+  }
+  return freezeDeep({
+    exitCode,
+    usage: parseUsage(object.usage),
+    verification: {
+      verified: expectBoolean(verification.verified, "observation.verification.verified"),
+      reasons: expectStringArray(verification.reasons, "observation.verification.reasons"),
+    },
+    outputDigest,
   });
 }
 
