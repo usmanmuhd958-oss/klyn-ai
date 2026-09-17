@@ -33,7 +33,7 @@ function isLoopback(hostname: string): boolean {
 }
 
 function assertTrustedEndpoint(provider: BuiltinProviderConfig["provider"], baseUrl: string, allowlistedRemoteHosts: readonly string[] = []): void {
-  const url = new URL(baseUrl);
+  const url = new globalThis.URL(baseUrl);
   const host = url.hostname.toLowerCase();
   const allowedRemote = new Set(allowlistedRemoteHosts.map((value) => value.toLowerCase()));
   const managedHost = MANAGED_HOSTS[provider];
