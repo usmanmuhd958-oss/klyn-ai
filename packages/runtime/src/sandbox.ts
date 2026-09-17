@@ -34,6 +34,7 @@ function canonicalParts(task: TaskSpec, target: HardwareTarget, resources: Runti
     task.taskId,
     task.workloadRef,
     JSON.stringify(task.args),
+    String(task.priority),
     target.targetId,
     target.backend,
     String(resources.cpuCores),
@@ -58,7 +59,7 @@ function chooseIsolation(task: TaskSpec, target: HardwareTarget, policy: Sandbox
   if (!target.supportsIsolation) {
     throw new RuntimeBoundaryViolation("ISOLATION_REQUIRED", "Selected target cannot provide isolation");
   }
-  const preferred = target.backend === "REMOTE_CLUSTER" ? "REMOTE_SANDBOX" : policy.defaultIsolation;
+  const preferred: IsolationMode = target.backend === "REMOTE_CLUSTER" ? "REMOTE_SANDBOX" : policy.defaultIsolation;
   if (!policy.allowedIsolationModes.includes(preferred)) {
     throw new RuntimeBoundaryViolation("ISOLATION_POLICY", `Isolation mode ${preferred} is not permitted`);
   }
@@ -88,39 +89,32 @@ export class DeterministicSandboxPlanner {
   }
 
   verify(plan: SandboxPlan, executionPlan: ExecutionPlan): boolean {
-    const expected = this.create(
-      executionPlan.taskId === executionPlan.taskId
-        ? {
-            ...({
-              schemaVersion: "1.0.0",
-              taskId: executionPlan.taskId,
-              workloadRef: executionPlan.taskId,
-              args: [],
-              priority: 0,
-              signals: {
-                estimatedCpuMillis: executionPlan.resources.cpuMillis,
-                estimatedMemoryBytes: executionPlan.resources.memoryBytes,
-                requiresIsolation: executionPlan.classification.taskClass === "ISOLATED_SANDBOX",
-                preferredAccelerator: executionPlan.topology.selected.accelerator,
-                requiresGpu: executionPlan.resources.gpuCount > 0,
-                requiresNetwork: executionPlan.resources.networkRequests > 0,
-                resourceRequest: {
-                  minCpuCores: executionPlan.resources.cpuCores,
-                  maxCpuMillis: executionPlan.resources.cpuMillis,
-                  maxMemoryBytes: executionPlan.resources.memoryBytes,
-                  maxWallClockMillis: executionPlan.resources.wallClockMillis,
-                  gpuCount: executionPlan.resources.gpuCount,
-                  minGpuMemoryBytes: executionPlan.resources.gpuMemoryBytes,
-                  maxNetworkRequests: executionPlan.resources.networkRequests,
-                  maxArtifactBytes: executionPlan.resources.artifactBytes,
-                },
-              },
-            } as TaskSpec),
-          }
-        : ({} as TaskSpec),
-      executionPlan.topology.selected,
-      executionPlan.resources,
-    );
+    const task: TaskSpec = freezeDeep({
+      schemaVersion: "1.0.0",
+      taskId: executionPlan.taskId,
+      workloadRef: executionPlan.workloadRef,
+      args: [...executionPlan.args],
+      priority: executionPlan.priority,
+      signals: {
+        estimatedCpuMillis: executionPlan.resources.cpuMillis,
+        estimatedMemoryBytes: executionPlan.resources.memoryBytes,
+        requiresIsolation: executionPlan.classification.taskClass === "ISOLATED_SANDBOX",
+        preferredAccelerator: executionPlan.topology.selected.accelerator,
+        requiresGpu: executionPlan.resources.gpuCount > 0,
+        requiresNetwork: executionPlan.resources.networkRequests > 0,
+        resourceRequest: {
+          minCpuCores: executionPlan.resources.cpuCores,
+          maxCpuMillis: executionPlan.resources.cpuMillis,
+          maxMemoryBytes: executionPlan.resources.memoryBytes,
+          maxWallClockMillis: executionPlan.resources.wallClockMillis,
+          gpuCount: executionPlan.resources.gpuCount,
+          minGpuMemoryBytes: executionPlan.resources.gpuMemoryBytes,
+          maxNetworkRequests: executionPlan.resources.networkRequests,
+          maxArtifactBytes: executionPlan.resources.artifactBytes,
+        },
+      },
+    });
+    const expected = this.create(task, executionPlan.topology.selected, executionPlan.resources);
     return expected.sandboxId === plan.sandboxId && expected.resourcePlanHash === plan.resourcePlanHash;
   }
 }
