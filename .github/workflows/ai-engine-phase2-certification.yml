@@ -4,8 +4,10 @@ on:
   pull_request:
     branches:
       - main
+      - hardening/backend-cognitive-test-stability-20260917
     paths:
       - "packages/ai-engine/**"
+      - ".github/workflows/ai-engine-phase2-certification.yml"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
