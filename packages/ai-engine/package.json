@@ -8,7 +8,7 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.json",
     "test": "tsx --test --test-timeout=15000 tests/**/*.test.ts",
-    "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\" --max-warnings 0"
+    "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\" --ignore-pattern \"**/*.d.ts\" --max-warnings 0"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.67.0",
