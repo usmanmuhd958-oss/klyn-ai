@@ -47,7 +47,7 @@ export class ResourceConstraintEnforcer {
     if (task.signals.requiresGpu && target.accelerator !== "GPU") {
       throw new RuntimeBoundaryViolation("GPU_REQUIRED", "Task requires a GPU-capable target");
     }
-    if (task.signals.requiresIsolation && !target.supportsIsolation) {
+    if (task.signals.requiresIsolation && target.isolationModes.length === 0) {
       throw new RuntimeBoundaryViolation("ISOLATION_REQUIRED", "Task requires target isolation support");
     }
 
