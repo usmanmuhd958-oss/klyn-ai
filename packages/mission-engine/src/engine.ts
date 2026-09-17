@@ -54,8 +54,9 @@ export class VerifiableMissionGraph {
     }
     for (let index = 0; index < ORDERED_STATES.length; index += 1) {
       const current = graph.nodes.find((node) => node.state === ORDERED_STATES[index]);
+      const previous = index === 0 ? undefined : ORDERED_STATES[index - 1];
       if (!current) throw new MissionValidationError(`missing node for ${ORDERED_STATES[index]}`);
-      const expectedDependency = index === 0 ? [] : [this.nodeForStateFromGraph(graph, ORDERED_STATES[index - 1]).nodeId];
+      const expectedDependency = previous === undefined ? [] : [this.nodeForStateFromGraph(graph, previous).nodeId];
       if (current.dependsOn.length !== expectedDependency.length || current.dependsOn.some((id, depIndex) => id !== expectedDependency[depIndex])) {
         throw new MissionValidationError(`${current.state} must depend only on ${expectedDependency.length === 0 ? 'no predecessor' : expectedDependency[0]}`);
       }
@@ -67,12 +68,12 @@ export class VerifiableMissionGraph {
     return this.nodeForStateFromGraph(this.graph, state);
   }
 
-  public requiredStateAfter(state: MissionState | 'NOT_STARTED'): RequiredMissionState {
-    if (state === 'FAILED') throw new MissionTransitionError('failed missions cannot advance');
-    const index = state === 'NOT_STARTED' ? -1 : ORDERED_STATES.indexOf(state as RequiredMissionState);
+  public requiredStateAfter(state: RequiredMissionState | 'NOT_STARTED'): RequiredMissionState {
+    const index = state === 'NOT_STARTED' ? -1 : ORDERED_STATES.indexOf(state);
     if (index < 0) return ORDERED_STATES[0];
-    if (index >= ORDERED_STATES.length - 1) throw new MissionTransitionError('mission is already complete');
-    return ORDERED_STATES[index + 1];
+    const nextState = ORDERED_STATES[index + 1];
+    if (nextState === undefined) throw new MissionTransitionError('mission is already complete');
+    return nextState;
   }
 
   private nodeForStateFromGraph(graph: MissionGraph, state: MissionState): MissionNode {
@@ -87,7 +88,7 @@ export class MissionStateMachine {
   private readonly verifier: EvidenceVerifier;
   private readonly nowEpochMs: () => number;
   private readonly evidenceById = new Map<string, MissionEvidence>();
-  private currentState: MissionState | 'NOT_STARTED' = 'NOT_STARTED';
+  private currentState: RequiredMissionState | 'NOT_STARTED' = 'NOT_STARTED';
   private readonly completedNodeIds = new Set<string>();
   private readonly acceptedEvidenceIds = new Set<string>();
   private readonly satisfiedInvariantIds = new Set<string>();
@@ -139,7 +140,7 @@ export class MissionStateMachine {
     });
   }
 
-  private validateTransition(evidence: MissionEvidence, node: MissionNode, from: MissionState | 'NOT_STARTED'): void {
+  private validateTransition(evidence: MissionEvidence, node: MissionNode, from: RequiredMissionState | 'NOT_STARTED'): void {
     if (evidence.missionId !== this.graph.graph.missionId || evidence.objectiveId !== this.graph.graph.objectiveId) {
       this.fail('evidence mission/objective identity mismatch');
     }
@@ -226,7 +227,7 @@ export class MissionStateMachine {
     }
   }
 
-  private latestEvidenceForState(state: MissionState): MissionEvidence | undefined {
+  private latestEvidenceForState(state: RequiredMissionState): MissionEvidence | undefined {
     const nodeId = this.graph.nodeForState(state).nodeId;
     return [...this.evidenceById.values()].find((evidence) => evidence.nodeId === nodeId);
   }
@@ -235,7 +236,7 @@ export class MissionStateMachine {
     return this.latestEvidenceForState('ARTIFACT_PRODUCED')?.artifactDigest;
   }
 
-  private transitionReason(state: MissionState): string {
+  private transitionReason(state: RequiredMissionState): string {
     if (state === 'TEST_PASSED') return 'test passed; requirement remains unverified until cryptographic requirement proof is accepted';
     if (state === 'REQUIREMENT_VERIFIED') return 'required mission invariants verified by cryptographically valid evidence';
     if (state === 'DEPLOYMENT_CONFIRMED') return 'deployment attested after requirement verification';
