@@ -5,13 +5,18 @@ import type {
   RuntimeFabricOptions,
   RuntimeResourceUsage,
   RuntimeStatus,
-  TaskSpec,
 } from "./types.js";
 import { TaskClassifier, DEFAULT_CLASSIFICATION_POLICY } from "./classifier.js";
 import { HardwareTopologyResolver } from "./topology.js";
 import { ResourceConstraintEnforcer, DEFAULT_RUNTIME_LIMITS } from "./resource-enforcer.js";
 import { DeterministicSandboxPlanner, DEFAULT_SANDBOX_POLICY } from "./sandbox.js";
-import { RuntimeBoundaryViolation, freezeDeep, parseTaskSpec, validateTopology } from "./validation.js";
+import {
+  RuntimeBoundaryViolation,
+  freezeDeep,
+  parseExecutionObservation,
+  parseTaskSpec,
+  validateTopology,
+} from "./validation.js";
 
 function usageWithinPlan(usage: RuntimeResourceUsage, plan: ExecutionPlan): boolean {
   return (
@@ -25,14 +30,9 @@ function usageWithinPlan(usage: RuntimeResourceUsage, plan: ExecutionPlan): bool
   );
 }
 
-function validDigest(value: string): boolean {
-  return /^[a-f0-9]{64}$/.test(value);
-}
-
 function evaluateStatus(observation: RuntimeExecutionObservation, plan: ExecutionPlan): RuntimeStatus {
   if (!usageWithinPlan(observation.usage, plan)) return "FAILED";
   if (observation.exitCode !== 0) return "FAILED";
-  if (!validDigest(observation.outputDigest)) return "UNVERIFIED";
   if (!observation.verification.verified) return "UNVERIFIED";
   return "SUCCEEDED_VERIFIED";
 }
@@ -73,7 +73,8 @@ export class RuntimeExecutionFabric {
     if (!this.sandboxPlanner.verify(plan.sandbox, plan)) {
       throw new RuntimeBoundaryViolation("SANDBOX_IDENTITY", "Sandbox plan identity verification failed");
     }
-    const observation = freezeDeep(await this.options.executor.execute(plan));
+    const rawObservation = await this.options.executor.execute(plan);
+    const observation = parseExecutionObservation(rawObservation);
     const status = evaluateStatus(observation, plan);
     return freezeDeep({ status, plan, observation });
   }
