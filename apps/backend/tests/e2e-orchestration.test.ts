@@ -12,6 +12,26 @@ import { closeJsonRpcAgentIpcServer, JsonRpcAgentIpcTransport, startJsonRpcAgent
 
 const root = await mkdtemp(join(tmpdir(), "klyn-p66-"));
 
+const BASE_E2E_LATENCY_BUDGET_MS = 200;
+const MOBILE_LATENCY_MULTIPLIER = 4;
+const MAX_LATENCY_MULTIPLIER = 20;
+const isMobileDevelopmentRuntime =
+  process.platform === "android" ||
+  Boolean(process.env.TERMUX_VERSION) ||
+  (process.env.PREFIX?.includes("/com.termux/") ?? false);
+
+function readLatencyMultiplier(raw: string | undefined): number {
+  const fallback = isMobileDevelopmentRuntime ? MOBILE_LATENCY_MULTIPLIER : 1;
+  if (raw === undefined || raw.trim() === "") return fallback;
+
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+  return Math.min(parsed, MAX_LATENCY_MULTIPLIER);
+}
+
+const TEST_LATENCY_MULTIPLIER = readLatencyMultiplier(process.env.TEST_LATENCY_MULTIPLIER);
+const E2E_LATENCY_BUDGET_MS = BASE_E2E_LATENCY_BUDGET_MS * TEST_LATENCY_MULTIPLIER;
+
 class MemoryTable implements SupabaseTableQuery {
   readonly upserts: Array<{ values: Record<string, unknown> | Record<string, unknown>[]; options?: { onConflict?: string } }> = [];
   readonly inserts: Array<Record<string, unknown> | Record<string, unknown>[]> = [];
@@ -96,7 +116,8 @@ describe("Klyn Phase 6.6 E2E orchestration", () => {
     assert.equal(ledgerClient.tables.get("dag_states")!.upserts.length, 1);
     assert.equal(ledgerClient.tables.get("provider_telemetry")!.inserts.length, 1);
     assert.equal((await store.getTask(durable.id))?.status, "COMPLETED");
-    assert.ok(performance.now() - started < 200, "full E2E flow exceeded 200ms");
+    const elapsed = performance.now() - started;
+    assert.ok(elapsed < E2E_LATENCY_BUDGET_MS, `full E2E flow exceeded ${E2E_LATENCY_BUDGET_MS}ms: ${elapsed.toFixed(3)}ms`);
   });
 
   it("recovers a crashed RUNNING worker from SQLite WAL deterministically", async () => {
@@ -135,7 +156,8 @@ describe("Klyn Phase 6.6 E2E orchestration", () => {
       assert.deepEqual([...new Set(completed.map((task) => task?.recoveryCount))], [0]);
       assert.deepEqual(unhandled, []);
       assert.equal(process.listenerCount("unhandledRejection"), beforeUnhandled + 1);
-      assert.ok(performance.now() - started < 200, "stress harness exceeded 200ms");
+      const elapsed = performance.now() - started;
+      assert.ok(elapsed < E2E_LATENCY_BUDGET_MS, `stress harness exceeded ${E2E_LATENCY_BUDGET_MS}ms: ${elapsed.toFixed(3)}ms`);
     } finally { process.off("unhandledRejection", onUnhandled); }
     assert.equal(process.listenerCount("unhandledRejection"), beforeUnhandled);
   });

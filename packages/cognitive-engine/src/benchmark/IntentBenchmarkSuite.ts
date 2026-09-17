@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { IntentCompiler, type IntentCompilationResult } from "../IntentCompiler.js";
+import { IntentCompiler } from "../IntentCompiler.js";
+import type { IntentCompilationResult, IntentContent, IntentSpec } from "../IntentSpec.js";
 import type { EvidenceObservation } from "../EvidenceGraphBuilder.js";
-import type { IntentContent, IntentSpec } from "../IntentSpec.js";
 
 export type BenchmarkScenarioKind = "SILENT_SIDE_EFFECT_INGESTION" | "FALSE_PASS_TRAP" | "PARTIAL_EVIDENCE_FALLACY" | "CONTRADICTION_BOUNDARY_TEST";
 export type ExpectedEpistemicOutcome = "UNKNOWN" | "VERIFIED" | "REJECTED";
@@ -60,6 +60,17 @@ const RISK_POLICY: IntentContent["riskPolicy"] = Object.freeze({
   autoPromotion: false,
 });
 
+const BENCHMARK_RESOURCE_BUDGET: IntentContent["resourceBudget"] = Object.freeze({
+  maxCpuMillis: 5_000,
+  maxMemoryBytes: 64 * 1024 * 1024,
+  maxWallClockMillis: 5_000,
+  maxConcurrentTasks: 2,
+  // IntentCompiler models budgets as positive integers; one is the smallest
+  // valid deterministic budget and the benchmark itself performs no network IO.
+  maxNetworkRequests: 1,
+  maxArtifactBytes: 64 * 1024,
+});
+
 function content(
   objective: string,
   acceptance: readonly IntentContent["acceptanceCriteria"][number][],
@@ -74,14 +85,7 @@ function content(
     acceptanceCriteria: Object.freeze([...acceptance]),
     riskPolicy: RISK_POLICY,
     requiredEvidence: Object.freeze([...evidence]),
-    resourceBudget: {
-      maxCpuMillis: 5_000,
-      maxMemoryBytes: 64 * 1024 * 1024,
-      maxWallClockMillis: 5_000,
-      maxConcurrentTasks: 2,
-      maxNetworkRequests: 0,
-      maxArtifactBytes: 64 * 1024,
-    },
+    resourceBudget: BENCHMARK_RESOURCE_BUDGET,
   };
 }
 
@@ -127,7 +131,14 @@ export class IntentBenchmarkSuiteCompiler {
     for (const fixture of ordered) {
       const result = this.intentCompiler.compile(fixture.intentContent);
       if (!result.accepted) throw new IntentBenchmarkSuiteError(this.formatCompilationFailure(fixture.scenarioId, result));
-      compiled.push(Object.freeze({ ...fixture, intent: result.spec }));
+      if (result.spec.resourceBudget.maxNetworkRequests !== BENCHMARK_RESOURCE_BUDGET.maxNetworkRequests) {
+        throw new IntentBenchmarkSuiteError(`Scenario ${fixture.scenarioId} changed the benchmark network request budget during compilation`);
+      }
+      if (result.spec.resourceBudget.maxWallClockMillis !== BENCHMARK_RESOURCE_BUDGET.maxWallClockMillis) {
+        throw new IntentBenchmarkSuiteError(`Scenario ${fixture.scenarioId} changed the benchmark wall-clock budget during compilation`);
+      }
+      const validatedIntent: IntentSpec = Object.freeze({ ...result.spec, state: "VALIDATED" });
+      compiled.push(Object.freeze({ ...fixture, intent: validatedIntent }));
     }
     const frozen = Object.freeze(compiled);
     return Object.freeze({ suiteVersion: "1.0.0", scenarios: frozen, suiteHash: digest(frozen) });
@@ -195,6 +206,8 @@ export class IntentBenchmarkSuiteCompiler {
       ids.add(item.scenarioId);
       if (!/^[a-f0-9]{64}$/.test(item.scenarioHash)) throw new IntentBenchmarkSuiteError(`Invalid scenario hash: ${item.scenarioId}`);
       if (item.intentContent.acceptanceCriteria.length === 0) throw new IntentBenchmarkSuiteError(`Scenario ${item.scenarioId} has no acceptance criteria`);
+      if (item.intentContent.resourceBudget.maxNetworkRequests !== BENCHMARK_RESOURCE_BUDGET.maxNetworkRequests) throw new IntentBenchmarkSuiteError(`Scenario ${item.scenarioId} has a non-deterministic network request budget`);
+      if (item.intentContent.resourceBudget.maxWallClockMillis !== BENCHMARK_RESOURCE_BUDGET.maxWallClockMillis) throw new IntentBenchmarkSuiteError(`Scenario ${item.scenarioId} has a non-deterministic wall-clock budget`);
       if (item.oracle.expectedKlynOutcome === "VERIFIED" && item.oracle.standardExecutionSignal !== "PASS") throw new IntentBenchmarkSuiteError(`Scenario ${item.scenarioId} has an inconsistent oracle`);
     }
   }
