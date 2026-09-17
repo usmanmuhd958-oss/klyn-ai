@@ -83,7 +83,7 @@ export interface RemoteCluster {
   readonly networkZone: string;
   readonly estimatedLatencyMillis: number;
   readonly capacity: ComputeCapacity;
-  readonly supportsIsolation: boolean;
+  readonly isolationModes: readonly IsolationMode[];
   readonly accelerators: readonly AcceleratorKind[];
 }
 
@@ -105,7 +105,7 @@ export interface HardwareTarget {
   readonly estimatedLatencyMillis: number;
   readonly capacity: ComputeCapacity;
   readonly accelerator: AcceleratorKind;
-  readonly supportsIsolation: boolean;
+  readonly isolationModes: readonly IsolationMode[];
   readonly gpuIds: readonly string[];
   readonly score: number;
 }
