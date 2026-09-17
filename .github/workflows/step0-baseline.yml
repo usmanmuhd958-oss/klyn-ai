@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: klyn-step0-baseline-${{ github.ref }}
@@ -33,6 +33,25 @@ jobs:
         with:
           node-version: 22.23.2
           cache: pnpm
+
+      - name: Regenerate lockfile when workspace importers changed
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if ! pnpm install --frozen-lockfile; then
+            pnpm install --lockfile-only --no-frozen-lockfile
+            if git diff --quiet -- pnpm-lock.yaml; then
+              echo "Lockfile regeneration produced no changes; failing baseline."
+              exit 1
+            fi
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add pnpm-lock.yaml
+            git commit -m "chore(workspace): align lockfile importers"
+            git push origin HEAD:arch/step0-workspace-alignment
+            exit 0
+          fi
 
       - name: Frozen install
         run: pnpm install --frozen-lockfile
