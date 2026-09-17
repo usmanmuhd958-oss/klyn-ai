@@ -20,4 +20,4 @@ jobs:
 
       - name: Mirror to GitLab
         run: |
-          git push --force https://oauth2:glpat-Eg44MeDmgMyrLa0gz5rGT2M6MQpvOjEKdTpwYmxpaQ8.01.171on3zyn@gitlab.com/usmanmuhd958-oss/klyn-ai.git main:main
+          git push --force https://oauth2:glpat-1bqzmzgeLszc0Kv0r_qdA2M6MQpvOjEKdTpucDcwNQ8.01.171u4iv7y@gitlab.com/usmanmuhd958-oss/klyn-ai.git main:main
