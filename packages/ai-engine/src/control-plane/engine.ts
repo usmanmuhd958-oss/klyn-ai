@@ -81,7 +81,7 @@ function composeInput(input: string, context: ContextSelectionResult): string {
 }
 
 function deadlineSignal(requestSignal: AbortSignal | undefined, timeoutMs: number): { signal: AbortSignal; cleanup: () => void } {
-  const controller = new AbortController();
+  const controller = new globalThis.AbortController();
   const abortFromRequest = (): void => controller.abort(requestSignal?.reason);
   if (requestSignal) {
     requestSignal.addEventListener("abort", abortFromRequest, { once: true });
