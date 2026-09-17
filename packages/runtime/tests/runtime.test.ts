@@ -298,3 +298,19 @@ test("P4-19 malformed executor observation is rejected at the boundary", async (
   });
   await assert.rejects(() => fabric.execute(task()), RuntimeBoundaryViolation);
 });
+
+test("P4-20 malformed topology arrays fail with a typed boundary error", () => {
+  const malformed = { ...topology(), localGpus: "not-an-array" } as unknown as HardwareTopologySnapshot;
+  assert.throws(() => new StaticHardwareTopologyProvider(malformed).snapshot(), RuntimeBoundaryViolation);
+});
+
+test("P4-21 incoherent required GPU resource request fails at task validation", () => {
+  const fabric = new RuntimeExecutionFabric({
+    topologyProvider: new StaticHardwareTopologyProvider(topology()),
+    executor: { async execute(plan) { return observationFrom(plan); } },
+  });
+  assert.throws(
+    () => fabric.plan(task({ requiresGpu: true })),
+    (error: unknown) => error instanceof RuntimeBoundaryViolation && error.code === "RESOURCE_MISMATCH",
+  );
+});
