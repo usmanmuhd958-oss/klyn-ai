@@ -255,9 +255,13 @@ export class EpistemicMetricEvaluator {
       UNRESOLVED_UNKNOWN: 0,
     };
     for (const result of results) counts[result.classification] += 1;
-    return Object.freeze(
-      Object.fromEntries(CATEGORY_ORDER.map((category) => [category, counts[category]])) as ConfusionMatrix,
-    );
+    return Object.freeze({
+      TRUE_VERIFIED: counts.TRUE_VERIFIED,
+      FALSE_COMPLETION: counts.FALSE_COMPLETION,
+      VALID_REJECTION: counts.VALID_REJECTION,
+      FALSE_REJECTION: counts.FALSE_REJECTION,
+      UNRESOLVED_UNKNOWN: counts.UNRESOLVED_UNKNOWN,
+    });
   }
 
   private computeMetrics(results: readonly ScenarioMetricResult[]): EpistemicMetrics {
