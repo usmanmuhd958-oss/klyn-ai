@@ -24,4 +24,18 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$GITLAB_TOKEN"
-          git push --force "https://oauth2:${GITLAB_TOKEN}@gitlab.com/usmanmuhd958-oss/klyn-ai.git" main:main
+
+          askpass="$RUNNER_TEMP/klyn-gitlab-askpass.sh"
+          cat > "$askpass" <<'EOF'
+          #!/usr/bin/env bash
+          case "$1" in
+            *Username*) printf '%s\n' 'oauth2' ;;
+            *Password*) printf '%s\n' "$GITLAB_TOKEN" ;;
+            *) printf '%s\n' '' ;;
+          esac
+          EOF
+          chmod 700 "$askpass"
+
+          GIT_ASKPASS="$askpass" \
+          GIT_TERMINAL_PROMPT=0 \
+          git push --force "https://gitlab.com/usmanmuhd958-oss/klyn-ai.git" main:main
