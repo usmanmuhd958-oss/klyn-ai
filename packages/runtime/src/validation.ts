@@ -3,6 +3,7 @@ import type {
   CpuTopology,
   GpuDevice,
   HardwareTopologySnapshot,
+  IsolationMode,
   RemoteCluster,
   ResourceRequest,
   RuntimeExecutionObservation,
@@ -64,6 +65,17 @@ function expectStringArray(input: unknown, path: string): readonly string[] {
     throw new RuntimeBoundaryViolation("INVALID_ARRAY", `${path} must be an array`);
   }
   return input.map((entry, index) => expectString(entry, `${path}[${index}]`));
+}
+
+function validateIsolationModes(input: unknown, path: string): readonly IsolationMode[] {
+  const values = expectStringArray(input, path);
+  const allowed: readonly IsolationMode[] = ["PROCESS", "CONTAINER", "MICRO_VM", "REMOTE_SANDBOX"];
+  for (const value of values) {
+    if (!allowed.includes(value as IsolationMode)) {
+      throw new RuntimeBoundaryViolation("INVALID_ISOLATION_MODE", `${path} contains an invalid isolation mode`);
+    }
+  }
+  return values as readonly IsolationMode[];
 }
 
 function parseResourceRequest(input: unknown, path: string): ResourceRequest {
@@ -189,6 +201,7 @@ function validateRemoteCluster(cluster: RemoteCluster): void {
   if (!Array.isArray(cluster.accelerators)) {
     throw new RuntimeBoundaryViolation("INVALID_ACCELERATORS", "remoteCluster.accelerators must be an array");
   }
+  validateIsolationModes(cluster.isolationModes, "remoteCluster.isolationModes");
 }
 
 export function validateTopology(snapshot: HardwareTopologySnapshot): HardwareTopologySnapshot {
@@ -200,6 +213,7 @@ export function validateTopology(snapshot: HardwareTopologySnapshot): HardwareTo
   expectInteger(snapshot.capturedAtEpochMs, "capturedAtEpochMs", 0);
   validateCpu(snapshot.localCpu);
   snapshot.localGpus.forEach(validateGpu);
+  validateIsolationModes(snapshot.localIsolationModes, "localIsolationModes");
   snapshot.remoteClusters.forEach(validateRemoteCluster);
   if (snapshot.localIsolationModes.length === 0) {
     throw new RuntimeBoundaryViolation("NO_LOCAL_SANDBOX", "At least one local isolation mode is required");
