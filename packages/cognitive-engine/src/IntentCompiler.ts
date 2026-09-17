@@ -118,7 +118,7 @@ function validatePayload(payload: unknown): readonly IntentValidationIssue[] {
     requireStringArray(objective, "scope", issues, "objective.scope", true);
   }
 
-  validateIdStatementArray(root.constraints, "constraints", issues, ["kind"]);
+  validateIdStatementArray(root.constraints, "constraints", issues, ["INVARIANT", "PROHIBITION", "REQUIREMENT"]);
   validateIdStatementArray(root.assumptions, "assumptions", issues);
 
   const dependencies = root.dependencies;
