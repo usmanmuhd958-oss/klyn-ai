@@ -47,7 +47,14 @@ function hasResidency(provider: AiEngineProvider, preferred: readonly string[] |
   return preferred.some((location) => residences.has(location));
 }
 
-function scoreProvider(provider: AiEngineProvider, health: ProviderHealthSnapshot, objective: RoutingObjective, estimatedInputTokens: number, maxOutputTokens: number, preferredResidencies?: readonly string[]): number {
+function scoreProvider(
+  provider: AiEngineProvider,
+  health: ProviderHealthSnapshot,
+  objective: RoutingObjective,
+  estimatedInputTokens: number,
+  maxOutputTokens: number,
+  preferredResidencies?: readonly string[],
+): number {
   const pricing = provider.definition.pricing;
   const projectedCost = (estimatedInputTokens * pricing.inputMicrousdPer1kTokens + maxOutputTokens * pricing.outputMicrousdPer1kTokens) / 1000;
   const latency = health.averageLatencyMs ?? 500;
@@ -55,7 +62,7 @@ function scoreProvider(provider: AiEngineProvider, health: ProviderHealthSnapsho
     ? 0.5
     : health.totalSuccesses / (health.totalSuccesses + health.totalFailures);
   const residency = hasResidency(provider, preferredResidencies) ? 1 : 0;
-  const quality = provider.definition.tags?.includes("verified") ? 1 : 0;
+  const quality = provider.definition.evaluationScore ?? 0;
 
   switch (objective) {
     case "quality": return quality * 1_000_000 + reliability * 10_000 - latency - projectedCost / 100;
@@ -73,10 +80,28 @@ function composeInput(input: string, context: ContextSelectionResult): string {
   return `${sections.join("\n\n")}\n\n<task>\n${input}\n</task>`;
 }
 
+function deadlineSignal(requestSignal: AbortSignal | undefined, timeoutMs: number): { signal: AbortSignal; cleanup: () => void } {
+  const controller = new AbortController();
+  const abortFromRequest = (): void => controller.abort(requestSignal?.reason);
+  if (requestSignal) {
+    requestSignal.addEventListener("abort", abortFromRequest, { once: true });
+    if (requestSignal.aborted) abortFromRequest();
+  }
+  const timer = setTimeout(() => controller.abort(new Error("provider request timed out")), timeoutMs);
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timer);
+      requestSignal?.removeEventListener("abort", abortFromRequest);
+    },
+  };
+}
+
 export interface AiEngineOptions {
   readonly routing?: Partial<RoutingPolicy>;
   readonly health?: Partial<ConstructorParameters<typeof ProviderHealthTracker>[0]>;
   readonly meter?: TokenCostMeter;
+  readonly requestTimeoutMs?: number;
 }
 
 export class AiEngine {
@@ -85,6 +110,7 @@ export class AiEngine {
   private readonly providers: readonly AiEngineProvider[];
   private readonly routing: RoutingPolicy;
   private readonly contextSelector: ContextSelector;
+  private readonly requestTimeoutMs: number;
 
   constructor(providers: readonly AiEngineProvider[], options: AiEngineOptions = {}) {
     if (providers.length === 0) throw new AiEngineError("NO_PROVIDER", "AiEngine requires at least one provider");
@@ -93,14 +119,16 @@ export class AiEngine {
       if (ids.has(provider.id)) throw new AiEngineError("INVALID_REQUEST", `duplicate provider id: ${provider.id}`);
       ids.add(provider.id);
       if (!provider.definition.model.trim()) throw new AiEngineError("INVALID_REQUEST", `provider model is required: ${provider.id}`);
+      if (provider.definition.evaluationScore !== undefined && (provider.definition.evaluationScore < 0 || provider.definition.evaluationScore > 1)) {
+        throw new AiEngineError("INVALID_REQUEST", `evaluationScore must be between 0 and 1: ${provider.id}`);
+      }
     }
     this.providers = [...providers];
-    this.routing = {
-      ...DEFAULT_ROUTING,
-      ...options.routing,
-    };
+    this.routing = { ...DEFAULT_ROUTING, ...options.routing };
     if (!Number.isInteger(this.routing.maxAttempts) || this.routing.maxAttempts < 1) throw new AiEngineError("INVALID_REQUEST", "maxAttempts must be a positive integer");
     if (!Number.isInteger(this.routing.maxOutputTokens) || this.routing.maxOutputTokens <= 0) throw new AiEngineError("INVALID_REQUEST", "maxOutputTokens must be a positive integer");
+    this.requestTimeoutMs = options.requestTimeoutMs ?? 60_000;
+    if (!Number.isFinite(this.requestTimeoutMs) || this.requestTimeoutMs <= 0) throw new AiEngineError("INVALID_REQUEST", "requestTimeoutMs must be positive");
     this.health = new ProviderHealthTracker(options.health);
     this.meter = options.meter ?? new TokenCostMeter();
     this.contextSelector = new ContextSelector({ maxTokens: this.routing.contextBudgetTokens ?? 16_000, reserveTokens: 2_000, maxItems: 64 });
@@ -110,19 +138,19 @@ export class AiEngine {
     const input = request.input.trim();
     if (!input) throw new AiEngineError("INVALID_REQUEST", "input is required");
     const routing: RoutingPolicy = { ...this.routing, ...routingOverride };
-    if (request.model) routingOverride = { ...routingOverride, maxAttempts: routing.maxAttempts };
     if (routing.deniedProviders?.some((provider) => routing.allowedProviders?.includes(provider))) {
       throw new AiEngineError("POLICY_VIOLATION", "provider is both allowed and denied");
     }
     if (request.signal?.aborted) throw new AiEngineError("ABORTED", "AI request was aborted", { cause: request.signal.reason });
 
-    const estimatedInputTokens = estimateTokens(`${request.system ?? ""}\n${input}`);
+    const estimatedRequestTokens = estimateTokens(`${request.system ?? ""}\n${input}`);
     const contexts = this.selectContext(request, routing);
+    const contextTokens = contexts.estimatedTokens;
     const effectiveInput = composeInput(input, contexts);
     const maxOutputTokens = request.maxOutputTokens ?? routing.maxOutputTokens;
     if (!Number.isInteger(maxOutputTokens) || maxOutputTokens <= 0) throw new AiEngineError("INVALID_REQUEST", "maxOutputTokens must be a positive integer");
 
-    const candidates = this.selectCandidates(request.model, routing, estimatedInputTokens, maxOutputTokens);
+    const candidates = this.selectCandidates(request.model, routing, estimatedRequestTokens + contextTokens, maxOutputTokens);
     if (candidates.length === 0) throw new AiEngineError("NO_PROVIDER", "no provider satisfies the routing policy");
 
     let attempts = 0;
@@ -131,6 +159,7 @@ export class AiEngine {
       if (!this.health.canAttempt(provider.id)) continue;
       attempts += 1;
       const started = performance.now();
+      const deadline = deadlineSignal(request.signal, this.requestTimeoutMs);
       try {
         const response = await provider.adapter.generate({
           model: provider.definition.model,
@@ -139,7 +168,7 @@ export class AiEngine {
           maxOutputTokens,
           temperature: request.temperature,
           responseFormat: request.responseFormat,
-          signal: request.signal,
+          signal: deadline.signal,
         });
         if (response.provider !== provider.definition.provider || response.model !== provider.definition.model) {
           throw new AiEngineError("PROVIDER_FAILURE", "provider response identity did not match the routed target", { providerId: provider.id, retryable: false });
@@ -153,8 +182,7 @@ export class AiEngine {
         }
         const latencyMs = performance.now() - started;
         const health = this.health.recordSuccess(provider.id, latencyMs);
-        const usage = response.usage;
-        const meterRecord = this.meter.record(provider, usage?.inputTokens, usage?.outputTokens);
+        const meterRecord = this.meter.record(provider, response.usage?.inputTokens, response.usage?.outputTokens);
         return {
           response,
           providerId: provider.id,
@@ -165,18 +193,25 @@ export class AiEngine {
           health,
         };
       } catch (error) {
-        const latencyMs = performance.now() - started;
         const details = errorDetails(error);
         lastError = error;
-        if (error instanceof AiEngineError && error.code === "ABORTED") throw error;
         if (request.signal?.aborted) throw new AiEngineError("ABORTED", "AI request was aborted", { providerId: provider.id, cause: request.signal.reason });
+        if (deadline.signal.aborted) {
+          const cause = deadline.signal.reason;
+          const timeout = cause instanceof Error && cause.message === "provider request timed out";
+          if (timeout) {
+            this.health.recordFailure(provider.id, true);
+            continue;
+          }
+        }
         if (details.code === "PROVIDER_AUTH") {
           this.health.recordFailure(provider.id, false);
           continue;
         }
-        this.health.recordFailure(provider.id, details.retryable, Date.now());
-        void latencyMs;
+        this.health.recordFailure(provider.id, details.retryable);
         if (!details.retryable) continue;
+      } finally {
+        deadline.cleanup();
       }
     }
 
@@ -189,22 +224,19 @@ export class AiEngine {
   }
 
   private selectContext(request: AiCompletionRequest, routing: RoutingPolicy): ContextSelectionResult {
-    const maxModelContext = this.providers
-      .filter((provider) => !request.model || provider.definition.model === request.model)
-      .reduce((minimum, provider) => Math.min(minimum, provider.definition.contextWindowTokens), Number.POSITIVE_INFINITY);
     const requestTokens = estimateTokens(`${request.system ?? ""}\n${request.input}`);
-    const providerReserve = Number.isFinite(maxModelContext) ? Math.max(0, maxModelContext - requestTokens - (request.maxOutputTokens ?? routing.maxOutputTokens)) : routing.contextBudgetTokens ?? 16_000;
+    const configuredBudget = routing.contextBudgetTokens ?? 16_000;
     try {
       return this.contextSelector.select(request.contexts ?? [], {
-        maxTokens: Math.min(routing.contextBudgetTokens ?? 16_000, providerReserve),
+        maxTokens: Math.max(1, Math.min(configuredBudget, request.contextPolicy?.maxTokens ?? configuredBudget)),
         ...(request.contextPolicy ?? {}),
       });
     } catch (error) {
-      throw new AiEngineError("CONTEXT_OVERFLOW", "context selection exceeded the available context budget", { cause: error });
+      throw new AiEngineError("CONTEXT_OVERFLOW", `context selection exceeded the configured context budget (request tokens: ${requestTokens})`, { cause: error });
     }
   }
 
-  private selectCandidates(model: string | undefined, routing: RoutingPolicy, estimatedInputTokens: number, maxOutputTokens: number): AiEngineProvider[] {
+  private selectCandidates(model: string | undefined, routing: RoutingPolicy, estimatedTotalInputTokens: number, maxOutputTokens: number): AiEngineProvider[] {
     const allowed = routing.allowedProviders ? new Set(routing.allowedProviders) : undefined;
     const denied = new Set(routing.deniedProviders ?? []);
     const candidates = this.providers.filter((provider) => {
@@ -213,17 +245,17 @@ export class AiEngine {
       if (denied.has(provider.definition.provider)) return false;
       if (!capabilitySetContainsAll(provider, routing.requiredCapabilities)) return false;
       if (routing.preferredDataResidencies?.length && routing.objective === "data-sovereignty" && !hasResidency(provider, routing.preferredDataResidencies)) return false;
-      if (estimatedInputTokens + maxOutputTokens > provider.definition.contextWindowTokens) return false;
+      if (estimatedTotalInputTokens + maxOutputTokens > provider.definition.contextWindowTokens) return false;
       if (routing.maxCostMicrousd !== undefined) {
-        const estimate = (estimatedInputTokens * provider.definition.pricing.inputMicrousdPer1kTokens + maxOutputTokens * provider.definition.pricing.outputMicrousdPer1kTokens) / 1000;
+        const estimate = (estimatedTotalInputTokens * provider.definition.pricing.inputMicrousdPer1kTokens + maxOutputTokens * provider.definition.pricing.outputMicrousdPer1kTokens) / 1000;
         if (estimate > routing.maxCostMicrousd) return false;
       }
       return true;
     });
     return candidates.sort((a, b) => {
-      const scoreDelta = scoreProvider(b, this.health.ensure(b.id), routing.objective, estimatedInputTokens, maxOutputTokens, routing.preferredDataResidencies)
-        - scoreProvider(a, this.health.ensure(a.id), routing.objective, estimatedInputTokens, maxOutputTokens, routing.preferredDataResidencies);
-      if (scoreDelta !== 0) return scoreDelta > 0 ? 1 : -1;
+      const scoreA = scoreProvider(a, this.health.ensure(a.id), routing.objective, estimatedTotalInputTokens, maxOutputTokens, routing.preferredDataResidencies);
+      const scoreB = scoreProvider(b, this.health.ensure(b.id), routing.objective, estimatedTotalInputTokens, maxOutputTokens, routing.preferredDataResidencies);
+      if (scoreA !== scoreB) return scoreB - scoreA;
       return `${a.definition.provider}:${a.definition.model}:${a.id}`.localeCompare(`${b.definition.provider}:${b.definition.model}:${b.id}`);
     });
   }
