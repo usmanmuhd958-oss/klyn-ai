@@ -24,7 +24,7 @@ function canonicalizeValue(value: unknown): string {
   if (typeof value === "object") {
     const record = value as Record<string, unknown>;
     const keys = Object.keys(record).sort();
-    return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalizeValue(record[key])}`).join(",`)}}`;
+    return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalizeValue(record[key])}`).join(",")}}`;
   }
   throw new TypeError(`Unsupported canonical JSON value type: ${typeof value}`);
 }
