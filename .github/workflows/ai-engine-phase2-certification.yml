@@ -10,6 +10,16 @@ on:
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - "turbo.json"
+  push:
+    branches:
+      - phase2/ai-engine-control-plane-20260917
+    paths:
+      - "packages/ai-engine/**"
+      - ".github/workflows/ai-engine-phase2-certification.yml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "turbo.json"
   workflow_dispatch:
 
 permissions:
@@ -27,7 +37,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 2
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -58,7 +68,13 @@ jobs:
       - name: Frontend change audit
         shell: bash
         run: |
-          if git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.sha }}" | grep -E '^(apps/(frontend|studio)|.*\.(tsx|jsx|css|scss))($|/)'; then
-            echo "Frontend/UI files changed in a Phase 2 backend subsystem PR."
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base_sha="${{ github.event.pull_request.base.sha }}"
+          else
+            base_sha="${{ github.event.before }}"
+          fi
+          changed_files="$(git diff --name-only "$base_sha" "${{ github.sha }}")"
+          if printf '%s\n' "$changed_files" | grep -E '^(apps/(frontend|studio)|.*\.(tsx|jsx|css|scss))($|/)'; then
+            echo "Frontend/UI files changed in a Phase 2 backend subsystem change."
             exit 1
           fi
