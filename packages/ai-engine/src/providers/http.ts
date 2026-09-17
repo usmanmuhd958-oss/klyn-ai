@@ -31,10 +31,9 @@ export async function providerFetch(
 
   if (response.ok) return response;
 
-  const body = await response.text().catch(() => "");
   const retryable = response.status === 408 || response.status === 409 || response.status === 429 || response.status >= 500;
   throw new ProviderError(
-    `${provider} returned HTTP ${response.status}${body ? `: ${body.slice(0, 500)}` : ""}`,
+    `${provider} returned HTTP ${response.status}`,
     provider,
     retryable,
     response.status,
@@ -55,9 +54,9 @@ export function requireApiKey(name: string): string {
   return value;
 }
 
-export function buildMessages(request: ProviderRequest): Array<Record<string, unknown>> {
+export function buildMessages(request: ProviderRequest): Array<{ role: "system" | "user"; content: string }> {
   return [
-    ...(request.system ? [{ role: "system", content: request.system }] : []),
+    ...(request.system ? [{ role: "system" as const, content: request.system }] : []),
     { role: "user", content: request.input },
   ];
 }
