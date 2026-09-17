@@ -9,8 +9,8 @@ export type RoutingObjective =
   | "balanced";
 
 export type ProviderHealthState = "healthy" | "degraded" | "rate-limited" | "unavailable" | "unknown";
-
 export type ContextPriority = "required" | "high" | "normal" | "low";
+export type ModelCapabilityName = "reasoning" | "structured-output" | "tool-use" | "vision" | "audio";
 
 export interface ModelPricing {
   readonly inputMicrousdPer1kTokens: number;
@@ -21,7 +21,7 @@ export interface ModelDefinition {
   readonly provider: ProviderName;
   readonly model: string;
   readonly contextWindowTokens: number;
-  readonly capabilities: ReadonlySet<"reasoning" | "structured-output" | "tool-use" | "vision" | "audio">>;
+  readonly capabilities: ReadonlySet<ModelCapabilityName>;
   readonly pricing: ModelPricing;
   readonly dataResidencies?: readonly string[];
   readonly tags?: readonly string[];
@@ -57,7 +57,7 @@ export interface RoutingPolicy {
   readonly maxOutputTokens: number;
   readonly allowedProviders?: readonly ProviderName[];
   readonly deniedProviders?: readonly ProviderName[];
-  readonly requiredCapabilities?: readonly ModelDefinition["capabilities"] extends ReadonlySet<infer T> ? T[] : never;
+  readonly requiredCapabilities?: readonly ModelCapabilityName[];
   readonly preferredDataResidencies?: readonly string[];
   readonly maxCostMicrousd?: number;
   readonly contextBudgetTokens?: number;
@@ -139,6 +139,10 @@ export type AiEngineErrorCode =
   | "ALL_PROVIDERS_FAILED";
 
 export class AiEngineError extends Error {
+  readonly providerId?: string;
+  readonly retryable: boolean;
+  readonly status?: number;
+
   constructor(
     readonly code: AiEngineErrorCode,
     message: string,
@@ -150,8 +154,4 @@ export class AiEngineError extends Error {
     this.retryable = options.retryable ?? false;
     this.status = options.status;
   }
-
-  readonly providerId?: string;
-  readonly retryable: boolean;
-  readonly status?: number;
 }
