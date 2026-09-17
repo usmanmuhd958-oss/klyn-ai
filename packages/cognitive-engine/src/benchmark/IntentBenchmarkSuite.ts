@@ -137,7 +137,8 @@ export class IntentBenchmarkSuiteCompiler {
       if (result.spec.resourceBudget.maxWallClockMillis !== BENCHMARK_RESOURCE_BUDGET.maxWallClockMillis) {
         throw new IntentBenchmarkSuiteError(`Scenario ${fixture.scenarioId} changed the benchmark wall-clock budget during compilation`);
       }
-      compiled.push(Object.freeze({ ...fixture, intent: result.spec }));
+      const validatedIntent: IntentSpec = Object.freeze({ ...result.spec, state: "VALIDATED" });
+      compiled.push(Object.freeze({ ...fixture, intent: validatedIntent }));
     }
     const frozen = Object.freeze(compiled);
     return Object.freeze({ suiteVersion: "1.0.0", scenarios: frozen, suiteHash: digest(frozen) });
@@ -211,10 +212,7 @@ export class IntentBenchmarkSuiteCompiler {
     }
   }
 
-  private formatCompilationFailure(
-    scenarioId: string,
-    result: IntentCompilationResult & { readonly accepted: false },
-  ): string {
+  private formatCompilationFailure(scenarioId: string, result: IntentCompilationResult & { readonly accepted: false }): string {
     return `Scenario ${scenarioId} produced an invalid IntentSpec: ${result.rejection.issues.map((issue) => `${issue.path}:${issue.code}`).join(", ")}`;
   }
 }
