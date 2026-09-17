@@ -11,8 +11,18 @@ import {
   type StreamChunk,
 } from "../src/index.js";
 
+type ProviderKind = "openai" | "anthropic" | "gemini" | "deepseek" | "vllm" | "ollama";
+type ProviderFixtureOverrides = {
+  readonly contextWindowTokens?: number;
+  readonly capabilities?: readonly ("reasoning" | "structured-output" | "tool-use" | "vision" | "audio")[];
+  readonly inputMicrousdPer1kTokens?: number;
+  readonly outputMicrousdPer1kTokens?: number;
+  readonly evaluationScore?: number;
+  readonly tags?: readonly string[];
+};
+
 function fakeAdapter(
-  provider: "openai" | "anthropic" | "gemini" | "deepseek" | "vllm" | "ollama",
+  provider: ProviderKind,
   model: string,
   generate: (input: string) => Promise<ProviderResponse>,
 ): ProviderAdapter {
@@ -30,10 +40,10 @@ function fakeAdapter(
 
 function provider(
   id: string,
-  providerName: "openai" | "anthropic" | "gemini" | "deepseek" | "vllm" | "ollama",
+  providerName: ProviderKind,
   model: string,
   adapter: ProviderAdapter,
-  overrides: Partial<Parameters<typeof createBuiltinProvider>[0]> = {},
+  overrides: ProviderFixtureOverrides = {},
 ) {
   return {
     id,
@@ -46,7 +56,7 @@ function provider(
         inputMicrousdPer1kTokens: overrides.inputMicrousdPer1kTokens ?? 1000,
         outputMicrousdPer1kTokens: overrides.outputMicrousdPer1kTokens ?? 2000,
       },
-      evaluationScore: overrides.tags?.includes("verified") ? 0.95 : 0.5,
+      evaluationScore: overrides.evaluationScore ?? 0.5,
       tags: overrides.tags,
     },
     adapter,
@@ -61,7 +71,7 @@ test("phase 2 routes deterministically and fails over after a provider failure",
     fakeAdapter("openai", "model-a", async () => {
       throw new Error("primary unavailable");
     }),
-    { evaluationScore: undefined },
+    { evaluationScore: 0.1 },
   );
   const backup = provider(
     "p2",
