@@ -13,7 +13,6 @@ test("timeout aborts the swarm and rolls back completed work", async () => {
     .addTask({ id: "fast", agentId: "a", input: null, run: async () => 1, rollback: async () => { rolled = true; } })
     .addTask({ id: "slow", agentId: "b", input: null, dependsOn: ["fast"], run: async (_context, signal) => new Promise((resolve, reject) => {
       const timer = setTimeout(() => resolve("late"), 100);
-      timer.unref();
       signal?.addEventListener("abort", () => {
         clearTimeout(timer);
         reject(new Error("aborted"));
@@ -28,7 +27,6 @@ test("external cancellation propagates to running task", async () => {
   const controller = new AbortController();
   const dag = new SwarmDagOrchestrator().addTask({ id: "a", agentId: "a", input: null, run: async (_context, signal) => new Promise((resolve, reject) => {
     const timer = setTimeout(() => resolve("late"), 100);
-    timer.unref();
     signal?.addEventListener("abort", () => {
       clearTimeout(timer);
       reject(new Error("aborted"));
