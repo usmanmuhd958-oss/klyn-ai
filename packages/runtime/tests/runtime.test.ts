@@ -35,7 +35,7 @@ function topology(): HardwareTopologySnapshot {
         networkZone: "trusted",
         estimatedLatencyMillis: 20,
         capacity: Object.freeze({ cpuCores: 16, memoryBytes: 64 * GB, gpuCount: 2, gpuMemoryBytes: 48 * GB }),
-        supportsIsolation: true,
+        isolationModes: Object.freeze(["REMOTE_SANDBOX"]),
         accelerators: Object.freeze(["CPU", "GPU"]),
       }),
       Object.freeze({
@@ -44,7 +44,7 @@ function topology(): HardwareTopologySnapshot {
         networkZone: "batch",
         estimatedLatencyMillis: 80,
         capacity: Object.freeze({ cpuCores: 64, memoryBytes: 256 * GB, gpuCount: 4, gpuMemoryBytes: 96 * GB }),
-        supportsIsolation: true,
+        isolationModes: Object.freeze(["REMOTE_SANDBOX", "CONTAINER"]),
         accelerators: Object.freeze(["CPU", "GPU"]),
       }),
     ]),
@@ -213,7 +213,18 @@ test("P4-12 sandbox identity changes when workload arguments change", () => {
   assert.notEqual(planner.create(current, target, resources).sandboxId, planner.create(changed, target, resources).sandboxId);
 });
 
-test("P4-13 fabric returns SUCCEEDED_VERIFIED only after postcondition verification", async () => {
+test("P4-13 isolated batch work resolves to a remote sandbox mode", () => {
+  const resolver = new HardwareTopologyResolver();
+  const classifier = new TaskClassifier();
+  const current = task({ requiresIsolation: true, batchSize: 10_000, latencyBudgetMillis: 10_000 });
+  const target = resolver.resolve(current, classifier.classify(current), topology()).selected;
+  const resources = new ResourceConstraintEnforcer().enforce(current, target);
+  const sandbox = new DeterministicSandboxPlanner().create(current, target, resources);
+  assert.equal(target.targetId, "remote:batch");
+  assert.equal(sandbox.isolationMode, "REMOTE_SANDBOX");
+});
+
+test("P4-14 fabric returns SUCCEEDED_VERIFIED only after postcondition verification", async () => {
   let receivedPlan: ExecutionPlan | null = null;
   const fabric = new RuntimeExecutionFabric({
     topologyProvider: new StaticHardwareTopologyProvider(topology()),
@@ -229,7 +240,7 @@ test("P4-13 fabric returns SUCCEEDED_VERIFIED only after postcondition verificat
   assert.notEqual(receivedPlan, null);
 });
 
-test("P4-14 unverified executor evidence cannot produce verified completion", async () => {
+test("P4-15 unverified executor evidence cannot produce verified completion", async () => {
   const fabric = new RuntimeExecutionFabric({
     topologyProvider: new StaticHardwareTopologyProvider(topology()),
     executor: {
@@ -242,7 +253,7 @@ test("P4-14 unverified executor evidence cannot produce verified completion", as
   assert.equal(result.status, "UNVERIFIED");
 });
 
-test("P4-15 resource overrun cannot produce verified completion", async () => {
+test("P4-16 resource overrun cannot produce verified completion", async () => {
   const fabric = new RuntimeExecutionFabric({
     topologyProvider: new StaticHardwareTopologyProvider(topology()),
     executor: {
@@ -255,7 +266,7 @@ test("P4-15 resource overrun cannot produce verified completion", async () => {
   assert.equal(result.status, "FAILED");
 });
 
-test("P4-16 nonzero exit cannot produce verified completion", async () => {
+test("P4-17 nonzero exit cannot produce verified completion", async () => {
   const fabric = new RuntimeExecutionFabric({
     topologyProvider: new StaticHardwareTopologyProvider(topology()),
     executor: {
@@ -268,7 +279,7 @@ test("P4-16 nonzero exit cannot produce verified completion", async () => {
   assert.equal(result.status, "FAILED");
 });
 
-test("P4-17 malformed task input is rejected at the boundary", () => {
+test("P4-18 malformed task input is rejected at the boundary", () => {
   const fabric = new RuntimeExecutionFabric({
     topologyProvider: new StaticHardwareTopologyProvider(topology()),
     executor: { async execute(plan) { return observationFrom(plan); } },
@@ -276,7 +287,7 @@ test("P4-17 malformed task input is rejected at the boundary", () => {
   assert.throws(() => fabric.plan({ taskId: "missing-fields" }), RuntimeBoundaryViolation);
 });
 
-test("P4-18 malformed executor observation is rejected at the boundary", async () => {
+test("P4-19 malformed executor observation is rejected at the boundary", async () => {
   const fabric = new RuntimeExecutionFabric({
     topologyProvider: new StaticHardwareTopologyProvider(topology()),
     executor: {
