@@ -163,14 +163,19 @@ export class MissionStateMachine {
       this.fail('cryptographic evidence verification failed');
     }
 
-    const predecessor = from === 'NOT_STARTED' ? undefined : this.latestEvidenceForState(from);
+    let predecessor: MissionEvidence | undefined;
+    if (from === 'NOT_STARTED') {
+      predecessor = undefined;
+    } else {
+      predecessor = this.latestEvidenceForState(from);
+    }
     if (predecessor === undefined) {
       if (evidence.predecessorEvidenceIds.length !== 0) this.fail('first transition cannot reference predecessor evidence');
     } else {
       if (evidence.predecessorEvidenceIds.length !== 1 || evidence.predecessorEvidenceIds[0] !== predecessor.evidenceId) {
         this.fail(`evidence must reference exactly predecessor ${predecessor.evidenceId}`);
       }
-      if (!node.dependsOn.includes(this.graph.nodeForState(from).nodeId)) {
+      if (from !== 'NOT_STARTED' && !node.dependsOn.includes(this.graph.nodeForState(from).nodeId)) {
         this.fail(`graph dependency does not permit ${from} -> ${node.state}`);
       }
     }
