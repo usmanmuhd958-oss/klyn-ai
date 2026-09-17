@@ -98,9 +98,29 @@ function parseSignals(input: unknown): TaskSignals {
   if (preferred !== "CPU" && preferred !== "GPU" && preferred !== "NONE") {
     throw new RuntimeBoundaryViolation("INVALID_ACCELERATOR", "signals.preferredAccelerator is invalid");
   }
+
+  const requiresGpu = expectBoolean(object.requiresGpu, "signals.requiresGpu");
+  const requiresNetwork = expectBoolean(object.requiresNetwork, "signals.requiresNetwork");
+  const estimatedCpuMillis = expectInteger(object.estimatedCpuMillis, "signals.estimatedCpuMillis", 1);
+  const estimatedMemoryBytes = expectInteger(object.estimatedMemoryBytes, "signals.estimatedMemoryBytes", 1);
+  const resourceRequest = parseResourceRequest(object.resourceRequest, "signals.resourceRequest");
+
+  if (estimatedCpuMillis > resourceRequest.maxCpuMillis) {
+    throw new RuntimeBoundaryViolation("RESOURCE_MISMATCH", "estimatedCpuMillis exceeds maxCpuMillis");
+  }
+  if (estimatedMemoryBytes > resourceRequest.maxMemoryBytes) {
+    throw new RuntimeBoundaryViolation("RESOURCE_MISMATCH", "estimatedMemoryBytes exceeds maxMemoryBytes");
+  }
+  if (requiresGpu && resourceRequest.gpuCount < 1) {
+    throw new RuntimeBoundaryViolation("RESOURCE_MISMATCH", "GPU is required but gpuCount is zero");
+  }
+  if (requiresNetwork && resourceRequest.maxNetworkRequests < 1) {
+    throw new RuntimeBoundaryViolation("RESOURCE_MISMATCH", "network is required but maxNetworkRequests is zero");
+  }
+
   return freezeDeep({
-    estimatedCpuMillis: expectInteger(object.estimatedCpuMillis, "signals.estimatedCpuMillis", 1),
-    estimatedMemoryBytes: expectInteger(object.estimatedMemoryBytes, "signals.estimatedMemoryBytes", 1),
+    estimatedCpuMillis,
+    estimatedMemoryBytes,
     latencyBudgetMillis:
       object.latencyBudgetMillis === undefined
         ? undefined
@@ -109,9 +129,9 @@ function parseSignals(input: unknown): TaskSignals {
       object.batchSize === undefined ? undefined : expectInteger(object.batchSize, "signals.batchSize", 1),
     requiresIsolation: expectBoolean(object.requiresIsolation, "signals.requiresIsolation"),
     preferredAccelerator: preferred,
-    requiresGpu: expectBoolean(object.requiresGpu, "signals.requiresGpu"),
-    requiresNetwork: expectBoolean(object.requiresNetwork, "signals.requiresNetwork"),
-    resourceRequest: parseResourceRequest(object.resourceRequest, "signals.resourceRequest"),
+    requiresGpu,
+    requiresNetwork,
+    resourceRequest,
   });
 }
 
@@ -169,6 +189,9 @@ export function parseExecutionObservation(input: unknown): RuntimeExecutionObser
 }
 
 function validateCapacity(capacity: ComputeCapacity, path: string): void {
+  if (typeof capacity !== "object" || capacity === null) {
+    throw new RuntimeBoundaryViolation("INVALID_OBJECT", `${path} must be an object`);
+  }
   expectInteger(capacity.cpuCores, `${path}.cpuCores`, 1);
   expectInteger(capacity.memoryBytes, `${path}.memoryBytes`, 1);
   expectInteger(capacity.gpuCount, `${path}.gpuCount`, 0);
@@ -186,6 +209,9 @@ function validateCpu(cpu: CpuTopology): void {
 }
 
 function validateGpu(gpu: GpuDevice): void {
+  if (typeof gpu !== "object" || gpu === null) {
+    throw new RuntimeBoundaryViolation("INVALID_OBJECT", "gpu must be an object");
+  }
   expectString(gpu.id, "gpu.id");
   expectString(gpu.vendor, "gpu.vendor");
   expectString(gpu.model, "gpu.model");
@@ -205,6 +231,9 @@ function validateRemoteCluster(cluster: RemoteCluster): void {
 }
 
 export function validateTopology(snapshot: HardwareTopologySnapshot): HardwareTopologySnapshot {
+  if (typeof snapshot !== "object" || snapshot === null) {
+    throw new RuntimeBoundaryViolation("INVALID_OBJECT", "topology snapshot must be an object");
+  }
   expectString(snapshot.schemaVersion, "schemaVersion");
   if (snapshot.schemaVersion !== "1.0.0") {
     throw new RuntimeBoundaryViolation("UNSUPPORTED_SCHEMA", "Unsupported topology schema");
@@ -212,6 +241,15 @@ export function validateTopology(snapshot: HardwareTopologySnapshot): HardwareTo
   expectString(snapshot.topologyVersion, "topologyVersion");
   expectInteger(snapshot.capturedAtEpochMs, "capturedAtEpochMs", 0);
   validateCpu(snapshot.localCpu);
+  if (!Array.isArray(snapshot.localGpus)) {
+    throw new RuntimeBoundaryViolation("INVALID_GPU_LIST", "localGpus must be an array");
+  }
+  if (!Array.isArray(snapshot.localIsolationModes)) {
+    throw new RuntimeBoundaryViolation("INVALID_ISOLATION_LIST", "localIsolationModes must be an array");
+  }
+  if (!Array.isArray(snapshot.remoteClusters)) {
+    throw new RuntimeBoundaryViolation("INVALID_CLUSTER_LIST", "remoteClusters must be an array");
+  }
   snapshot.localGpus.forEach(validateGpu);
   validateIsolationModes(snapshot.localIsolationModes, "localIsolationModes");
   snapshot.remoteClusters.forEach(validateRemoteCluster);
