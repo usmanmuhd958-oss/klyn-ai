@@ -78,8 +78,8 @@ jobs:
             exit 1
           fi
 
-          if grep -RInE 'from ["'"'][^"'"']*(frontend|studio|web)[^"'"']*["'"']' packages/runtime/src; then
-            echo 'UI dependency detected in runtime source.' >&2
+          if grep -RInE 'frontend|studio|apps/web|packages/frontend' packages/runtime/src; then
+            echo 'UI dependency or frontend-specific reference detected in runtime source.' >&2
             exit 1
           fi
 
