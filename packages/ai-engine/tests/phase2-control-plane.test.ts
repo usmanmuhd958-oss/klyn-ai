@@ -4,6 +4,7 @@ import {
   AiEngine,
   AiEngineError,
   ContextSelector,
+  ProviderError,
   TokenCostMeter,
   createBuiltinProvider,
   type ProviderAdapter,
@@ -106,7 +107,7 @@ test("phase 2 circuit state prevents repeated calls to an unavailable provider",
     "model-a",
     fakeAdapter("openai", "model-a", async () => {
       calls += 1;
-      throw Object.assign(new Error("server failure"), { retryable: true });
+      throw new ProviderError("server failure", "openai", true, 503);
     }),
   );
   const backup = provider(
