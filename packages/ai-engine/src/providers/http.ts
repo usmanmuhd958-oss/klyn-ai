@@ -21,12 +21,8 @@ export async function providerFetch(
   let response: Response;
   try {
     response = await fetch(url, { ...init, signal });
-  } catch (error) {
-    throw new ProviderError(
-      error instanceof Error ? error.message : "Provider network failure",
-      provider,
-      true,
-    );
+  } catch {
+    throw new ProviderError("Provider network failure", provider, true);
   }
 
   if (response.ok) return response;
@@ -57,6 +53,6 @@ export function requireApiKey(name: string): string {
 export function buildMessages(request: ProviderRequest): Array<{ role: "system" | "user"; content: string }> {
   return [
     ...(request.system ? [{ role: "system" as const, content: request.system }] : []),
-    { role: "user", content: request.input },
+    { role: "user" as const, content: request.input },
   ];
 }
