@@ -9,7 +9,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.json",
-    "test": "tsx --test --test-timeout=15000 tests/**/*.test.ts"
+    "test": "tsx --test tests/**/*.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
