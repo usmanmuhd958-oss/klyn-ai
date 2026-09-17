@@ -1,0 +1,86 @@
+name: Phase 5 Mission Engine Certification
+
+on:
+  push:
+    branches: [phase-5-mission-engine-final]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase-5-mission-engine-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NODE_OPTIONS: --unhandled-rejections=strict
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+          cache: pnpm
+
+      - name: Frozen Install Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm install --frozen-lockfile
+
+      - name: TypeScript Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm exec tsc -p packages/mission-engine/tsconfig.json --noEmit
+
+      - name: Test Compile Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm exec tsc -p packages/mission-engine/tsconfig.test.json
+
+      - name: Test Gate
+        run: timeout --signal=TERM --kill-after=15s 300s node --test packages/mission-engine/.phase5-test/tests/runtime.test.js
+
+      - name: Build Gate
+        run: timeout --signal=TERM --kill-after=15s 300s pnpm exec tsc -p packages/mission-engine/tsconfig.json
+
+      - name: Strict Type Audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -RInE '\bany\b' packages/mission-engine/src packages/mission-engine/tests; then
+            echo 'Forbidden dynamic type marker detected.' >&2
+            exit 1
+          fi
+
+      - name: Mission Engine Isolation Audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_SHA="${{ github.event.pull_request.base.sha || '488bf36b5b1e46b1cbb1694799dfc654f8bec6bb' }}"
+          git diff --name-only "$BASE_SHA"...HEAD > /tmp/klyn-phase5-files.txt
+
+          if grep -E '(^|/)(apps/frontend|apps/studio|apps/web|packages/frontend)(/|$)|\.(tsx|jsx|css|scss|sass|html)$' /tmp/klyn-phase5-files.txt; then
+            echo 'Frontend/UI files detected in Phase 5 changes.' >&2
+            exit 1
+          fi
+
+          if grep -E -v '^packages/mission-engine/|^\.github/workflows/phase-5-mission-engine\.yml$' /tmp/klyn-phase5-files.txt; then
+            echo 'Unexpected files detected outside the Phase 5 mission-engine boundary.' >&2
+            exit 1
+          fi
+
+          if grep -RInE 'frontend|studio|apps/web|packages/frontend' packages/mission-engine/src; then
+            echo 'UI dependency or frontend-specific reference detected in mission-engine source.' >&2
+            exit 1
+          fi
+
+          cat /tmp/klyn-phase5-files.txt
