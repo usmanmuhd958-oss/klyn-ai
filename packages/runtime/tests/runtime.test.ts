@@ -35,8 +35,8 @@ function topology(): HardwareTopologySnapshot {
         networkZone: "trusted",
         estimatedLatencyMillis: 20,
         capacity: Object.freeze({ cpuCores: 16, memoryBytes: 64 * GB, gpuCount: 2, gpuMemoryBytes: 48 * GB }),
-        isolationModes: Object.freeze(["REMOTE_SANDBOX"]),
-        accelerators: Object.freeze(["CPU", "GPU"]),
+        isolationModes: Object.freeze(["REMOTE_SANDBOX"] as const),
+        accelerators: Object.freeze(["CPU", "GPU"] as const),
       }),
       Object.freeze({
         id: "batch",
@@ -44,8 +44,8 @@ function topology(): HardwareTopologySnapshot {
         networkZone: "batch",
         estimatedLatencyMillis: 80,
         capacity: Object.freeze({ cpuCores: 64, memoryBytes: 256 * GB, gpuCount: 4, gpuMemoryBytes: 96 * GB }),
-        isolationModes: Object.freeze(["REMOTE_SANDBOX", "CONTAINER"]),
-        accelerators: Object.freeze(["CPU", "GPU"]),
+        isolationModes: Object.freeze(["REMOTE_SANDBOX", "CONTAINER"] as const),
+        accelerators: Object.freeze(["CPU", "GPU"] as const),
       }),
     ]),
   });
