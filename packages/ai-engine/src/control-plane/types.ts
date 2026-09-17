@@ -23,6 +23,8 @@ export interface ModelDefinition {
   readonly contextWindowTokens: number;
   readonly capabilities: ReadonlySet<ModelCapabilityName>;
   readonly pricing: ModelPricing;
+  readonly evaluationScore?: number;
+  readonly evaluationSampleCount?: number;
   readonly dataResidencies?: readonly string[];
   readonly tags?: readonly string[];
 }
