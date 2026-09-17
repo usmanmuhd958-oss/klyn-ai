@@ -20,11 +20,18 @@ function canonicalizeValue(value: unknown): string {
     if (Object.is(value, -0)) return "0";
     return JSON.stringify(value);
   }
-  if (Array.isArray(value)) return `[${value.map(canonicalizeValue).join(",")}]`;
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => {
+      if (item === undefined) return "null";
+      return canonicalizeValue(item);
+    }).join(",")}]`;
+  }
   if (typeof value === "object") {
     const record = value as Record<string, unknown>;
-    const keys = Object.keys(record).sort();
-    return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalizeValue(record[key])}`).join(",`)}}`;
+    const keys = Object.keys(record)
+      .filter((key) => record[key] !== undefined)
+      .sort();
+    return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalizeValue(record[key])}`).join(",")}}`;
   }
   throw new TypeError(`Unsupported canonical JSON value type: ${typeof value}`);
 }
