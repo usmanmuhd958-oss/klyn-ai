@@ -152,6 +152,9 @@ export interface SandboxPlan {
 export interface ExecutionPlan {
   readonly planVersion: typeof RUNTIME_SCHEMA_VERSION;
   readonly taskId: string;
+  readonly workloadRef: string;
+  readonly args: readonly string[];
+  readonly priority: 0 | 1 | 2 | 3;
   readonly classification: TaskClassification;
   readonly topology: TopologyResolution;
   readonly resources: RuntimeResourcePlan;
