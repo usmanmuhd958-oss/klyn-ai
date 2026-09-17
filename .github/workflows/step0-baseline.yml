@@ -1,6 +1,8 @@
 name: Klyn Step 0 Baseline
 
 on:
+  push:
+    branches: [arch/step0-workspace-alignment]
   pull_request:
     branches: [main]
 
@@ -8,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: klyn-step0-baseline-${{ github.event.pull_request.number }}
+  group: klyn-step0-baseline-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
