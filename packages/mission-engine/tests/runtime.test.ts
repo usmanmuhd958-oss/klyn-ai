@@ -189,7 +189,7 @@ test('P5-16: future-dated evidence is rejected before state mutation', () => {
 test('P5-17: deterministic replay reconstructs the terminal state', () => {
   const artifactDigest = digestJson({ artifact: 'build-1' });
   const log = [
-    evidence('n-action', 'action-receipt', 'e1', []),
+    evidence('n-action', 'action-receipt', 'e1', [], []),
     evidence('n-artifact', 'artifact-manifest', 'e2', ['e1'], ['artifact-ready'], artifactDigest),
     evidence('n-test', 'test-result', 'e3', ['e2'], ['tests-green'], artifactDigest),
     evidence('n-requirement', 'requirement-proof', 'e4', ['e3'], ['requirement-met'], artifactDigest),
@@ -212,13 +212,13 @@ test('P5-18: extra dependency edges are rejected as non-deterministic', () => {
 
 test('P5-19: malformed artifact digest is rejected at the evidence boundary', () => {
   const m = machine();
-  const malformed = evidence('n-action', 'action-receipt', 'e1', []);
+  const malformed = evidence('n-action', 'action-receipt', 'e1', [], []);
   assert.throws(() => m.transition({ ...malformed, artifactDigest: 'not-a-sha256-digest' }), Error);
 });
 
 test('P5-20: duplicate predecessor references are rejected', () => {
   const m = machine();
-  m.transition(evidence('n-action', 'action-receipt', 'e1', []));
+  m.transition(evidence('n-action', 'action-receipt', 'e1', [], []));
   const artifactDigest = digestJson({ artifact: 'build-1' });
   const duplicatePredecessor = evidence('n-artifact', 'artifact-manifest', 'e2', ['e1', 'e1'], ['artifact-ready'], artifactDigest);
   assert.throws(() => m.transition(duplicatePredecessor), Error);
