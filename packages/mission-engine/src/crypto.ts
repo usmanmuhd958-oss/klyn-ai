@@ -51,6 +51,7 @@ export function evidencePayloadDigest(evidence: Omit<MissionEvidence, 'payloadDi
 }
 
 export function signEvidence(evidence: Omit<MissionEvidence, 'payloadDigest' | 'signatureBase64'>, privateKey: KeyObject): { readonly payloadDigest: string; readonly signatureBase64: string } {
+  if (privateKey.asymmetricKeyType !== 'ed25519') throw new Error('mission evidence signatures require an Ed25519 private key');
   const payloadDigest = evidencePayloadDigest(evidence);
   const signatureBase64 = sign(null, Buffer.from(payloadDigest, 'utf8'), privateKey).toString('base64');
   return Object.freeze({ payloadDigest, signatureBase64 });
@@ -62,6 +63,7 @@ export class Ed25519EvidenceVerifier {
 
   public constructor(verifierId: string, publicKey: KeyObject) {
     if (verifierId.length === 0) throw new Error('verifierId must be non-empty');
+    if (publicKey.asymmetricKeyType !== 'ed25519') throw new Error('mission evidence verification requires an Ed25519 public key');
     this.verifierId = verifierId;
     this.publicKey = publicKey;
   }
