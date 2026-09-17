@@ -1,0 +1,64 @@
+name: KLYN AI Engine Phase 2 Certification
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "packages/ai-engine/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "turbo.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: klyn-ai-engine-phase2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ai-engine-phase2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.23.2"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+          run_install: false
+
+      - name: Frozen install
+        run: pnpm install --frozen-lockfile
+
+      - name: AI engine typecheck
+        run: pnpm --filter @klyn/ai-engine typecheck
+
+      - name: AI engine build
+        run: pnpm --filter @klyn/ai-engine build
+
+      - name: AI engine tests
+        run: pnpm --filter @klyn/ai-engine test
+
+      - name: AI engine lint
+        run: pnpm --filter @klyn/ai-engine lint
+
+      - name: Frontend change audit
+        shell: bash
+        run: |
+          if git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.sha }}" | grep -E '^(apps/(frontend|studio)|.*\.(tsx|jsx|css|scss))($|/)'; then
+            echo "Frontend/UI files changed in a Phase 2 backend subsystem PR."
+            exit 1
+          fi
