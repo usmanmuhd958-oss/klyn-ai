@@ -2,15 +2,16 @@ import { graphDigestInput, digestJson } from './crypto.js';
 import { parseMissionEvidence, parseMissionGraph, validateGraphAcyclic, MissionValidationError } from './validation.js';
 import type { EvidenceVerifier, MissionEvidence, MissionGraph, MissionNode, MissionSnapshot, MissionState, MissionEngineOptions, TransitionResult } from './types.js';
 
-const ORDERED_STATES: readonly MissionState[] = [
+const ORDERED_STATES = [
   'ACTION_EXECUTED',
   'ARTIFACT_PRODUCED',
   'TEST_PASSED',
   'REQUIREMENT_VERIFIED',
   'DEPLOYMENT_CONFIRMED',
-];
+] as const;
+type RequiredMissionState = (typeof ORDERED_STATES)[number];
 
-const REQUIRED_EVIDENCE: Readonly<Record<MissionState, MissionEvidence['kind']>> = {
+const REQUIRED_EVIDENCE: Readonly<Record<RequiredMissionState, MissionEvidence['kind']>> = {
   ACTION_EXECUTED: 'action-receipt',
   ARTIFACT_PRODUCED: 'artifact-manifest',
   TEST_PASSED: 'test-result',
@@ -66,8 +67,9 @@ export class VerifiableMissionGraph {
     return this.nodeForStateFromGraph(this.graph, state);
   }
 
-  public requiredStateAfter(state: MissionState | 'NOT_STARTED'): MissionState {
-    const index = state === 'NOT_STARTED' ? -1 : ORDERED_STATES.indexOf(state);
+  public requiredStateAfter(state: MissionState | 'NOT_STARTED'): RequiredMissionState {
+    if (state === 'FAILED') throw new MissionTransitionError('failed missions cannot advance');
+    const index = state === 'NOT_STARTED' ? -1 : ORDERED_STATES.indexOf(state as RequiredMissionState);
     if (index < 0) return ORDERED_STATES[0];
     if (index >= ORDERED_STATES.length - 1) throw new MissionTransitionError('mission is already complete');
     return ORDERED_STATES[index + 1];
@@ -144,7 +146,7 @@ export class MissionStateMachine {
     if (evidence.nodeId !== node.nodeId) {
       this.fail(`evidence targets ${evidence.nodeId}, expected ${node.nodeId}`);
     }
-    if (evidence.kind !== REQUIRED_EVIDENCE[node.state]) {
+    if (evidence.kind !== REQUIRED_EVIDENCE[node.state as RequiredMissionState]) {
       this.fail(`evidence kind ${evidence.kind} cannot advance ${node.state}`);
     }
     if (this.evidenceById.has(evidence.evidenceId)) {
