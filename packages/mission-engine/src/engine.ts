@@ -38,20 +38,32 @@ export class VerifiableMissionGraph {
       nodes: graph.nodes,
       invariants: graph.invariants,
     }));
-    if (expectedDigest !== graph.graphDigest) throw new MissionValidationError('graphDigest does not match canonical graph contents');
+    if (expectedDigest !== graph.graphDigest) {
+      throw new MissionValidationError('graphDigest does not match canonical graph contents');
+    }
+    if (graph.nodes.length !== ORDERED_STATES.length) {
+      throw new MissionValidationError(`graph must contain exactly ${ORDERED_STATES.length} mission nodes`);
+    }
     for (const state of ORDERED_STATES) {
       const matches = graph.nodes.filter((node) => node.state === state);
       if (matches.length !== 1) throw new MissionValidationError(`graph must contain exactly one node for ${state}`);
     }
-    const nodeStates = new Set(graph.nodes.map((node) => node.state));
-    if (nodeStates.has('FAILED')) throw new MissionValidationError('FAILED is an engine outcome, not a mission graph state');
+    if (graph.nodes.some((node) => node.state === 'FAILED')) {
+      throw new MissionValidationError('FAILED is an engine outcome, not a mission graph state');
+    }
+    for (let index = 0; index < ORDERED_STATES.length; index += 1) {
+      const current = graph.nodes.find((node) => node.state === ORDERED_STATES[index]);
+      if (!current) throw new MissionValidationError(`missing node for ${ORDERED_STATES[index]}`);
+      const expectedDependency = index === 0 ? [] : [this.nodeForStateFromGraph(graph, ORDERED_STATES[index - 1]).nodeId];
+      if (current.dependsOn.length !== expectedDependency.length || current.dependsOn.some((id, depIndex) => id !== expectedDependency[depIndex])) {
+        throw new MissionValidationError(`${current.state} must depend only on ${expectedDependency.length === 0 ? 'no predecessor' : expectedDependency[0]}`);
+      }
+    }
     this.graph = graph;
   }
 
   public nodeForState(state: MissionState): MissionNode {
-    const node = this.graph.nodes.find((candidate) => candidate.state === state);
-    if (!node) throw new MissionValidationError(`no node for state ${state}`);
-    return node;
+    return this.nodeForStateFromGraph(this.graph, state);
   }
 
   public requiredStateAfter(state: MissionState | 'NOT_STARTED'): MissionState {
@@ -60,13 +72,19 @@ export class VerifiableMissionGraph {
     if (index >= ORDERED_STATES.length - 1) throw new MissionTransitionError('mission is already complete');
     return ORDERED_STATES[index + 1];
   }
+
+  private nodeForStateFromGraph(graph: MissionGraph, state: MissionState): MissionNode {
+    const node = graph.nodes.find((candidate) => candidate.state === state);
+    if (!node) throw new MissionValidationError(`no node for state ${state}`);
+    return node;
+  }
 }
 
 export class MissionStateMachine {
   private readonly graph: VerifiableMissionGraph;
   private readonly verifier: EvidenceVerifier;
   private readonly nowEpochMs: () => number;
-  private readonly evidence = new Map<string, MissionEvidence>();
+  private readonly evidenceById = new Map<string, MissionEvidence>();
   private currentState: MissionState | 'NOT_STARTED' = 'NOT_STARTED';
   private readonly completedNodeIds = new Set<string>();
   private readonly acceptedEvidenceIds = new Set<string>();
@@ -77,6 +95,12 @@ export class MissionStateMachine {
     this.graph = graph;
     this.verifier = options.evidenceVerifier;
     this.nowEpochMs = options.nowEpochMs ?? (() => Date.now());
+  }
+
+  public static replay(graph: VerifiableMissionGraph, evidenceLog: readonly unknown[], options: MissionEngineOptions): MissionStateMachine {
+    const machine = new MissionStateMachine(graph, options);
+    for (const evidence of evidenceLog) machine.transition(evidence);
+    return machine;
   }
 
   public snapshot(): MissionSnapshot {
@@ -91,12 +115,13 @@ export class MissionStateMachine {
   }
 
   public transition(input: unknown): TransitionResult {
+    if (this.blocked) throw new MissionTransitionError('mission is blocked after a failed transition');
     const evidence = parseMissionEvidence(input);
     const from = this.currentState;
     const to = this.graph.requiredStateAfter(from);
     const node = this.graph.nodeForState(to);
     this.validateTransition(evidence, node, from);
-    this.evidence.set(evidence.evidenceId, evidence);
+    this.evidenceById.set(evidence.evidenceId, evidence);
     this.acceptedEvidenceIds.add(evidence.evidenceId);
     this.completedNodeIds.add(node.nodeId);
     for (const invariantId of node.invariantIds) this.satisfiedInvariantIds.add(invariantId);
@@ -113,96 +138,95 @@ export class MissionStateMachine {
   }
 
   private validateTransition(evidence: MissionEvidence, node: MissionNode, from: MissionState | 'NOT_STARTED'): void {
-    if (this.blocked) throw new MissionTransitionError('mission is blocked after a failed transition');
     if (evidence.missionId !== this.graph.graph.missionId || evidence.objectiveId !== this.graph.graph.objectiveId) {
-      this.blocked = true;
-      throw new MissionTransitionError('evidence mission/objective identity mismatch');
+      this.fail('evidence mission/objective identity mismatch');
     }
     if (evidence.nodeId !== node.nodeId) {
-      this.blocked = true;
-      throw new MissionTransitionError(`evidence targets ${evidence.nodeId}, expected ${node.nodeId}`);
+      this.fail(`evidence targets ${evidence.nodeId}, expected ${node.nodeId}`);
     }
     if (evidence.kind !== REQUIRED_EVIDENCE[node.state]) {
-      this.blocked = true;
-      throw new MissionTransitionError(`evidence kind ${evidence.kind} cannot advance ${node.state}`);
+      this.fail(`evidence kind ${evidence.kind} cannot advance ${node.state}`);
     }
-    if (this.evidence.has(evidence.evidenceId)) {
-      this.blocked = true;
-      throw new MissionTransitionError(`duplicate evidenceId: ${evidence.evidenceId}`);
+    if (this.evidenceById.has(evidence.evidenceId)) {
+      this.fail(`duplicate evidenceId: ${evidence.evidenceId}`);
+    }
+    if (evidence.verifierId !== this.verifier.verifierId) {
+      this.fail('evidence verifier identity does not match the configured verifier');
+    }
+    if (evidence.issuedAtEpochMs > this.nowEpochMs()) {
+      this.fail('evidence cannot be issued in the future');
     }
     if (!this.verifier.verify(evidence)) {
-      this.blocked = true;
-      throw new MissionTransitionError('cryptographic evidence verification failed');
+      this.fail('cryptographic evidence verification failed');
     }
-    const expectedDependency = from === 'NOT_STARTED' ? undefined : this.graph.nodeForState(from).nodeId;
-    if (expectedDependency !== undefined && !node.dependsOn.includes(expectedDependency)) {
-      this.blocked = true;
-      throw new MissionTransitionError(`graph dependency does not permit ${from} -> ${node.state}`);
-    }
-    for (const predecessorId of evidence.predecessorEvidenceIds) {
-      if (!this.acceptedEvidenceIds.has(predecessorId)) {
-        this.blocked = true;
-        throw new MissionTransitionError(`predecessor evidence is not accepted: ${predecessorId}`);
+
+    const predecessor = from === 'NOT_STARTED' ? undefined : this.latestEvidenceForState(from);
+    if (predecessor === undefined) {
+      if (evidence.predecessorEvidenceIds.length !== 0) this.fail('first transition cannot reference predecessor evidence');
+    } else {
+      if (evidence.predecessorEvidenceIds.length !== 1 || evidence.predecessorEvidenceIds[0] !== predecessor.evidenceId) {
+        this.fail(`evidence must reference exactly predecessor ${predecessor.evidenceId}`);
+      }
+      if (!node.dependsOn.includes(this.graph.nodeForState(from).nodeId)) {
+        this.fail(`graph dependency does not permit ${from} -> ${node.state}`);
       }
     }
-    const expectedPredecessor = this.latestEvidenceForState(from);
-    if (expectedPredecessor !== undefined && !evidence.predecessorEvidenceIds.includes(expectedPredecessor.evidenceId)) {
-      this.blocked = true;
-      throw new MissionTransitionError(`evidence must bind to predecessor ${expectedPredecessor.evidenceId}`);
+
+    if (node.state === 'ACTION_EXECUTED' && evidence.artifactDigest !== undefined) {
+      this.fail('action receipt cannot bind an artifact before artifact production');
+    }
+    if (node.state === 'ARTIFACT_PRODUCED') {
+      if (evidence.artifactDigest === undefined) this.fail('artifact production requires artifactDigest');
+      if (evidence.invariantIds.length !== node.invariantIds.length || !node.invariantIds.every((id) => evidence.invariantIds.includes(id))) {
+        this.fail('artifact evidence invariant coverage is not exact');
+      }
+    }
+    if (node.state === 'TEST_PASSED') {
+      const producedArtifactDigest = this.latestArtifactDigest();
+      if (producedArtifactDigest === undefined || evidence.artifactDigest !== producedArtifactDigest) {
+        this.fail('test result must bind exactly to the produced artifact');
+      }
+      this.requireExactInvariantCoverage(evidence, node);
     }
     if (node.state === 'REQUIREMENT_VERIFIED') this.validateRequirementProof(evidence, node);
     if (node.state === 'DEPLOYMENT_CONFIRMED') this.validateDeploymentAttestation(evidence, node);
-    if (node.state === 'ARTIFACT_PRODUCED' && evidence.artifactDigest === undefined) {
-      this.blocked = true;
-      throw new MissionTransitionError('artifact production requires artifactDigest');
-    }
-    if (node.state === 'TEST_PASSED' && evidence.artifactDigest !== this.latestArtifactDigest()) {
-      this.blocked = true;
-      throw new MissionTransitionError('test result must bind to the produced artifact');
-    }
   }
 
   private validateRequirementProof(evidence: MissionEvidence, node: MissionNode): void {
     const testEvidence = this.latestEvidenceForState('TEST_PASSED');
     const artifactEvidence = this.latestEvidenceForState('ARTIFACT_PRODUCED');
-    if (!testEvidence || !artifactEvidence) {
-      this.blocked = true;
-      throw new MissionTransitionError('requirement verification requires prior test and artifact evidence');
-    }
-    if (!evidence.predecessorEvidenceIds.includes(testEvidence.evidenceId)) {
-      this.blocked = true;
-      throw new MissionTransitionError('requirement proof must explicitly reference the passed test evidence');
+    if (!testEvidence || !artifactEvidence) this.fail('requirement verification requires prior test and artifact evidence');
+    if (evidence.predecessorEvidenceIds.length !== 1 || evidence.predecessorEvidenceIds[0] !== testEvidence.evidenceId) {
+      this.fail('requirement proof must reference the passed test evidence');
     }
     if (evidence.artifactDigest !== artifactEvidence.artifactDigest) {
-      this.blocked = true;
-      throw new MissionTransitionError('requirement proof must bind to the produced artifact');
+      this.fail('requirement proof must bind exactly to the produced artifact');
     }
-    if (!node.invariantIds.every((id) => evidence.invariantIds.includes(id))) {
-      this.blocked = true;
-      throw new MissionTransitionError('requirement proof does not cover every required invariant');
-    }
+    this.requireExactInvariantCoverage(evidence, node);
   }
 
   private validateDeploymentAttestation(evidence: MissionEvidence, node: MissionNode): void {
     const requirementEvidence = this.latestEvidenceForState('REQUIREMENT_VERIFIED');
-    if (!requirementEvidence) {
-      this.blocked = true;
-      throw new MissionTransitionError('deployment confirmation requires requirement verification');
+    const artifactEvidence = this.latestEvidenceForState('ARTIFACT_PRODUCED');
+    if (!requirementEvidence || !artifactEvidence) this.fail('deployment confirmation requires requirement verification');
+    if (evidence.predecessorEvidenceIds.length !== 1 || evidence.predecessorEvidenceIds[0] !== requirementEvidence.evidenceId) {
+      this.fail('deployment attestation must reference the requirement proof');
     }
-    if (!evidence.predecessorEvidenceIds.includes(requirementEvidence.evidenceId)) {
-      this.blocked = true;
-      throw new MissionTransitionError('deployment attestation must reference requirement proof');
+    if (evidence.artifactDigest !== artifactEvidence.artifactDigest) {
+      this.fail('deployment attestation must bind exactly to the verified artifact');
     }
-    if (!node.invariantIds.every((id) => evidence.invariantIds.includes(id))) {
-      this.blocked = true;
-      throw new MissionTransitionError('deployment attestation does not cover deployment invariants');
+    this.requireExactInvariantCoverage(evidence, node);
+  }
+
+  private requireExactInvariantCoverage(evidence: MissionEvidence, node: MissionNode): void {
+    if (evidence.invariantIds.length !== node.invariantIds.length || !node.invariantIds.every((id) => evidence.invariantIds.includes(id))) {
+      this.fail('evidence invariant coverage is not exact');
     }
   }
 
-  private latestEvidenceForState(state: MissionState | 'NOT_STARTED'): MissionEvidence | undefined {
-    if (state === 'NOT_STARTED') return undefined;
+  private latestEvidenceForState(state: MissionState): MissionEvidence | undefined {
     const nodeId = this.graph.nodeForState(state).nodeId;
-    return [...this.evidence.values()].find((evidence) => evidence.nodeId === nodeId);
+    return [...this.evidenceById.values()].find((evidence) => evidence.nodeId === nodeId);
   }
 
   private latestArtifactDigest(): string | undefined {
@@ -211,8 +235,13 @@ export class MissionStateMachine {
 
   private transitionReason(state: MissionState): string {
     if (state === 'TEST_PASSED') return 'test passed; requirement remains unverified until cryptographic requirement proof is accepted';
-    if (state === 'REQUIREMENT_VERIFIED') return 'required invariants verified by cryptographically valid evidence';
+    if (state === 'REQUIREMENT_VERIFIED') return 'required mission invariants verified by cryptographically valid evidence';
     if (state === 'DEPLOYMENT_CONFIRMED') return 'deployment attested after requirement verification';
     return `${state} accepted with cryptographically valid evidence`;
+  }
+
+  private fail(message: string): never {
+    this.blocked = true;
+    throw new MissionTransitionError(message);
   }
 }
