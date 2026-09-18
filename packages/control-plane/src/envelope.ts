@@ -6,6 +6,7 @@ import type { Capability, ExecutionId, MissionId, ResourceEnvelope, ResourceRese
 export interface EnvelopeInput {
   readonly missionId: MissionId;
   readonly executionId: ExecutionId;
+  readonly policyId: import("./types.js").PolicyId;
   readonly issuedAt: string;
   readonly expiresAt: string;
   readonly tokenBudget: TokenBudget;
@@ -49,9 +50,10 @@ export class ResourceEnvelopeEngine {
       latencyBudget: input.latencyBudget,
       allowedCapabilities: [...input.allowedCapabilities].sort(),
       networkPolicy: input.networkPolicy,
+      policyId: input.policyId,
     });
     const signature = await hmacSha256(this.signingKey, unsigned);
-    return Object.freeze({ ...input, envelopeId, signature });
+    return Object.freeze({ ...input, envelopeId, signaturePolicyId: input.policyId, signature });
   }
 
   reserve(envelope: ResourceEnvelope, reservation: Omit<ResourceReservation, "committed">): ResourceReservation {
