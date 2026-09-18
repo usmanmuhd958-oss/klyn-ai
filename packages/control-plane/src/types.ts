@@ -11,9 +11,9 @@ import type {
   TaskSpec,
 } from "@klyn/runtime";
 import type {
-  AutonomyEnvelope,
   BudgetAdmission,
   BudgetLedger,
+  BudgetUsageSnapshot,
   ContainmentDecision,
   UsageMetrics,
 } from "@klyn/autonomy";
@@ -41,7 +41,7 @@ export interface ExecutionReport {
   readonly budgetAdmission: BudgetAdmission;
   readonly runtime: RuntimeExecutionResult;
   readonly containment: readonly ContainmentDecision[];
-  readonly budget: BudgetLedger;
+  readonly budget: BudgetUsageSnapshot;
 }
 
 export type MissionEvidenceDraft = Omit<MissionEvidence, "payloadDigest" | "signatureBase64">;
@@ -92,25 +92,3 @@ export interface ExecutionControllerOptions {
     assertOperational(): void;
   };
 }
-
-export interface ControlPlaneContainmentOptions {
-  readonly missionId: string;
-  readonly agentId: string;
-  readonly principalId: string;
-  readonly governance: GovernanceEngine;
-  readonly budget: BudgetLedger;
-  readonly onEscalate?: (decision: ContainmentDecision) => boolean | Promise<boolean>;
-  readonly onTerminate?: (decision: ContainmentDecision) => void | Promise<void>;
-}
-
-export interface ControlPlaneAuditContext {
-  readonly missionId: string;
-  readonly agentId: string;
-  readonly principalId: string;
-}
-
-export interface MissionGraphFactory {
-  create(intent: ControlPlaneIntent): MissionGraph;
-}
-
-export type { AutonomyEnvelope };
