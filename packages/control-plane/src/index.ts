@@ -8,9 +8,9 @@ export {
 } from "./ContainmentController.js";
 
 export {
+  Ed25519MissionEvidenceAttestor,
   MissionBoundaryError,
   MissionController,
-  MissionEvidenceAttestor as Ed25519MissionEvidenceAttestor,
 } from "./MissionController.js";
 
 export type {
