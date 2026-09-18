@@ -1,8 +1,10 @@
 import { performance } from "node:perf_hooks";
+import { AutonomyContainmentError } from "@klyn/autonomy";
 import { ProviderError } from "../providers/http.js";
 import { ContextSelector } from "./context-selector.js";
 import { ProviderHealthTracker } from "./health.js";
 import { TokenCostMeter } from "./metering.js";
+import type { AutonomyBudgetFeed } from "../autonomy-budget-feed.js";
 import {
   AiEngineError,
   type AiCompletionRequest,
@@ -101,6 +103,7 @@ export interface AiEngineOptions {
   readonly routing?: Partial<RoutingPolicy>;
   readonly health?: Partial<ConstructorParameters<typeof ProviderHealthTracker>[0]>;
   readonly meter?: TokenCostMeter;
+  readonly autonomyBudgetFeed?: AutonomyBudgetFeed;
   readonly requestTimeoutMs?: number;
 }
 
@@ -123,7 +126,10 @@ export class AiEngine {
         throw new AiEngineError("INVALID_REQUEST", `evaluationScore must be between 0 and 1: ${provider.id}`);
       }
     }
-    this.providers = [...providers];
+    const configuredProviders = [...providers];
+    this.providers = options.autonomyBudgetFeed
+      ? configuredProviders.map((provider) => options.autonomyBudgetFeed!.wrap(provider))
+      : configuredProviders;
     this.routing = { ...DEFAULT_ROUTING, ...options.routing };
     if (!Number.isInteger(this.routing.maxAttempts) || this.routing.maxAttempts < 1) throw new AiEngineError("INVALID_REQUEST", "maxAttempts must be a positive integer");
     if (!Number.isInteger(this.routing.maxOutputTokens) || this.routing.maxOutputTokens <= 0) throw new AiEngineError("INVALID_REQUEST", "maxOutputTokens must be a positive integer");
@@ -194,6 +200,7 @@ export class AiEngine {
           health,
         };
       } catch (error) {
+        if (error instanceof AutonomyContainmentError) throw error;
         const details = errorDetails(error);
         lastError = error;
         if (request.signal?.aborted) throw new AiEngineError("ABORTED", "AI request was aborted", { providerId: provider.id, cause: request.signal.reason });

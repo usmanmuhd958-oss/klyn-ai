@@ -92,6 +92,9 @@ export type {
 
 export { TokenTelemetryStreamer } from "./token-telemetry-streamer.js";
 
+export { AutonomyBudgetFeed } from "./autonomy-budget-feed.js";
+export type { AutonomyBudgetFeedOptions } from "./autonomy-budget-feed.js";
+
 export type {
   TokenTelemetry,
   TokenCounter,

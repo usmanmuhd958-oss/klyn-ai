@@ -1,5 +1,5 @@
 import { buildMessages, jsonHeaders, providerFetch, requireApiKey } from "./http.js";
-import type { ProviderAdapter, ProviderRequest, ProviderResponse, StreamChunk } from "./types.js";
+import type { ProviderAdapter, ProviderRequest, ProviderResponse, ProviderUsage, StreamChunk } from "./types.js";
 
 function textFromResponse(body: unknown): string {
   const value = body as { choices?: Array<{ message?: { content?: string | null } }> };
@@ -45,6 +45,7 @@ export class OpenAIAdapter implements ProviderAdapter {
         max_tokens: request.maxOutputTokens,
         temperature: request.temperature,
         stream: true,
+        stream_options: { include_usage: true },
       }),
     }, request.signal);
     if (!response.body) throw new Error("OpenAI returned no stream body");
@@ -68,9 +69,16 @@ async function* parseSSE(body: ReadableStream<Uint8Array>, provider: "openai", m
         const data = line.slice(5).trim();
         if (data === "[DONE]") { yield { provider, model, text: "", done: true }; return; }
         try {
-          const json = JSON.parse(data) as { choices?: Array<{ delta?: { content?: string } }> };
+          const json = JSON.parse(data) as {
+            id?: string;
+            choices?: Array<{ delta?: { content?: string } }>;
+            usage?: { prompt_tokens?: number; completion_tokens?: number };
+          };
+          const usage: ProviderUsage | undefined = json.usage
+            ? { inputTokens: json.usage.prompt_tokens, outputTokens: json.usage.completion_tokens }
+            : undefined;
           const text = json.choices?.[0]?.delta?.content ?? "";
-          if (text) yield { provider, model, text };
+          if (text || usage) yield { provider, model, text, usage, requestId: json.id };
         } catch { /* ignore incomplete/non-JSON SSE frames */ }
       }
     }
