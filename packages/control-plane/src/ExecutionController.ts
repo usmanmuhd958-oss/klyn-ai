@@ -1,4 +1,3 @@
-import type { GovernanceEngine } from "@klyn/governance";
 import type { RuntimeExecutionResult } from "@klyn/runtime";
 import type { BudgetLedger, ContainmentDecision, UsageMetrics } from "@klyn/autonomy";
 import type {
@@ -25,11 +24,7 @@ function runtimeUsage(result: RuntimeExecutionResult): UsageMetrics {
   });
 }
 
-function identityCheck(
-  input: ControlPlaneExecutionRequest,
-  budget: BudgetLedger,
-  governance: GovernanceEngine,
-): void {
+function identityCheck(input: ControlPlaneExecutionRequest, budget: BudgetLedger): void {
   if (input.intent.missionId !== budget.missionId) {
     throw new ExecutionBoundaryError("intent missionId does not match autonomy envelope");
   }
@@ -48,14 +43,16 @@ function identityCheck(
   if (budget.envelopeSnapshot.principalId !== input.authorizationRequest.principal.principalId) {
     throw new ExecutionBoundaryError("authorization principal does not match autonomy envelope");
   }
-  void governance;
+  if (budget.envelopeSnapshot.expiresAtEpochMs <= budget.envelopeSnapshot.issuedAtEpochMs) {
+    throw new ExecutionBoundaryError("autonomy envelope has invalid expiry");
+  }
 }
 
 export class ExecutionController {
   public constructor(private readonly options: ExecutionControllerOptions) {}
 
   public async execute(input: ControlPlaneExecutionRequest): Promise<ExecutionReport> {
-    identityCheck(input, this.options.budget, this.options.governance);
+    identityCheck(input, this.options.budget);
     this.options.containment.assertOperational();
 
     const authorization = this.options.governance.authorize(
@@ -89,6 +86,7 @@ export class ExecutionController {
     } catch (error: unknown) {
       abortController.abort(error);
       await monitorPromise.catch(() => undefined);
+      if (monitorFailure !== undefined) throw monitorFailure;
       throw error;
     } finally {
       abortController.abort();
@@ -109,17 +107,14 @@ export class ExecutionController {
         }));
 
     const finalDecision = await this.options.containment.intercept(finalUsageDelta);
-    const containment: readonly ContainmentDecision[] = Object.freeze([
-      ...this.options.containment.recentDecisions(),
-      finalDecision,
-    ]);
-
+    const containment = this.options.containment.recentDecisions();
+    
     return Object.freeze({
       authorization,
       budgetAdmission,
       runtime,
-      containment,
-      budget: this.options.budget,
+      containment: Object.freeze([...containment]),
+      budget: this.options.budget.snapshot(),
     });
   }
 }
