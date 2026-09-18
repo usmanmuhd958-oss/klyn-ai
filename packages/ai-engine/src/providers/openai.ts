@@ -1,5 +1,5 @@
 import { buildMessages, jsonHeaders, providerFetch, requireApiKey } from "./http.js";
-import type { ProviderAdapter, ProviderRequest, ProviderResponse, StreamChunk, ProviderUsage } from "./types.js";
+import type { ProviderAdapter, ProviderRequest, ProviderResponse, ProviderUsage, StreamChunk } from "./types.js";
 
 function textFromResponse(body: unknown): string {
   const value = body as { choices?: Array<{ message?: { content?: string | null } }> };
@@ -24,19 +24,13 @@ export class OpenAIAdapter implements ProviderAdapter {
       }),
     }, request.signal);
     const body = await response.json();
-    const raw = body as {
-      id?: string;
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
-    };
+    const raw = body as { id?: string; usage?: { prompt_tokens?: number; completion_tokens?: number } };
     return {
       provider: this.name,
       model: request.model,
       output: textFromResponse(body),
       requestId: raw.id,
-      usage: {
-        inputTokens: raw.usage?.prompt_tokens,
-        outputTokens: raw.usage?.completion_tokens,
-      },
+      usage: { inputTokens: raw.usage?.prompt_tokens, outputTokens: raw.usage?.completion_tokens },
     };
   }
 
@@ -59,11 +53,7 @@ export class OpenAIAdapter implements ProviderAdapter {
   }
 }
 
-async function* parseSSE(
-  body: ReadableStream<Uint8Array>,
-  provider: "openai",
-  model: string,
-): AsyncIterable<StreamChunk> {
+async function* parseSSE(body: ReadableStream<Uint8Array>, provider: "openai", model: string): AsyncIterable<StreamChunk> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -77,10 +67,7 @@ async function* parseSSE(
       for (const line of lines) {
         if (!line.startsWith("data:")) continue;
         const data = line.slice(5).trim();
-        if (data === "[DONE]") {
-          yield { provider, model, text: "", done: true };
-          return;
-        }
+        if (data === "[DONE]") { yield { provider, model, text: "", done: true }; return; }
         try {
           const json = JSON.parse(data) as {
             id?: string;
@@ -91,15 +78,9 @@ async function* parseSSE(
             ? { inputTokens: json.usage.prompt_tokens, outputTokens: json.usage.completion_tokens }
             : undefined;
           const text = json.choices?.[0]?.delta?.content ?? "";
-          if (text || usage) {
-            yield { provider, model, text, usage, requestId: json.id };
-          }
-        } catch {
-          // Ignore malformed keep-alive frames while preserving the valid stream.
-        }
+          if (text || usage) yield { provider, model, text, usage, requestId: json.id };
+        } catch { /* ignore incomplete/non-JSON SSE frames */ }
       }
     }
-  } finally {
-    reader.releaseLock();
-  }
+  } finally { reader.releaseLock(); }
 }
