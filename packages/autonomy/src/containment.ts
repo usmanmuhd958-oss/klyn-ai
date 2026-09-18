@@ -9,6 +9,7 @@ export class AutonomyContainmentError extends Error {
 }
 
 export interface ContainmentHandlers {
+  readonly onDecision?: (decision: ContainmentDecision) => void | Promise<void>;
   readonly onWarn?: (decision: ContainmentDecision) => void | Promise<void>;
   readonly onEscalate?: (decision: ContainmentDecision) => boolean | Promise<boolean>;
   readonly onTerminate?: (decision: ContainmentDecision) => void | Promise<void>;
@@ -29,10 +30,14 @@ export class RealTimeContainmentInterceptor {
   public async intercept(delta: UsageMetrics, nowEpochMs = Date.now()): Promise<ContainmentDecision> {
     if (this.isTerminated()) {
       const decision = this.ledger.terminate("containment interceptor is already terminated", nowEpochMs);
+      this.terminated = true;
+      await this.handlers.onDecision?.(decision);
+      await this.handlers.onTerminate?.(decision);
       throw new AutonomyContainmentError(decision.reason, decision);
     }
 
     const decision = this.ledger.record(delta, nowEpochMs);
+    await this.handlers.onDecision?.(decision);
 
     if (decision.action === "WARN") {
       await this.handlers.onWarn?.(decision);
@@ -44,6 +49,7 @@ export class RealTimeContainmentInterceptor {
       if (approved === true) return decision;
       const terminated = this.ledger.terminate("escalation was not approved", nowEpochMs);
       this.terminated = true;
+      await this.handlers.onDecision?.(terminated);
       await this.handlers.onTerminate?.(terminated);
       throw new AutonomyContainmentError(terminated.reason, terminated);
     }
@@ -70,6 +76,7 @@ export class RealTimeContainmentInterceptor {
   public terminate(reason: string, nowEpochMs = Date.now()): ContainmentDecision {
     const decision = this.ledger.terminate(reason, nowEpochMs);
     this.terminated = true;
+    void this.handlers.onDecision?.(decision);
     void this.handlers.onTerminate?.(decision);
     return decision;
   }
