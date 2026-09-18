@@ -161,6 +161,7 @@ export interface CreateMissionInput {
   readonly actor: ActorIdentity;
   readonly objective: string;
   readonly constraints: readonly string[];
+  readonly idempotencyKey: string;
 }
 
 export interface TransitionContext {
@@ -185,6 +186,7 @@ export interface ResourceEnvelope {
   readonly latencyBudget: Readonly<LatencyBudget>;
   readonly allowedCapabilities: readonly Capability[];
   readonly networkPolicy: NetworkPolicy;
+  readonly signaturePolicyId: PolicyId;
   readonly signature: string;
 }
 
