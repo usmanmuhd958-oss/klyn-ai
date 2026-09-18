@@ -19,7 +19,7 @@ export interface MissionLedgerStore {
   createMission(mission: MissionRecord, initialEvent: LedgerEventInput): Promise<{ readonly mission: MissionRecord; readonly event: LedgerEvent }>;
   readMission(missionId: MissionId): Promise<MissionRecord | undefined>;
   transitionAtomically(input: AtomicTransitionInput): Promise<{ readonly mission: MissionRecord; readonly event: LedgerEvent }>;
-  triggerBreakerAtomically(missionId: MissionId, level: BreakerLevel, reason: string, event: LedgerEventInput): Promise<{ readonly mission: MissionRecord; readonly event: LedgerEvent }>;
+  triggerBreakerAtomically(missionId: MissionId, expectedVersion: bigint, level: BreakerLevel, reason: string, event: LedgerEventInput): Promise<{ readonly mission: MissionRecord; readonly event: LedgerEvent }>;
   readEvents(missionId: MissionId): Promise<readonly LedgerEvent[]>;
 }
 
@@ -67,6 +67,7 @@ export class InMemoryMissionLedgerStore implements MissionLedgerStore {
     return this.withMissionLock(missionId, async () => {
       const current = this.missions.get(missionId);
     if (!current) throw new ControlPlaneError("STATE_CONFLICT", "MISSION_NOT_FOUND");
+    if (current.version !== expectedVersion) throw new ControlPlaneError("STATE_CONFLICT", "BREAKER_VERSION_CONFLICT");
     const ledgerEvent = await this.appendEvent(missionId, event);
     const effectiveLevel = BREAKER_ORDER[level] >= BREAKER_ORDER[current.breakerLevel] ? level : current.breakerLevel;
     const next = Object.freeze({
