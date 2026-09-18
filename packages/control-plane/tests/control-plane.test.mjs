@@ -197,3 +197,13 @@ test('mission creation idempotency returns the original mission and rejects dive
   assert.equal(replay.missionId, first.missionId);
   await assert.rejects(() => plane.createMission({ tenantId, policyId, occurredAt: '2026-09-18T12:00:00.000Z', actor, objective: 'different request', constraints: [], idempotencyKey: 'idem-create-003' }), (error) => error?.code === 'IDEMPOTENCY_CONFLICT');
 });
+
+
+test('policy authorization rejects capability escalation and accepts bounded scopes', async () => {
+  const { PolicyAuthorizationEngine } = await import('../dist/index.js');
+  const authz = new PolicyAuthorizationEngine();
+  authz.register({ policyId, actorTypes: ['AGENT'], allowedCapabilities: ['RepoRead', 'RepoWrite'] });
+  const context = authz.authorize({ actor, policyId, requestedCapabilities: ['RepoRead'], expiresAt: '2099-09-18T12:00:00.000Z', decisionId: 'decision-001' });
+  assert.equal(context.capabilities[0], 'RepoRead');
+  assert.throws(() => authz.authorize({ actor, policyId, requestedCapabilities: ['DeployProduction'], expiresAt: '2099-09-18T12:00:00.000Z', decisionId: 'decision-002' }), /CAPABILITY_NOT_ALLOWED/);
+});
