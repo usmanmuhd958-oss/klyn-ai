@@ -2,6 +2,7 @@ export * from "./types.js";
 export * from "./ids.js";
 export * from "./crypto.js";
 export * from "./canonical.js";
+export * from "./authorization.js";
 export * from "./errors.js";
 export * from "./ledger.js";
 export * from "./breaker.js";
