@@ -84,18 +84,18 @@ export class ExecutionController {
     identityCheck(input, this.options.budget);
     this.options.containment.assertOperational();
 
-    if (!permissionAllowed(this.options.budget, input)) {
-      throw new ExecutionBoundaryError(
-        "autonomy permission envelope denied tool/operation/risk scope",
-      );
-    }
-
     const authorization = this.options.governance.authorize(
       input.authorizationRequest,
       input.authorizationScopes,
     );
     if (!authorization.allowed) {
       throw new ExecutionBoundaryError("governance denied execution: " + authorization.reason);
+    }
+
+    if (!permissionAllowed(this.options.budget, input)) {
+      throw new ExecutionBoundaryError(
+        "autonomy permission envelope denied tool/operation/risk scope",
+      );
     }
 
     const budgetAdmission = this.options.budget.admit(input.estimatedUsage);
