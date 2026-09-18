@@ -57,7 +57,7 @@ test('VMG rejects optimistic-lock conflicts and invalid guard transitions', () =
 test('resource reservations fail closed at hard caps', async () => {
   const engine = new ResourceEnvelopeEngine('test-signing-key');
   const envelope = await engine.create({
-    missionId, executionId, issuedAt: '2026-09-18T12:00:00.000Z', expiresAt: '2099-09-18T12:00:00.000Z',
+    missionId, executionId, policyId, issuedAt: '2026-09-18T12:00:00.000Z', expiresAt: '2099-09-18T12:00:00.000Z',
     tokenBudget: { inputMax: 100n, outputMax: 100n, totalMax: 150n },
     computeBudget: { cpuMillicores: 1000, memoryBytes: 1024n, gpuMillicores: 0, diskWriteBytesMax: 1000n, networkEgressBytesMax: 1000n },
     latencyBudget: { missionTimeoutMs: 30000, executionTimeoutMs: 10000, toolTimeoutMs: 5000 },
@@ -74,7 +74,7 @@ test('resource reservations fail closed at hard caps', async () => {
 test('resource reservations are atomically bounded in aggregate', async () => {
   const engine = new ResourceEnvelopeEngine('test-signing-key');
   const envelope = await engine.create({
-    missionId, executionId, issuedAt: '2026-09-18T12:00:00.000Z', expiresAt: '2099-09-18T12:00:00.000Z',
+    missionId, executionId, policyId, issuedAt: '2026-09-18T12:00:00.000Z', expiresAt: '2099-09-18T12:00:00.000Z',
     tokenBudget: { inputMax: 100n, outputMax: 100n, totalMax: 100n },
     computeBudget: { cpuMillicores: 100, memoryBytes: 100n, gpuMillicores: 0, diskWriteBytesMax: 100n, networkEgressBytesMax: 100n },
     latencyBudget: { missionTimeoutMs: 10000, executionTimeoutMs: 5000, toolTimeoutMs: 1000 }, allowedCapabilities: ['RepoRead'], networkPolicy: { allowEgress: false, allowedHosts: [] },
@@ -126,7 +126,7 @@ test('breaker escalation is monotonic', () => {
 
 test('control plane creates missions at INTENT_CAPTURED', async () => {
   const plane = new KlynControlPlane();
-  const mission = await plane.createMission({ tenantId, policyId, occurredAt: '2026-09-18T12:00:00.000Z', actor, objective: 'build artifact', constraints: ['no public network'] });
+  const mission = await plane.createMission({ tenantId, policyId, occurredAt: '2026-09-18T12:00:00.000Z', actor, objective: 'build artifact', constraints: ['no public network'], idempotencyKey: 'idem-create-001' });
   assert.equal(mission.state, 'INTENT_CAPTURED');
   assert.equal(mission.version, 0n);
   const events = await plane.store.readEvents(mission.missionId);
@@ -157,7 +157,7 @@ test('sandbox manager fails closed on invalid lifecycle transitions', async () =
   };
   const engine = new ResourceEnvelopeEngine('test-signing-key');
   const envelope = await engine.create({
-    missionId, executionId, issuedAt: '2026-09-18T12:00:00.000Z', expiresAt: '2099-09-18T12:00:00.000Z',
+    missionId, executionId, policyId, issuedAt: '2026-09-18T12:00:00.000Z', expiresAt: '2099-09-18T12:00:00.000Z',
     tokenBudget: { inputMax: 10n, outputMax: 10n, totalMax: 20n },
     computeBudget: { cpuMillicores: 100, memoryBytes: 1024n, gpuMillicores: 0, diskWriteBytesMax: 100n, networkEgressBytesMax: 0n },
     latencyBudget: { missionTimeoutMs: 1000, executionTimeoutMs: 500, toolTimeoutMs: 100 }, allowedCapabilities: ['RepoRead'], networkPolicy: { allowEgress: false, allowedHosts: [] },
@@ -179,7 +179,7 @@ test('context topology rejects cyclic parent relationships', () => {
 
 test('mission transition store serializes concurrent optimistic writes', async () => {
   const plane = new KlynControlPlane();
-  const mission = await plane.createMission({ tenantId, policyId, occurredAt: '2026-09-18T12:00:00.000Z', actor, objective: 'concurrent transition', constraints: [] });
+  const mission = await plane.createMission({ tenantId, policyId, occurredAt: '2026-09-18T12:00:00.000Z', actor, objective: 'concurrent transition', constraints: [], idempotencyKey: 'idem-create-002' });
   const ctx = { envelopeValid: true, planAuthorized: false, executionSucceeded: false, artifactProvenanceValid: false, verificationStatus: 'NOT_RUN', humanApprovalValid: false, rolloutSucceeded: false, breakerLevel: 'NONE' };
   const results = await Promise.allSettled([
     plane.transition(mission.missionId, 'ENVELOPE_DEFINED', 0n, ctx, actor, {}, '2026-09-18T12:00:00.001Z'),
@@ -187,4 +187,13 @@ test('mission transition store serializes concurrent optimistic writes', async (
   ]);
   assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
   assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
+});
+
+
+test('mission creation idempotency returns the original mission and rejects divergent reuse', async () => {
+  const plane = new KlynControlPlane();
+  const first = await plane.createMission({ tenantId, policyId, occurredAt: '2026-09-18T12:00:00.000Z', actor, objective: 'same request', constraints: [], idempotencyKey: 'idem-create-003' });
+  const replay = await plane.createMission({ tenantId, policyId, occurredAt: '2026-09-18T12:00:00.000Z', actor, objective: 'same request', constraints: [], idempotencyKey: 'idem-create-003' });
+  assert.equal(replay.missionId, first.missionId);
+  await assert.rejects(() => plane.createMission({ tenantId, policyId, occurredAt: '2026-09-18T12:00:00.000Z', actor, objective: 'different request', constraints: [], idempotencyKey: 'idem-create-003' }), (error) => error?.code === 'IDEMPOTENCY_CONFLICT');
 });
