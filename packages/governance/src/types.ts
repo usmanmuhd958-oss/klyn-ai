@@ -170,6 +170,18 @@ export type AuditEvent =
       readonly objectiveId: string;
       readonly attestationPayloadDigest: string;
       readonly timestampEpochMs: number;
+    }
+  | {
+      readonly kind: 'containment';
+      readonly missionId: string;
+      readonly agentId: string;
+      readonly principalId: string;
+      readonly action: 'CONTINUE' | 'WARN' | 'ESCALATE' | 'TERMINATE';
+      readonly reason: string;
+      readonly breachedDimensions: readonly string[];
+      readonly budgetSequence: number;
+      readonly decisionDigest: string;
+      readonly timestampEpochMs: number;
     };
 
 export interface AuditRecord {

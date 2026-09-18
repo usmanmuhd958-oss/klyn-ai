@@ -68,12 +68,15 @@ export class RuntimeExecutionFabric {
     });
   }
 
-  async execute(input: unknown): Promise<RuntimeExecutionResult> {
+  async execute(input: unknown, signal?: AbortSignal): Promise<RuntimeExecutionResult> {
     const plan = this.plan(input);
     if (!this.sandboxPlanner.verify(plan.sandbox, plan)) {
       throw new RuntimeBoundaryViolation("SANDBOX_IDENTITY", "Sandbox plan identity verification failed");
     }
-    const rawObservation = await this.options.executor.execute(plan);
+    if (signal?.aborted) {
+      throw new RuntimeBoundaryViolation("EXECUTION_CANCELLED", "Execution was cancelled before dispatch");
+    }
+    const rawObservation = await this.options.executor.execute(plan, signal);
     const observation = parseExecutionObservation(rawObservation);
     const status = evaluateStatus(observation, plan);
     return freezeDeep({ status, plan, observation });
