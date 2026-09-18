@@ -79,13 +79,16 @@ function exceededDimensions(limits: BudgetLimits, usage: UsageMetrics): string[]
   return exceeded;
 }
 
-function usageAtOrAboveThreshold(
-  usage: number,
-  limit: number,
-  threshold: number,
-): boolean {
+function numberAtOrAboveThreshold(usage: number, limit: number, threshold: number): boolean {
   if (limit === 0) return usage > 0;
   return usage / limit >= threshold;
+}
+
+function bigintAtOrAboveThreshold(usage: bigint, limit: bigint, threshold: number): boolean {
+  if (limit === 0n) return usage > 0n;
+  const scale = 1_000_000n;
+  const thresholdScaled = BigInt(Math.ceil(threshold * Number(scale)));
+  return usage * scale >= limit * thresholdScaled;
 }
 
 export class BudgetLedger {
@@ -139,6 +142,7 @@ export class BudgetLedger {
 
   public admit(estimate: UsageMetrics, nowEpochMs = Date.now()): BudgetAdmission {
     validateUsage(estimate);
+
     if (this.terminated) {
       return Object.freeze({
         admitted: false,
@@ -148,6 +152,7 @@ export class BudgetLedger {
         evaluatedAtEpochMs: nowEpochMs,
       });
     }
+
     if (nowEpochMs >= this.envelope.expiresAtEpochMs) {
       this.terminated = true;
       return Object.freeze({
@@ -172,6 +177,7 @@ export class BudgetLedger {
 
   public record(delta: UsageMetrics, nowEpochMs = Date.now()): ContainmentDecision {
     validateUsage(delta);
+
     if (this.terminated) {
       return Object.freeze({
         action: "TERMINATE",
@@ -221,15 +227,18 @@ export class BudgetLedger {
       ["toolInvocations", this.usage.toolInvocations, this.envelope.limits.toolInvocations, this.envelope.warningThresholds.toolInvocations],
       ["wallClockMillis", this.usage.wallClockMillis, this.envelope.limits.wallClockMillis, this.envelope.warningThresholds.wallClockMillis],
     ];
+
     const warningDimensions = warningChecks
-      .filter(([, used, limit, threshold]) => usageAtOrAboveThreshold(used, limit, threshold))
+      .filter(([, used, limit, threshold]) => numberAtOrAboveThreshold(used, limit, threshold))
       .map(([name]) => name);
 
-    const financialWarning = this.envelope.limits.financialSpendMinorUnits === 0n
-      ? this.usage.financialSpendMinorUnits > 0n
-      : Number(this.usage.financialSpendMinorUnits) / Number(this.envelope.limits.financialSpendMinorUnits) >= this.envelope.warningThresholds.financialSpendMinorUnits;
-
-    if (financialWarning) warningDimensions.push("financialSpendMinorUnits");
+    if (bigintAtOrAboveThreshold(
+      this.usage.financialSpendMinorUnits,
+      this.envelope.limits.financialSpendMinorUnits,
+      this.envelope.warningThresholds.financialSpendMinorUnits,
+    )) {
+      warningDimensions.push("financialSpendMinorUnits");
+    }
 
     if (warningDimensions.length > 0) {
       return Object.freeze({
