@@ -63,7 +63,7 @@ export class InMemoryMissionLedgerStore implements MissionLedgerStore {
     });
   }
 
-  async triggerBreakerAtomically(missionId: MissionId, level: BreakerLevel, reason: string, event: LedgerEventInput): Promise<{ readonly mission: MissionRecord; readonly event: LedgerEvent }> {
+  async triggerBreakerAtomically(missionId: MissionId, expectedVersion: bigint, level: BreakerLevel, reason: string, event: LedgerEventInput): Promise<{ readonly mission: MissionRecord; readonly event: LedgerEvent }> {
     return this.withMissionLock(missionId, async () => {
       const current = this.missions.get(missionId);
     if (!current) throw new ControlPlaneError("STATE_CONFLICT", "MISSION_NOT_FOUND");
