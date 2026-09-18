@@ -8,6 +8,7 @@ packages:
   - "packages/ai-orchestrator"
   - "packages/autonomous-runtime"
   - "packages/cognitive-engine"
+  - "packages/control-plane"
   - "packages/core-runtime"
   - "packages/database"
   - "packages/deploy"
