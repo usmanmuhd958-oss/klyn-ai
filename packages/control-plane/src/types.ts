@@ -6,7 +6,6 @@ import type {
   TransitionResult,
 } from "@klyn/mission-engine";
 import type {
-  ExecutionPlan,
   RuntimeExecutionResult,
   TaskSpec,
 } from "@klyn/runtime";
@@ -80,7 +79,6 @@ export interface MissionControllerOptions {
 export interface ExecutionControllerOptions {
   readonly governance: GovernanceEngine;
   readonly runtime: {
-    plan(input: unknown): ExecutionPlan;
     execute(input: unknown, signal?: AbortSignal): Promise<RuntimeExecutionResult>;
   };
   readonly budget: BudgetLedger;
@@ -91,4 +89,14 @@ export interface ExecutionControllerOptions {
     recentDecisions(): readonly ContainmentDecision[];
     assertOperational(): void;
   };
+}
+
+export interface ControlPlaneContainmentOptions {
+  readonly missionId: string;
+  readonly agentId: string;
+  readonly principalId: string;
+  readonly governance: GovernanceEngine;
+  readonly budget: BudgetLedger;
+  readonly onEscalate?: (decision: ContainmentDecision) => boolean | Promise<boolean>;
+  readonly onTerminate?: (decision: ContainmentDecision) => void | Promise<void>;
 }
