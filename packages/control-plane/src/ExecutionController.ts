@@ -1,10 +1,22 @@
 import type { RuntimeExecutionResult } from "@klyn/runtime";
-import type { BudgetLedger, ContainmentDecision, UsageMetrics } from "@klyn/autonomy";
+import type {
+  AutonomyRiskLevel,
+  BudgetLedger,
+  ContainmentDecision,
+  UsageMetrics,
+} from "@klyn/autonomy";
 import type {
   ControlPlaneExecutionRequest,
   ExecutionControllerOptions,
   ExecutionReport,
 } from "./types.js";
+
+const RISK_RANK: Readonly<Record<AutonomyRiskLevel, number>> = Object.freeze({
+  low: 0,
+  medium: 1,
+  high: 2,
+  critical: 3,
+});
 
 export class ExecutionBoundaryError extends Error {
   public constructor(message: string) {
@@ -21,6 +33,23 @@ function runtimeUsage(result: RuntimeExecutionResult): UsageMetrics {
     financialSpendMinorUnits: 0n,
     toolInvocations: 1,
     wallClockMillis: result.observation.usage.wallClockMillis,
+  });
+}
+
+function permissionAllowed(
+  budget: BudgetLedger,
+  input: ControlPlaneExecutionRequest,
+): boolean {
+  const envelope = budget.envelopeSnapshot;
+  const request = input.authorizationRequest;
+  const risk = request.risk as AutonomyRiskLevel;
+
+  if (RISK_RANK[risk] > RISK_RANK[envelope.maxRisk]) return false;
+
+  return envelope.allowedTools.some((permission) => {
+    if (permission.toolName !== request.toolName) return false;
+    if (!permission.operations.includes(request.operation)) return false;
+    return RISK_RANK[risk] <= RISK_RANK[permission.maxRisk];
   });
 }
 
@@ -55,6 +84,12 @@ export class ExecutionController {
     identityCheck(input, this.options.budget);
     this.options.containment.assertOperational();
 
+    if (!permissionAllowed(this.options.budget, input)) {
+      throw new ExecutionBoundaryError(
+        "autonomy permission envelope denied tool/operation/risk scope",
+      );
+    }
+
     const authorization = this.options.governance.authorize(
       input.authorizationRequest,
       input.authorizationScopes,
@@ -72,6 +107,7 @@ export class ExecutionController {
 
     const abortController = new AbortController();
     let monitorFailure: unknown;
+
     const monitorPromise = input.usageStream === undefined
       ? Promise.resolve()
       : this.options.containment.monitor(input.usageStream, abortController.signal)
@@ -95,25 +131,26 @@ export class ExecutionController {
     await monitorPromise.catch(() => undefined);
     if (monitorFailure !== undefined) throw monitorFailure;
 
-    const finalUsageDelta = input.finalUsageDelta ?? (input.usageStream === undefined
-      ? runtimeUsage(runtime)
-      : Object.freeze({
-          tokens: 0,
-          computeMillis: 0,
-          networkRequests: 0,
-          financialSpendMinorUnits: 0n,
-          toolInvocations: 0,
-          wallClockMillis: 0,
-        }));
+    const finalUsageDelta = input.finalUsageDelta ?? (
+      input.usageStream === undefined
+        ? runtimeUsage(runtime)
+        : Object.freeze({
+            tokens: 0,
+            computeMillis: 0,
+            networkRequests: 0,
+            financialSpendMinorUnits: 0n,
+            toolInvocations: 0,
+            wallClockMillis: 0,
+          })
+    );
 
-    const finalDecision = await this.options.containment.intercept(finalUsageDelta);
-    const containment = this.options.containment.recentDecisions();
-    
+    await this.options.containment.intercept(finalUsageDelta);
+
     return Object.freeze({
       authorization,
       budgetAdmission,
       runtime,
-      containment: Object.freeze([...containment]),
+      containment: Object.freeze([...this.options.containment.recentDecisions()]),
       budget: this.options.budget.snapshot(),
     });
   }
