@@ -1,5 +1,3 @@
-# KLYN Phase 6: explicit backend-only workspace allowlist.
-# Do not use wildcard workspace globs: client/UI applications are intentionally excluded.
 packages:
   - "apps/backend"
   - "packages/agent-runtime"
@@ -13,7 +11,9 @@ packages:
   - "packages/deploy"
   - "packages/evolution-controller"
   - "packages/execution-runtime"
+  - "packages/governance"
   - "packages/intelligence"
+  - "packages/runtime"
   - "packages/self-healing-runtime"
   - "packages/swarm-mesh"
   - "packages/tsconfig"

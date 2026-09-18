@@ -157,6 +157,30 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
+  packages/governance:
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.4
+      tsx:
+        specifier: ^4.20.5
+        version: 4.23.13
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
+  packages/runtime:
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.4
+      tsx:
+        specifier: ^4.20.5
+        version: 4.23.13
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
   packages/self-healing-runtime: {}
 
   packages/swarm-mesh: {}
