@@ -190,7 +190,7 @@ export interface RuntimeExecutionResult {
 }
 
 export interface RuntimeExecutor {
-  execute(plan: ExecutionPlan): Promise<RuntimeExecutionObservation>;
+  execute(plan: ExecutionPlan, signal?: AbortSignal): Promise<RuntimeExecutionObservation>;
 }
 
 export interface HardwareTopologyProvider {
