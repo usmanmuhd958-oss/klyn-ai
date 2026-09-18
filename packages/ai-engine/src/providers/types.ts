@@ -10,10 +10,7 @@ export interface ProviderRequest {
   responseFormat?: "text" | "json";
 }
 
-export interface ProviderUsage {
-  inputTokens?: number;
-  outputTokens?: number;
-}
+export interface ProviderUsage { inputTokens?: number; outputTokens?: number; }
 
 export interface ProviderResponse {
   provider: ProviderName;
