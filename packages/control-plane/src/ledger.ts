@@ -23,9 +23,11 @@ type MissionLedger = {
 export class InMemoryLedgerStore implements LedgerStore {
   private readonly missions = new Map<string, MissionLedger>();
   private readonly idempotency = new Map<string, { eventId: EventId; payloadHash: Hash256 }>();
+  private readonly locks = new Map<string, Promise<void>>();
 
   async append(input: LedgerEventInput): Promise<LedgerEvent> {
-    const idempotencyKey = typeof input.payload === "object" && input.payload !== null
+    return this.withMissionLock(input.missionId, async () => {
+      const idempotencyKey = typeof input.payload === "object" && input.payload !== null
       ? (input.payload as Record<string, unknown>).idempotencyKey
       : undefined;
 
