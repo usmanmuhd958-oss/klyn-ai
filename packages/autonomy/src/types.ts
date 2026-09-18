@@ -11,7 +11,7 @@ export interface BudgetLimits {
   readonly wallClockMillis: number;
 }
 
-export interface BudgetWarningThresholds {
+export interface BudgetThresholds {
   readonly tokens: number;
   readonly computeMillis: number;
   readonly networkRequests: number;
@@ -35,7 +35,8 @@ export interface AutonomyEnvelope {
   readonly issuedAtEpochMs: number;
   readonly expiresAtEpochMs: number;
   readonly limits: BudgetLimits;
-  readonly warningThresholds: BudgetWarningThresholds;
+  readonly warningThresholds: BudgetThresholds;
+  readonly escalationThresholds: BudgetThresholds;
   readonly allowedTools: readonly AutonomyToolPermission[];
   readonly maxRisk: AutonomyRiskLevel;
   readonly maxDelegationDepth: number;
