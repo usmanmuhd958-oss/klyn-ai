@@ -2,6 +2,7 @@ import type {
   AutonomyEnvelope,
   BudgetAdmission,
   BudgetLimits,
+  BudgetThresholds,
   BudgetUsageSnapshot,
   ContainmentDecision,
   UsageMetrics,
@@ -30,6 +31,13 @@ function validateLimits(limits: BudgetLimits): void {
   assertNonNegativeFinite(limits.wallClockMillis, "limits.wallClockMillis");
   if (limits.financialSpendMinorUnits < 0n) {
     throw new RangeError("limits.financialSpendMinorUnits must be non-negative");
+  }
+}
+
+function validateThresholds(thresholds: BudgetThresholds): void {
+  for (const [name, value] of Object.entries(thresholds)) {
+    assertNonNegativeFinite(value, "thresholds." + name);
+    if (value > 1) throw new RangeError("thresholds." + name + " must be <= 1");
   }
 }
 
@@ -91,6 +99,27 @@ function bigintAtOrAboveThreshold(usage: bigint, limit: bigint, threshold: numbe
   return usage * scale >= limit * thresholdScaled;
 }
 
+function thresholdDimensions(
+  limits: BudgetLimits,
+  usage: UsageMetrics,
+  thresholds: BudgetThresholds,
+): string[] {
+  const dimensions: string[] = [];
+  if (numberAtOrAboveThreshold(usage.tokens, limits.tokens, thresholds.tokens)) dimensions.push("tokens");
+  if (numberAtOrAboveThreshold(usage.computeMillis, limits.computeMillis, thresholds.computeMillis)) dimensions.push("computeMillis");
+  if (numberAtOrAboveThreshold(usage.networkRequests, limits.networkRequests, thresholds.networkRequests)) dimensions.push("networkRequests");
+  if (numberAtOrAboveThreshold(usage.toolInvocations, limits.toolInvocations, thresholds.toolInvocations)) dimensions.push("toolInvocations");
+  if (numberAtOrAboveThreshold(usage.wallClockMillis, limits.wallClockMillis, thresholds.wallClockMillis)) dimensions.push("wallClockMillis");
+  if (bigintAtOrAboveThreshold(
+    usage.financialSpendMinorUnits,
+    limits.financialSpendMinorUnits,
+    thresholds.financialSpendMinorUnits,
+  )) {
+    dimensions.push("financialSpendMinorUnits");
+  }
+  return dimensions;
+}
+
 export class BudgetLedger {
   private usage: UsageMetrics = ZERO_USAGE;
   private sequence = 0;
@@ -111,10 +140,28 @@ export class BudgetLedger {
     if (!Number.isInteger(envelope.maxDelegationDepth) || envelope.maxDelegationDepth < 0) {
       throw new RangeError("maxDelegationDepth must be a non-negative integer");
     }
+
     validateLimits(envelope.limits);
-    for (const [name, value] of Object.entries(envelope.warningThresholds)) {
-      assertNonNegativeFinite(value, "warningThresholds." + name);
-      if (value > 1) throw new RangeError("warningThresholds." + name + " must be <= 1");
+    validateThresholds(envelope.warningThresholds);
+    validateThresholds(envelope.escalationThresholds);
+
+    for (const dimension of Object.keys(envelope.warningThresholds) as Array<keyof BudgetThresholds>) {
+      if (envelope.escalationThresholds[dimension] < envelope.warningThresholds[dimension]) {
+        throw new RangeError(
+          "escalationThresholds." + dimension + " must be >= warningThresholds." + dimension,
+        );
+      }
+    }
+
+    const permissionNames = new Set<string>();
+    for (const permission of envelope.allowedTools) {
+      if (!permission.toolName.trim()) throw new RangeError("allowed tool name is required");
+      if (permissionNames.has(permission.toolName)) throw new RangeError("duplicate allowed tool: " + permission.toolName);
+      permissionNames.add(permission.toolName);
+      if (permission.operations.length === 0) throw new RangeError("allowed tool must declare operations");
+      if (permission.operations.some((operation) => !operation.trim())) {
+        throw new RangeError("allowed tool operations must be non-empty");
+      }
     }
   }
 
@@ -179,8 +226,8 @@ export class BudgetLedger {
     validateUsage(delta);
 
     if (this.terminated) {
-      return Object.freeze({
-        action: "TERMINATE",
+      const decision = Object.freeze({
+        action: "TERMINATE" as const,
         reason: "autonomy ledger is already terminated",
         breachedDimensions: Object.freeze(["ledger"]),
         usage: this.usage,
@@ -188,6 +235,7 @@ export class BudgetLedger {
         sequence: this.sequence,
         evaluatedAtEpochMs: nowEpochMs,
       });
+      return decision;
     }
 
     this.usage = addUsage(this.usage, delta);
@@ -220,25 +268,28 @@ export class BudgetLedger {
       });
     }
 
-    const warningChecks: Array<[string, number, number, number]> = [
-      ["tokens", this.usage.tokens, this.envelope.limits.tokens, this.envelope.warningThresholds.tokens],
-      ["computeMillis", this.usage.computeMillis, this.envelope.limits.computeMillis, this.envelope.warningThresholds.computeMillis],
-      ["networkRequests", this.usage.networkRequests, this.envelope.limits.networkRequests, this.envelope.warningThresholds.networkRequests],
-      ["toolInvocations", this.usage.toolInvocations, this.envelope.limits.toolInvocations, this.envelope.warningThresholds.toolInvocations],
-      ["wallClockMillis", this.usage.wallClockMillis, this.envelope.limits.wallClockMillis, this.envelope.warningThresholds.wallClockMillis],
-    ];
-
-    const warningDimensions = warningChecks
-      .filter(([, used, limit, threshold]) => numberAtOrAboveThreshold(used, limit, threshold))
-      .map(([name]) => name);
-
-    if (bigintAtOrAboveThreshold(
-      this.usage.financialSpendMinorUnits,
-      this.envelope.limits.financialSpendMinorUnits,
-      this.envelope.warningThresholds.financialSpendMinorUnits,
-    )) {
-      warningDimensions.push("financialSpendMinorUnits");
+    const escalationDimensions = thresholdDimensions(
+      this.envelope.limits,
+      this.usage,
+      this.envelope.escalationThresholds,
+    );
+    if (escalationDimensions.length > 0) {
+      return Object.freeze({
+        action: "ESCALATE",
+        reason: "autonomy escalation threshold reached",
+        breachedDimensions: Object.freeze(escalationDimensions),
+        usage: this.usage,
+        remaining: subtractUsage(this.envelope.limits, this.usage),
+        sequence: this.sequence,
+        evaluatedAtEpochMs: nowEpochMs,
+      });
     }
+
+    const warningDimensions = thresholdDimensions(
+      this.envelope.limits,
+      this.usage,
+      this.envelope.warningThresholds,
+    );
 
     if (warningDimensions.length > 0) {
       return Object.freeze({
