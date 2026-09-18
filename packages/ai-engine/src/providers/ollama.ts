@@ -1,5 +1,5 @@
 import { ProviderError, providerFetch } from "./http.js";
-import type { ProviderAdapter, ProviderRequest, ProviderResponse, StreamChunk, ProviderUsage } from "./types.js";
+import type { ProviderAdapter, ProviderRequest, ProviderResponse, ProviderUsage, StreamChunk } from "./types.js";
 
 interface OllamaResponse {
   model?: string;
