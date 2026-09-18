@@ -10,7 +10,10 @@ export interface ProviderRequest {
   responseFormat?: "text" | "json";
 }
 
-export interface ProviderUsage { inputTokens?: number; outputTokens?: number; }
+export interface ProviderUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+}
 
 export interface ProviderResponse {
   provider: ProviderName;
@@ -20,7 +23,14 @@ export interface ProviderResponse {
   requestId?: string;
 }
 
-export interface StreamChunk { provider: ProviderName; model: string; text: string; done?: boolean; }
+export interface StreamChunk {
+  provider: ProviderName;
+  model: string;
+  text: string;
+  done?: boolean;
+  usage?: ProviderUsage;
+  requestId?: string;
+}
 
 export interface ProviderAdapter {
   readonly name: ProviderName;

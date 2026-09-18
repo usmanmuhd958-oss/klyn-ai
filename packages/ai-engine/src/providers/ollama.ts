@@ -1,5 +1,5 @@
 import { ProviderError, providerFetch } from "./http.js";
-import type { ProviderAdapter, ProviderRequest, ProviderResponse, StreamChunk } from "./types.js";
+import type { ProviderAdapter, ProviderRequest, ProviderResponse, StreamChunk, ProviderUsage } from "./types.js";
 
 interface OllamaResponse {
   model?: string;
@@ -7,6 +7,11 @@ interface OllamaResponse {
   done?: boolean;
   prompt_eval_count?: number;
   eval_count?: number;
+}
+
+function normalizedUsage(data: OllamaResponse): ProviderUsage | undefined {
+  if (data.prompt_eval_count === undefined && data.eval_count === undefined) return undefined;
+  return { inputTokens: data.prompt_eval_count, outputTokens: data.eval_count };
 }
 
 export class OllamaAdapter implements ProviderAdapter {
@@ -42,10 +47,7 @@ export class OllamaAdapter implements ProviderAdapter {
       provider: this.name,
       model: request.model,
       output: data.message?.content ?? "",
-      usage: {
-        inputTokens: data.prompt_eval_count,
-        outputTokens: data.eval_count,
-      },
+      usage: normalizedUsage(data),
     };
   }
 
@@ -88,9 +90,10 @@ export class OllamaAdapter implements ProviderAdapter {
           if (!trimmed) continue;
           const event = JSON.parse(trimmed) as OllamaResponse;
           const text = event.message?.content ?? "";
-          if (text) yield { provider: this.name, model: request.model, text };
+          const usage = normalizedUsage(event);
+          if (text || usage) yield { provider: this.name, model: request.model, text, usage };
           if (event.done) {
-            yield { provider: this.name, model: request.model, text: "", done: true };
+            yield { provider: this.name, model: request.model, text: "", done: true, usage };
             return;
           }
         }
