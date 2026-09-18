@@ -3,6 +3,7 @@ import { ControlPlaneError } from "./errors.js";
 import { newMissionId } from "./ids.js";
 import { AnomalyEngine } from "./anomaly.js";
 import { VMGEngine } from "./vmg.js";
+import { hashPayload } from "./canonical.js";
 import { InMemoryMissionLedgerStore, type MissionLedgerStore } from "./store.js";
 import type { ActorIdentity, AnomalyVector, CreateMissionInput, LedgerEventInput, MissionRecord, MissionState, TransitionContext } from "./types.js";
 
@@ -10,10 +11,23 @@ export class KlynControlPlane {
   readonly vmg = new VMGEngine();
   readonly anomaly = new AnomalyEngine();
   readonly breakers = new CircuitBreakerEngine();
+  private readonly createIdempotency = new Map<string, { mission: MissionRecord; requestHash: string }>();
 
   constructor(readonly store: MissionLedgerStore = new InMemoryMissionLedgerStore()) {}
 
   async createMission(input: Omit<CreateMissionInput, "missionId">): Promise<MissionRecord> {
+    const requestHash = await hashPayload({
+      tenantId: input.tenantId,
+      policyId: input.policyId,
+      objective: input.objective,
+      constraints: input.constraints,
+    });
+    const idempotencyKey = `${input.tenantId}:${input.idempotencyKey}`;
+    const existing = this.createIdempotency.get(idempotencyKey);
+    if (existing) {
+      if (existing.requestHash !== requestHash) throw new ControlPlaneError("IDEMPOTENCY_CONFLICT", "CREATE_MISSION_KEY_REUSED_WITH_DIFFERENT_REQUEST");
+      return existing.mission;
+    }
     const missionId = newMissionId();
     const mission: MissionRecord = {
       missionId,
@@ -33,9 +47,11 @@ export class KlynControlPlane {
       occurredAt: input.occurredAt,
       actor: input.actor,
       schemaVersion: 1,
-      payload: { objective: input.objective, constraints: input.constraints },
+      payload: { objective: input.objective, constraints: input.constraints, idempotencyKey: input.idempotencyKey },
     };
-    return (await this.store.createMission(mission, event)).mission;
+    const created = (await this.store.createMission(mission, event)).mission;
+    this.createIdempotency.set(idempotencyKey, { mission: created, requestHash });
+    return created;
   }
 
   async transition(missionId: MissionRecord["missionId"], toState: MissionState, expectedVersion: bigint, context: TransitionContext, actor: ActorIdentity, payload: unknown, occurredAt: string): Promise<MissionRecord> {
@@ -57,8 +73,10 @@ export class KlynControlPlane {
     const evidence = this.anomaly.evaluate(input);
     if (evidence.breakerLevel === "NONE") return;
     const reason = evidence.hardViolations.join(",") || `behavioral=${evidence.behavioralDistance.toFixed(6)} system=${evidence.systemDriftDistance.toFixed(6)}`;
-    const event: LedgerEventInput = { missionId, eventType: "CircuitBreakerTriggered", occurredAt, actor, schemaVersion: 1, payload: { evidence } };
-    await this.store.triggerBreakerAtomically(missionId, evidence.breakerLevel, reason, event);
+    const mission = await this.store.readMission(missionId);
+    if (!mission) throw new ControlPlaneError("STATE_CONFLICT", "MISSION_NOT_FOUND");
+    const event: LedgerEventInput = { missionId, eventType: "CircuitBreakerTriggered", occurredAt, actor, schemaVersion: 1, payload: { evidence, expectedVersion: mission.version.toString() } };
+    await this.store.triggerBreakerAtomically(missionId, mission.version, evidence.breakerLevel, reason, event);
     this.breakers.trigger(missionId, evidence.breakerLevel, reason, occurredAt);
   }
 }
