@@ -1,6 +1,6 @@
-import { signEvidence, type MissionEvidence, type VerifiableMissionGraph } from "@klyn/mission-engine";
+import { signEvidence, type MissionEvidence } from "@klyn/mission-engine";
 import { type KeyObject } from "node:crypto";
-import type { GovernanceEngine, EvidenceRecord } from "@klyn/governance";
+import type { EvidenceRecord, GovernanceEngine } from "@klyn/governance";
 import type {
   ControlPlaneExecutionRequest,
   EvidenceTransitionResult,
@@ -25,7 +25,7 @@ function governanceEvidence(evidence: MissionEvidence): EvidenceRecord {
   });
 }
 
-export class MissionEvidenceAttestor implements MissionEvidenceAttestor {
+export class Ed25519MissionEvidenceAttestor implements MissionEvidenceAttestor {
   public readonly verifierId: string;
 
   public constructor(verifierId: string, private readonly privateKey: KeyObject) {
@@ -53,20 +53,7 @@ export class MissionBoundaryError extends Error {
 }
 
 export class MissionController {
-  private readonly graph: VerifiableMissionGraph;
-
-  public constructor(private readonly options: MissionControllerOptions) {
-    this.graph = {
-      graph: options.missionGraph,
-      nodeForState: () => {
-        throw new MissionBoundaryError("mission graph lookup is unavailable through this boundary");
-      },
-      requiredStateAfter: () => {
-        throw new MissionBoundaryError("mission state transition helper is unavailable through this boundary");
-      },
-    } as unknown as VerifiableMissionGraph;
-    void this.options;
-  }
+  public constructor(private readonly options: MissionControllerOptions) {}
 
   public snapshot() {
     return this.options.missionStateMachine.snapshot();
@@ -123,6 +110,13 @@ export class MissionController {
   }
 
   public advanceWithEvidence(draft: MissionEvidenceDraft): EvidenceTransitionResult {
+    if (draft.missionId !== this.options.missionGraph.missionId) {
+      throw new MissionBoundaryError("evidence missionId does not match mission graph");
+    }
+    if (draft.objectiveId !== this.options.missionGraph.objectiveId) {
+      throw new MissionBoundaryError("evidence objectiveId does not match mission graph");
+    }
+
     const evidence = this.options.evidenceAttestor.attest(draft);
     const transition = this.options.missionStateMachine.transition(evidence);
 
