@@ -1,5 +1,5 @@
 import { providerFetch, requireApiKey } from "./http.js";
-import type { ProviderAdapter, ProviderRequest, ProviderResponse, StreamChunk } from "./types.js";
+import type { ProviderAdapter, ProviderRequest, ProviderResponse, ProviderUsage, StreamChunk } from "./types.js";
 
 export class AnthropicAdapter implements ProviderAdapter {
   readonly name = "anthropic" as const;
@@ -32,6 +32,9 @@ async function* parseAnthropicSSE(body: ReadableStream<Uint8Array>, model: strin
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let inputTokens: number | undefined;
+  let outputTokens: number | undefined;
+  let requestId: string | undefined;
   try {
     while (true) {
       const { done, value } = await reader.read();
@@ -42,9 +45,32 @@ async function* parseAnthropicSSE(body: ReadableStream<Uint8Array>, model: strin
       for (const line of lines) {
         if (!line.startsWith("data:")) continue;
         try {
-          const event = JSON.parse(line.slice(5).trim()) as { type?: string; delta?: { type?: string; text?: string } };
-          if (event.delta?.type === "text_delta" && event.delta.text) yield { provider: "anthropic", model, text: event.delta.text };
-          if (event.type === "message_stop") yield { provider: "anthropic", model, text: "", done: true };
+          const event = JSON.parse(line.slice(5).trim()) as {
+            type?: string;
+            message?: { id?: string; usage?: { input_tokens?: number; output_tokens?: number } };
+            delta?: { type?: string; text?: string; usage?: { input_tokens?: number; output_tokens?: number } };
+          };
+          requestId = event.message?.id ?? requestId;
+          if (event.message?.usage) {
+            inputTokens = event.message.usage.input_tokens ?? inputTokens;
+            outputTokens = event.message.usage.output_tokens ?? outputTokens;
+          }
+          if (event.delta?.usage) {
+            inputTokens = event.delta.usage.input_tokens ?? inputTokens;
+            outputTokens = event.delta.usage.output_tokens ?? outputTokens;
+          }
+          const usage: ProviderUsage | undefined =
+            inputTokens !== undefined || outputTokens !== undefined
+              ? { inputTokens, outputTokens }
+              : undefined;
+          if (event.delta?.type === "text_delta" && event.delta.text) {
+            yield { provider: "anthropic", model, text: event.delta.text, usage, requestId };
+          } else if (event.type === "message_start" || event.type === "message_delta") {
+            yield { provider: "anthropic", model, text: "", usage, requestId };
+          }
+          if (event.type === "message_stop") {
+            yield { provider: "anthropic", model, text: "", done: true, usage, requestId };
+          }
         } catch { /* malformed frames are ignored */ }
       }
     }

@@ -16,7 +16,7 @@ export class UniversalChatAdapter implements ProviderAdapter {
   }
 
   async *stream(request: ProviderRequest): AsyncIterable<StreamChunk> {
-    const body = { model: request.model, messages: buildMessages(request), stream: true, ...(request.maxOutputTokens ? { max_tokens: request.maxOutputTokens } : {}), ...(request.temperature !== undefined ? { temperature: request.temperature } : {}), ...(request.responseFormat === "json" ? { response_format: { type: "json_object" } } : {}), ...this.config.extraBody };
+    const body = { model: request.model, messages: buildMessages(request), stream: true, stream_options: { include_usage: true }, ...(request.maxOutputTokens ? { max_tokens: request.maxOutputTokens } : {}), ...(request.temperature !== undefined ? { temperature: request.temperature } : {}), ...(request.responseFormat === "json" ? { response_format: { type: "json_object" } } : {}), ...this.config.extraBody };
     const response = await providerFetch(this.name, `${this.config.baseUrl}/chat/completions`, { method: "POST", headers: this.headers(), body: JSON.stringify(body) }, request.signal);
     if (!response.body) throw new ProviderError("Provider returned no streaming body", this.name, true, response.status);
     yield* parseOpenAIStream(response.body, this.name, request.model);
@@ -38,7 +38,16 @@ async function* parseOpenAIStream(body: ReadableStream<Uint8Array>, provider: Pr
       for (const event of events) {
         const line = event.split("\n").find((item) => item.startsWith("data:")); if (!line) continue;
         const payload = line.slice(5).trim(); if (payload === "[DONE]") { yield { provider, model, text: "", done: true }; return; }
-        try { const data = JSON.parse(payload) as { choices?: Array<{ delta?: { content?: string | null } }> }; const text = data.choices?.[0]?.delta?.content ?? ""; if (text) yield { provider, model, text }; } catch { /* ignore non-JSON keep-alive frames */ }
+        try { const data = JSON.parse(payload) as {
+          id?: string;
+          choices?: Array<{ delta?: { content?: string | null } }>;
+          usage?: { prompt_tokens?: number; completion_tokens?: number };
+        };
+        const usage = data.usage
+          ? { inputTokens: data.usage.prompt_tokens, outputTokens: data.usage.completion_tokens }
+          : undefined;
+        const text = data.choices?.[0]?.delta?.content ?? "";
+        if (text || usage) yield { provider, model, text, usage, requestId: data.id }; } catch { /* ignore non-JSON keep-alive frames */ }
       }
     }
   } finally { reader.releaseLock(); }

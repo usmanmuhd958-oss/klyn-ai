@@ -1,3 +1,5 @@
+# KLYN backend/infrastructure workspace.
+# Frontend/UI applications remain intentionally excluded from the backend control plane.
 packages:
   - "apps/backend"
   - "packages/agent-runtime"
@@ -5,7 +7,9 @@ packages:
   - "packages/ai-gateway"
   - "packages/ai-orchestrator"
   - "packages/autonomous-runtime"
+  - "packages/agent-governance"
   - "packages/cognitive-engine"
+  - "packages/control-plane"
   - "packages/core-runtime"
   - "packages/database"
   - "packages/deploy"
@@ -13,6 +17,7 @@ packages:
   - "packages/execution-runtime"
   - "packages/governance"
   - "packages/intelligence"
+  - "packages/mission-engine"
   - "packages/runtime"
   - "packages/self-healing-runtime"
   - "packages/swarm-mesh"
