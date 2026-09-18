@@ -1,9 +1,5 @@
-import { digestJson } from "@klyn/governance";
-import type { AuditEvent, AuditLedger } from "@klyn/governance";
-import {
-  RealTimeContainmentInterceptor,
-  type ContainmentHandlers,
-} from "@klyn/autonomy";
+import { digestJson, type AuditEvent, type AuditLedger, type GovernanceEngine } from "@klyn/governance";
+import { RealTimeContainmentInterceptor } from "@klyn/autonomy";
 import type { BudgetLedger, ContainmentDecision, UsageMetrics } from "@klyn/autonomy";
 import type { ControlPlaneContainmentOptions } from "./types.js";
 
@@ -38,20 +34,11 @@ export class ContainmentController {
   private readonly decisions: ContainmentDecision[] = [];
 
   public constructor(private readonly options: ControlPlaneContainmentOptions) {
-    const handlers: ContainmentHandlers = {
-      onWarn: (decision) => {
-        this.record(decision);
-      },
-      onEscalate: async (decision) => {
-        this.record(decision);
-        return (await options.onEscalate?.(decision)) ?? false;
-      },
-      onTerminate: async (decision) => {
-        this.record(decision);
-        await options.onTerminate?.(decision);
-      },
-    };
-    this.interceptor = new RealTimeContainmentInterceptor(options.budget, handlers);
+    this.interceptor = new RealTimeContainmentInterceptor(options.budget, {
+      onDecision: (decision) => this.record(decision),
+      onEscalate: options.onEscalate,
+      onTerminate: options.onTerminate,
+    });
   }
 
   public get budget(): BudgetLedger {
@@ -100,3 +87,5 @@ export class ContainmentController {
     audit.append(event);
   }
 }
+
+void (0 as unknown as GovernanceEngine);
