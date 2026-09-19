@@ -1,13 +1,21 @@
 {
-  "name": "KLYN AI OS",
-  "version": "2.0.0",
-  "architecture": "autonomous-ai-operating-system",
+  "name": "KLYN",
+  "version": "6.1.0",
+  "architecture": "ai-native-engineering-platform",
   "layers": {
-    "kernel": true,
+    "intelligence": true,
     "agent_runtime": true,
-    "memory_engine": true,
-    "model_router": true,
-    "workflow_engine": true,
-    "security_layer": true
-  }
+    "execution_runtime": true,
+    "mission_and_workflow": true,
+    "governance": true,
+    "control_plane": true,
+    "security": true,
+    "observability": true
+  },
+  "source_of_truth": [
+    "pnpm-workspace.yaml",
+    "package.json",
+    "apps/backend/package.json",
+    "packages/*/package.json"
+  ]
 }
