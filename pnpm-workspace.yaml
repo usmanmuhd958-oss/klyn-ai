@@ -6,6 +6,7 @@ packages:
   - "packages/ai-engine"
   - "packages/ai-gateway"
   - "packages/ai-orchestrator"
+  - "packages/autonomy"
   - "packages/autonomous-runtime"
   - "packages/agent-governance"
   - "packages/cognitive-engine"
