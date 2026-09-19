@@ -147,8 +147,7 @@ export class DynamicProviderRouter {
         (Math.max(0, request.input.length) / 4_000) * normalizeUnit(candidate.inputCostMicrousdPer1K, 0) +
         (normalizeUnit(request.maxOutputTokens, 0) / 1_000) * normalizeUnit(candidate.outputCostMicrousdPer1K, 0);
       const health = this.healthScore(state);
-      const latency = 1 / Math.max(1, estimatedLatencyMs);
-      const latencyRange = 1 / Math.max(1, estimatedLatencyMs);
+      const latency = clamp01(this.initialLatencyMs / Math.max(1, estimatedLatencyMs));
       const cost = 1 / (1 + estimatedCostMicrousd);
       const quality = clamp01(candidate.qualityScore ?? 0.5);
       const priority = 1 / (1 + normalizeUnit(candidate.priority, 0));
@@ -158,7 +157,7 @@ export class DynamicProviderRouter {
         score: weightedScore(
           objective,
           health,
-          latency / Math.max(1, latencyRange),
+          latency,
           cost,
           quality,
           priority,
