@@ -14,16 +14,21 @@ test("AST engine applies structural mutations without touching comments or unrel
   ].join("\n");
 
   const engine = new AstMutationEngine();
-  const result = engine.apply("compute.ts", source, [
+  const renamed = engine.apply("compute.ts", source, [
     { kind: "rename-identifier", from: "answer", to: "result" },
+  ]);
+
+  assert.equal(renamed.changed, true);
+  assert.match(renamed.source, /comment/);
+  assert.match(renamed.source, /function compute\(result: number\)/);
+
+  const result = engine.apply("compute.ts", renamed.source, [
     { kind: "replace-function-body", functionName: "compute", body: "return result * value;" },
   ]);
 
   assert.equal(result.changed, true);
-  assert.match(result.source, /comment/);
-  assert.match(result.source, /function compute\(result: number\)/);
   assert.match(result.source, /return result \* value;/);
-  assert.equal(result.edits.length, 3);
+  assert.equal(result.edits.length, 1);
 });
 
 test("AST engine manages imports as syntax nodes", () => {
