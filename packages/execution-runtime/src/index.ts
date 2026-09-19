@@ -26,3 +26,21 @@ export { PolicyGovernedSandbox } from "./PolicyGovernedSandbox.js";
 export type { PolicyGovernedSandboxRequest, PolicyGovernedSandboxResult, PolicyGovernedSandboxOptions } from "./PolicyGovernedSandbox.js";
 export { ObservationCollector, SYSTEM_CLOCK } from "./ObservationCollector.js";
 export type { ObservationClock, ObservationEvent, ObservationEventInput, ObservationEventType, ObservationSessionMetadata, ObservationSnapshot } from "./ObservationCollector.js";
+export { AstMutationEngine, AstMutationError } from "./ast-transformer.js";
+export type {
+  AddImportMutation,
+  AstMutation,
+  AstMutationResult,
+  AstTextEdit,
+  RemoveImportMutation,
+  RenameIdentifierMutation,
+  ReplaceFunctionBodyMutation,
+  ReplaceStringLiteralMutation,
+} from "./ast-transformer.js";
+export { ExecutionKernel, createExecutionKernel } from "./execution-kernel.js";
+export type {
+  ExecutionKernelOptions,
+  ExecutionKernelPolicy,
+  KernelExecutionRequest,
+  KernelExecutionResult,
+} from "./execution-kernel.js";
