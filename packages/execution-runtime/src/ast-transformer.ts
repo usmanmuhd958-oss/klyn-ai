@@ -116,6 +116,9 @@ function importStatement(mutation: AddImportMutation): string {
   }
   const named = [...(mutation.namedImports ?? [])];
   for (const name of named) requireIdentifier(name, "namedImports entry");
+  if (mutation.namespaceImport && named.length > 0) {
+    throw new AstMutationError("namespaceImport cannot be combined with namedImports");
+  }
   if (named.length > 0) bindings.push(`{ ${named.join(", ")} }`);
 
   const moduleLiteral = JSON.stringify(mutation.moduleSpecifier);
