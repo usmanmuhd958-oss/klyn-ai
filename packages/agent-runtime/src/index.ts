@@ -19,3 +19,15 @@ export * from "./scheduler/TaskScheduler.js";
 export * from "./validation/AgentValidator.js";
 
 export * from "./types/agent.types.js";
+
+export { SwarmStateMachine } from "./swarm-state-machine.js";
+export type {
+  SwarmExecutionContext,
+  SwarmRunOptions,
+  SwarmRunResult,
+  SwarmSnapshot,
+  SwarmStateEvent,
+  SwarmTask,
+  SwarmTaskSnapshot,
+  SwarmTaskState,
+} from "./swarm-state-machine.js";
