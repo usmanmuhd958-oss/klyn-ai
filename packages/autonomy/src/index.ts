@@ -57,14 +57,10 @@ export class AutonomyContainmentError extends Error {
 }
 
 function ratio(used: number | bigint, limit: number | bigint): number {
-  if (typeof used === "bigint" || typeof limit === "bigint") {
-    const usedBig = BigInt(used);
-    const limitBig = BigInt(limit);
-    if (limitBig === 0n) return usedBig > 0n ? Number.POSITIVE_INFINITY : 0;
-    return Number(usedBig) / Number(limitBig);
-  }
-  if (limit === 0) return used > 0 ? Number.POSITIVE_INFINITY : 0;
-  return used / limit;
+  const usedNumber = typeof used === "bigint" ? Number(used) : used;
+  const limitNumber = typeof limit === "bigint" ? Number(limit) : limit;
+  if (limitNumber === 0) return usedNumber > 0 ? Number.POSITIVE_INFINITY : 0;
+  return usedNumber / limitNumber;
 }
 
 function addUsage(a: UsageMetrics, b: UsageMetrics): UsageMetrics {
