@@ -17,6 +17,8 @@ export interface ProcessSandboxRequest {
   ownerId?: string;
 }
 
+export type ProcessTerminationReason = "timeout" | "memory" | "cpu" | "file-descriptors" | "output";
+
 export interface ProcessSandboxResult {
   exitCode: number | null;
   signal: NodeJS.Signals | null;
@@ -25,6 +27,8 @@ export interface ProcessSandboxResult {
   durationMs: number;
   timedOut: boolean;
   memoryExceeded: boolean;
+  resourceLimitExceeded: boolean;
+  terminationReason?: ProcessTerminationReason;
 }
 
 export interface ProcessSandboxPolicy {
@@ -95,9 +99,13 @@ export class ProcessSandboxManager {
       let outputBytes = 0;
       let timedOut = false;
       let memoryExceeded = false;
+      let resourceLimitExceeded = false;
+      let terminationReason: ProcessTerminationReason | undefined;
       let settled = false;
       const timeoutTimer = globalThis.setTimeout(() => {
         timedOut = true;
+        resourceLimitExceeded = true;
+        terminationReason = "timeout";
         this.terminate(child);
       }, timeoutMs);
 
@@ -108,8 +116,10 @@ export class ProcessSandboxManager {
         const text = chunk.toString("utf8", 0, Math.min(chunk.byteLength, remaining));
         if (target === "stdout") stdout += text;
         else stderr += text;
-        outputBytes += chunk.byteLength;
+        outputBytes = Math.min(maxOutputBytes + 1, outputBytes + chunk.byteLength);
         if (outputBytes > maxOutputBytes) {
+          resourceLimitExceeded = true;
+          terminationReason = "output";
           stderr += "\n[Sandbox output limit exceeded]";
           this.terminate(child);
         }
@@ -125,10 +135,22 @@ export class ProcessSandboxManager {
         const descriptors = this.readFileDescriptorCount(child.pid);
         if (rss > memoryMb * 1024 * 1024) {
           memoryExceeded = true;
+          resourceLimitExceeded = true;
+          terminationReason = "memory";
           this.terminate(child);
           return;
         }
-        if (cpuMs > maxCpuMs || descriptors > maxFileDescriptors) this.terminate(child);
+        if (cpuMs > maxCpuMs) {
+          resourceLimitExceeded = true;
+          terminationReason = "cpu";
+          this.terminate(child);
+          return;
+        }
+        if (descriptors > maxFileDescriptors) {
+          resourceLimitExceeded = true;
+          terminationReason = "file-descriptors";
+          this.terminate(child);
+        }
       }, 100);
 
       const finish = (error?: Error): void => {
@@ -149,6 +171,8 @@ export class ProcessSandboxManager {
           durationMs: Date.now() - started,
           timedOut,
           memoryExceeded,
+          resourceLimitExceeded,
+          ...(terminationReason === undefined ? {} : { terminationReason }),
         });
       };
 
@@ -180,6 +204,15 @@ export class ProcessSandboxManager {
     }
     if (!Number.isInteger(request.memoryMb ?? this.policy.maxMemoryMb) || (request.memoryMb ?? this.policy.maxMemoryMb) <= 0) {
       throw new Error("memoryMb must be a positive integer");
+    }
+    if (!Number.isInteger(request.maxCpuMs ?? this.policy.maxCpuMs ?? this.policy.maxTimeoutMs) || (request.maxCpuMs ?? this.policy.maxCpuMs ?? this.policy.maxTimeoutMs) <= 0) {
+      throw new Error("maxCpuMs must be a positive integer");
+    }
+    if (!Number.isInteger(request.maxFileDescriptors ?? this.policy.maxFileDescriptors ?? 256) || (request.maxFileDescriptors ?? this.policy.maxFileDescriptors ?? 256) <= 0) {
+      throw new Error("maxFileDescriptors must be a positive integer");
+    }
+    if (!Number.isInteger(request.maxOutputBytes ?? this.policy.maxOutputBytes) || (request.maxOutputBytes ?? this.policy.maxOutputBytes) <= 0) {
+      throw new Error("maxOutputBytes must be a positive integer");
     }
   }
 
