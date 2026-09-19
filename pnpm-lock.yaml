@@ -85,6 +85,9 @@ importers:
 
   packages/ai-engine:
     dependencies:
+      '@klyn/autonomy':
+        specifier: workspace:*
+        version: link:../../packages/autonomy
       '@anthropic-ai/sdk':
         specifier: ^0.67.0
         version: 0.67.1(zod@4.6.5)
@@ -97,6 +100,18 @@ importers:
       zod:
         specifier: ^4.1.5
         version: 4.6.5
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.4
+      tsx:
+        specifier: ^4.20.5
+        version: 4.23.13
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
+  packages/autonomy:
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
