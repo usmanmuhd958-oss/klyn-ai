@@ -98,6 +98,8 @@ export class ExecutionKernel {
     const maxFileDescriptors = request.maxFileDescriptors ?? 256;
     const maxOutputBytes = request.maxOutputBytes ?? 1_000_000;
 
+    this.resourceBoundary.assertRuntimeLimits(timeoutMs, memoryMb);
+
     const snapshot = await this.snapshots.create(workspace);
     let rolledBack = false;
     let committed = false;
