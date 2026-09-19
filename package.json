@@ -19,7 +19,7 @@
     "build:termux": "pnpm -r --filter './packages/**' --if-present --sort --workspace-concurrency=1 run build",
     "typecheck:termux": "pnpm -r --filter './packages/**' --if-present --sort --workspace-concurrency=1 run typecheck",
     "test:termux": "pnpm -r --filter './packages/**' --if-present --sort --workspace-concurrency=1 run test",
-    "verify:termux": "pnpm typecheck:termux && pnpm build:termux && pnpm test:termux"
+    "verify:termux": "pnpm build:termux && pnpm typecheck:termux && pnpm test:termux"
   },
   "devDependencies": {
     "@babel/parser": "^8.0.4",
