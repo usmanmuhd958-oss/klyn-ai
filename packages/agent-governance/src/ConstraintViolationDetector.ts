@@ -7,6 +7,7 @@ import type {
   ConstraintViolation,
   SideEffectObservation,
 } from "./types.js";
+import { toJsonValue } from "./json.js";
 
 const stateChangingEventTypes = new Set([
   "tool-call",
@@ -168,20 +169,22 @@ export class ConstraintViolationDetector {
 }
 
 export function behaviorEventDigest(event: AgentBehaviorEvent): string {
-  return digestJson({
-    eventType: event.eventType,
-    missionId: event.missionId,
-    agentId: event.agentId,
-    parentAgentId: event.parentAgentId,
-    graphNodeId: event.graphNodeId,
-    timestampEpochMs: event.timestampEpochMs,
-    policyVersion: event.policyVersion,
-    stateDigestBefore: event.stateDigestBefore,
-    stateDigestAfter: event.stateDigestAfter,
-    toolCall: event.toolCall,
-    memoryMutation: event.memoryMutation,
-    delegation: event.delegation,
-    sideEffects: event.sideEffects,
-    metadata: event.metadata,
-  });
+  return digestJson(
+    toJsonValue({
+      eventType: event.eventType,
+      missionId: event.missionId,
+      agentId: event.agentId,
+      parentAgentId: event.parentAgentId,
+      graphNodeId: event.graphNodeId,
+      timestampEpochMs: event.timestampEpochMs,
+      policyVersion: event.policyVersion,
+      stateDigestBefore: event.stateDigestBefore,
+      stateDigestAfter: event.stateDigestAfter,
+      toolCall: event.toolCall,
+      memoryMutation: event.memoryMutation,
+      delegation: event.delegation,
+      sideEffects: event.sideEffects,
+      metadata: event.metadata,
+    }),
+  );
 }
