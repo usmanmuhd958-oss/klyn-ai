@@ -1,9 +1,10 @@
-import { canonicalize, sha256, type AuditLedger } from "@klyn/governance";
+import { sha256, type AuditLedger } from "@klyn/governance";
 import type {
   AgentBehaviorEvent,
   AgentBehaviorSnapshot,
   AgentBehaviorTraceRecord,
 } from "./types.js";
+import { toJsonValue } from "./json.js";
 
 const GENESIS_HASH = "0".repeat(64);
 
@@ -12,12 +13,15 @@ function hashRecord(
   previousHash: string,
   event: AgentBehaviorEvent,
 ): string {
-  const normalizedEvent = JSON.parse(JSON.stringify(event)) as AgentBehaviorEvent;
-  return sha256(canonicalize({
-    sequence,
-    previousHash,
-    event: normalizedEvent,
-  }));
+  return sha256(
+    JSON.stringify(
+      toJsonValue({
+        sequence,
+        previousHash,
+        event,
+      }),
+    ),
+  );
 }
 
 function freezeEvent(event: AgentBehaviorEvent): AgentBehaviorEvent {
