@@ -9,7 +9,7 @@ export type { DurableTask, EnqueueTaskInput, TaskStatus } from "./sqlite-event-s
 export { LeaseScheduler, WorkerHeartbeat, LeaseReaper } from "./lease-scheduler.js";
 export type { HeartbeatRequest, LeaseSchedulerOptions } from "./lease-scheduler.js";
 export { ProcessSandboxManager, DEFAULT_PROCESS_SANDBOX_POLICY } from "./process-sandbox-manager.js";
-export type { ProcessSandboxPolicy, ProcessSandboxRequest, ProcessSandboxResult } from "./process-sandbox-manager.js";
+export type { ProcessSandboxPolicy, ProcessSandboxRequest, ProcessSandboxResult, ProcessTerminationReason } from "./process-sandbox-manager.js";
 export { SecretMasker } from "./secret-masker.js";
 export type { SecretMaskerOptions } from "./secret-masker.js";
 export { DependencyExecutionPlanner } from "./dependency-execution-planner.js";
@@ -26,3 +26,21 @@ export { PolicyGovernedSandbox } from "./PolicyGovernedSandbox.js";
 export type { PolicyGovernedSandboxRequest, PolicyGovernedSandboxResult, PolicyGovernedSandboxOptions } from "./PolicyGovernedSandbox.js";
 export { ObservationCollector, SYSTEM_CLOCK } from "./ObservationCollector.js";
 export type { ObservationClock, ObservationEvent, ObservationEventInput, ObservationEventType, ObservationSessionMetadata, ObservationSnapshot } from "./ObservationCollector.js";
+export { AstMutationEngine, AstMutationError } from "./ast-transformer.js";
+export type {
+  AddImportMutation,
+  AstMutation,
+  AstMutationResult,
+  AstTextEdit,
+  RemoveImportMutation,
+  RenameIdentifierMutation,
+  ReplaceFunctionBodyMutation,
+  ReplaceStringLiteralMutation,
+} from "./ast-transformer.js";
+export { ExecutionKernel, createExecutionKernel } from "./execution-kernel.js";
+export type {
+  ExecutionKernelOptions,
+  ExecutionKernelPolicy,
+  KernelExecutionRequest,
+  KernelExecutionResult,
+} from "./execution-kernel.js";
