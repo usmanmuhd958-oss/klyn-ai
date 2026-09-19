@@ -214,9 +214,10 @@ export class SwarmStateMachine<TOutput = unknown> {
           const entry = ready.shift()!;
           const promise = this.executeEntry(entry, options.failFast === true);
           running.set(entry.task.id, promise);
-          void promise.finally(() => {
+          const cleanup = (): void => {
             running.delete(entry.task.id);
-          });
+          };
+          void promise.then(cleanup, cleanup);
         }
 
         if (running.size === 0) {
@@ -334,7 +335,7 @@ export class SwarmStateMachine<TOutput = unknown> {
 
   private cancelNonTerminal(): void {
     for (const entry of this.tasks.values()) {
-      if (TERMINAL_STATES.has(entry.state)) continue;
+      if (entry.state !== "pending" && entry.state !== "ready") continue;
       entry.error ??= "swarm execution cancelled";
       entry.completedAt ??= Date.now();
       this.transition(entry, "cancelled");
