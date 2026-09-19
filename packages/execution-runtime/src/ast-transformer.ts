@@ -126,23 +126,30 @@ function importStatement(mutation: AddImportMutation): string {
 
 function insertionPoint(sourceFile: ts.SourceFile, source: string): number {
   const imports = sourceFile.statements.filter(ts.isImportDeclaration);
-  if (imports.length > 0) {
-    return imports[imports.length - 1]!.end;
-  }
+  let position = imports.length > 0
+    ? imports[imports.length - 1]!.end
+    : source.startsWith("#!")
+      ? Math.max(0, source.indexOf("\n") + 1)
+      : 0;
 
-  let position = source.startsWith("#!") ? (source.indexOf("\n") + 1) : 0;
-  if (position === 0 && source.startsWith("#!")) position = source.length;
-
-  for (const statement of sourceFile.statements) {
-    if (
-      ts.isExpressionStatement(statement) &&
-      ts.isStringLiteral(statement.expression)
-    ) {
-      position = statement.end;
-      continue;
+  if (imports.length === 0) {
+    for (const statement of sourceFile.statements) {
+      if (
+        ts.isExpressionStatement(statement) &&
+        ts.isStringLiteral(statement.expression)
+      ) {
+        position = statement.end;
+        continue;
+      }
+      break;
     }
-    break;
   }
+
+  while (position < source.length && (source[position] === " " || source[position] === "\t")) {
+    position += 1;
+  }
+  if (source.startsWith("\r\n", position)) position += 2;
+  else if (source[position] === "\n" || source[position] === "\r") position += 1;
   return position;
 }
 
