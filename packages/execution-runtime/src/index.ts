@@ -9,7 +9,7 @@ export type { DurableTask, EnqueueTaskInput, TaskStatus } from "./sqlite-event-s
 export { LeaseScheduler, WorkerHeartbeat, LeaseReaper } from "./lease-scheduler.js";
 export type { HeartbeatRequest, LeaseSchedulerOptions } from "./lease-scheduler.js";
 export { ProcessSandboxManager, DEFAULT_PROCESS_SANDBOX_POLICY } from "./process-sandbox-manager.js";
-export type { ProcessSandboxPolicy, ProcessSandboxRequest, ProcessSandboxResult } from "./process-sandbox-manager.js";
+export type { ProcessSandboxPolicy, ProcessSandboxRequest, ProcessSandboxResult, ProcessTerminationReason } from "./process-sandbox-manager.js";
 export { SecretMasker } from "./secret-masker.js";
 export type { SecretMaskerOptions } from "./secret-masker.js";
 export { DependencyExecutionPlanner } from "./dependency-execution-planner.js";
