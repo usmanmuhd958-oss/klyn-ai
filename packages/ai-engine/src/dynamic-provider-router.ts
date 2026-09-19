@@ -1,3 +1,4 @@
+import { performance } from "node:perf_hooks";
 import { ProviderCircuitBreaker, type CircuitBreakerOptions } from "./circuit-breaker.js";
 import type { ProviderAdapter, ProviderName, ProviderRequest, ProviderResponse } from "./providers/types.js";
 
