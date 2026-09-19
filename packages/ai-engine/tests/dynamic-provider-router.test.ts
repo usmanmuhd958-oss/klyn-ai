@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { DynamicProviderRouter, type DynamicProviderCandidate } from "../src/index.ts";
-import type { ProviderAdapter } from "../src/providers/types.ts";
+import type { ProviderAdapter } from "../src/providers/types.js";
 
 function adapter(name: ProviderAdapter["name"], output: string, fail = false): ProviderAdapter {
   return {
