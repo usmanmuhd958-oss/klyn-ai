@@ -33,7 +33,7 @@ test("AST engine applies structural mutations without touching comments or unrel
 
 test("AST engine manages imports as syntax nodes", () => {
   const engine = new AstMutationEngine();
-  const source = 'export const value = 1;\n';
+  const source = 'import { existing } from "./existing.js";\nexport const value = 1;\n';
 
   const added = engine.apply("value.ts", source, [
     {
@@ -43,7 +43,7 @@ test("AST engine manages imports as syntax nodes", () => {
       typeOnly: true,
     },
   ]);
-  assert.match(added.source, /^import type \{ readFile \} from "node:fs";/);
+  assert.match(added.source, /import \{ existing \} from "\.\/existing\.js";\nimport type \{ readFile \} from "node:fs";/);
 
   const removed = engine.apply("value.ts", added.source, [
     { kind: "remove-import", moduleSpecifier: "node:fs" },
