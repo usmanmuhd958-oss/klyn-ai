@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
+import { realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import {
   AstMutationEngine,
@@ -12,7 +13,7 @@ import {
   type ProcessSandboxResult,
 } from "./process-sandbox-manager.js";
 import { ResourceBoundaryEnforcer, type ResourceBoundaryPolicy } from "./resource-boundary-enforcer.js";
-import { RuntimeSnapshotEngine } from "./runtime-snapshot-engine.js";
+import { WorkspaceCasEngine, type ShadowWorkspace } from "./workspace-cas-engine.js";
 
 export interface KernelExecutionRequest {
   readonly executionId: string;
@@ -28,6 +29,9 @@ export interface KernelExecutionRequest {
   readonly maxCpuMs?: number;
   readonly maxFileDescriptors?: number;
   readonly maxOutputBytes?: number;
+  readonly ioReadBps?: number;
+  readonly ioWriteBps?: number;
+  readonly rootfs?: string;
   readonly ownerId?: string;
   readonly expectedSourceHash?: string;
   readonly rollbackOnNonZeroExit?: boolean;
@@ -42,13 +46,14 @@ export interface KernelExecutionResult {
   readonly durationMs: number;
   readonly beforeDigest: string;
   readonly afterDigest: string;
+  readonly committedPaths?: readonly string[];
 }
 
 export interface ExecutionKernelOptions {
   readonly mutationEngine?: AstMutationEngine;
   readonly processManager?: ProcessSandboxManager;
-  readonly snapshotEngine?: RuntimeSnapshotEngine;
   readonly resourceBoundary?: ResourceBoundaryEnforcer;
+  readonly casEngine?: WorkspaceCasEngine;
 }
 
 function sha256(value: string): string {
@@ -63,14 +68,14 @@ function isWithin(root: string, candidate: string): boolean {
 export class ExecutionKernel {
   private readonly mutationEngine: AstMutationEngine;
   private readonly processManager: ProcessSandboxManager;
-  private readonly snapshots: RuntimeSnapshotEngine;
   private readonly resourceBoundary: ResourceBoundaryEnforcer;
+  private readonly cas: WorkspaceCasEngine;
 
   public constructor(options: ExecutionKernelOptions = {}) {
     this.mutationEngine = options.mutationEngine ?? new AstMutationEngine();
     this.processManager = options.processManager ?? new ProcessSandboxManager();
-    this.snapshots = options.snapshotEngine ?? new RuntimeSnapshotEngine();
     this.resourceBoundary = options.resourceBoundary ?? new ResourceBoundaryEnforcer();
+    this.cas = options.casEngine ?? new WorkspaceCasEngine();
   }
 
   public async execute(request: KernelExecutionRequest): Promise<KernelExecutionResult> {
@@ -78,41 +83,39 @@ export class ExecutionKernel {
     if (!request.executionId.trim()) throw new Error("executionId is required");
 
     const workspace = this.resourceBoundary.authorizedWorkspace(request.workspace);
-    const sourceAbsolute = resolve(request.sourcePath);
-    if (!isWithin(workspace, sourceAbsolute)) {
-      throw new Error("sourcePath is outside the authorized workspace");
-    }
+    const sourceAbsolute = await realpath(request.sourcePath);
+    if (!isWithin(workspace, sourceAbsolute)) throw new Error("sourcePath escapes the authorized workspace");
 
-    const source = await readFile(sourceAbsolute, "utf8");
-    const beforeDigest = sha256(source);
-    if (request.expectedSourceHash !== undefined && request.expectedSourceHash !== beforeDigest) {
-      throw new Error(
-        `Source changed since planning: expected ${request.expectedSourceHash}, observed ${beforeDigest}`,
-      );
-    }
-
-    const mutation = this.mutationEngine.apply(sourceAbsolute, source, request.mutations);
     const timeoutMs = request.timeoutMs ?? 30_000;
     const memoryMb = request.memoryMb ?? 512;
     const maxCpuMs = request.maxCpuMs ?? timeoutMs;
     const maxFileDescriptors = request.maxFileDescriptors ?? 256;
     const maxOutputBytes = request.maxOutputBytes ?? 1_000_000;
-
     this.resourceBoundary.assertRuntimeLimits(timeoutMs, memoryMb);
 
-    const snapshot = await this.snapshots.create(workspace);
-    let rolledBack = false;
+    const shadow = await this.cas.createShadow(workspace);
     let committed = false;
+    let rolledBack = false;
 
     try {
+      const relativeSource = relative(workspace, sourceAbsolute);
+      const shadowSource = resolve(shadow.shadowRoot, relativeSource);
+      const source = await readFile(shadowSource, "utf8");
+      const beforeDigest = sha256(source);
+      if (request.expectedSourceHash !== undefined && request.expectedSourceHash !== beforeDigest) {
+        throw new Error(`Source changed since planning: expected ${request.expectedSourceHash}, observed ${beforeDigest}`);
+      }
+
+      const mutation = this.mutationEngine.apply(shadowSource, source, request.mutations);
       if (mutation.changed) {
-        await writeFile(sourceAbsolute, mutation.source, "utf8");
+        const { writeFile } = await import("node:fs/promises");
+        await writeFile(shadowSource, mutation.source, "utf8");
       }
 
       const process = await this.processManager.execute({
         command: request.command,
         args: request.args,
-        cwd: workspace,
+        cwd: shadow.shadowRoot,
         env: request.env,
         allowedEnv: request.allowedEnv,
         timeoutMs,
@@ -120,6 +123,9 @@ export class ExecutionKernel {
         maxCpuMs,
         maxFileDescriptors,
         maxOutputBytes,
+        ioReadBps: request.ioReadBps,
+        ioWriteBps: request.ioWriteBps,
+        rootfs: request.rootfs,
         fenceKey: `kernel:${request.executionId}`,
         ownerId: request.ownerId ?? request.executionId,
       });
@@ -132,31 +138,44 @@ export class ExecutionKernel {
 
       if (failed) {
         rolledBack = true;
-        await this.snapshots.rollback(snapshot);
-      } else {
-        committed = true;
+        await this.cas.discard(shadow);
+        return {
+          executionId: request.executionId,
+          mutation,
+          process,
+          committed: false,
+          rolledBack: true,
+          durationMs: Date.now() - startedAt,
+          beforeDigest,
+          afterDigest: beforeDigest,
+          committedPaths: Object.freeze([]),
+        };
       }
 
-      const persistedSource = await readFile(sourceAbsolute, "utf8");
+      const commit = await this.cas.commit(shadow);
+      committed = commit.committed;
+      const committedSource = resolve(workspace, relativeSource);
+      let afterDigest = sha256("<deleted>");
+      try { afterDigest = sha256(await readFile(committedSource, "utf8")); } catch { /* deletion is a valid committed workspace state */ }
+
       return {
         executionId: request.executionId,
         mutation,
         process,
         committed,
-        rolledBack,
+        rolledBack: false,
         durationMs: Date.now() - startedAt,
         beforeDigest,
-        afterDigest: sha256(persistedSource),
+        afterDigest,
+        committedPaths: commit.changedPaths,
       };
     } catch (error) {
       rolledBack = true;
-      await this.snapshots.rollback(snapshot).catch((rollbackError: unknown) => {
-        const message = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
-        throw new Error(`Execution failed and workspace rollback failed: ${message}`, { cause: error });
-      });
+      await this.cas.discard(shadow).catch(() => undefined);
       throw error;
     } finally {
-      await this.snapshots.discard(snapshot);
+      // A committed shadow has been renamed into place, so discard is idempotent.
+      if (!committed && !rolledBack) await this.cas.discard(shadow).catch(() => undefined);
     }
   }
 }
