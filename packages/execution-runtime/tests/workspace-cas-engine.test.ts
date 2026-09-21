@@ -25,6 +25,7 @@ test("CAS rejects stale workspaces instead of overwriting concurrent changes", a
   const cas = new WorkspaceCasEngine();
   const shadow = await cas.createShadow(workspace);
   await writeFile(join(workspace, "a.txt"), "external-change");
+  const before = (await snapshotWorkspace(workspace)).digest;
   await assert.rejects(() => cas.commit(shadow), /CAS conflict/);
-  assert.equal((await snapshotWorkspace(workspace)).digest, (await snapshotWorkspace(workspace)).digest);
+  assert.equal((await snapshotWorkspace(workspace)).digest, before);
 });
