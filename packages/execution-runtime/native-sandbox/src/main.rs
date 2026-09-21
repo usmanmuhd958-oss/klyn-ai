@@ -20,6 +20,7 @@ struct Config {
     pids_max: u64,
     io_max_read_bps: Option<u64>,
     io_max_write_bps: Option<u64>,
+    max_file_descriptors: u64,
     syscall_profile: String,
 }
 
@@ -132,12 +133,6 @@ fn ipc_namespace() -> io::Result<()> {
     Ok(())
 }
 
-fn arch_ok(arch: u32) -> bool {
-    #[cfg(target_arch = "x86_64")] { arch == 0xc000003e }
-    #[cfg(target_arch = "aarch64")] { arch == 0xc00000b7 }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))] { let _ = arch; false }
-}
-
 fn seccomp(profile: &str) -> io::Result<()> {
     if profile != "strict-linux-v1" { return Err(io::Error::new(io::ErrorKind::InvalidInput, "unknown seccomp profile")); }
     // Default-deny allowlist. Network syscalls are intentionally absent; the network
@@ -199,8 +194,14 @@ fn seccomp(profile: &str) -> io::Result<()> {
 
 fn exec_child(cfg: &Config, rootfs: &Path) -> ! {
     if let Err(e) = seccomp(&cfg.syscall_profile) { eprintln!("[klyn-sandbox] seccomp: {e}"); process::exit(126); }
-    if unsafe { libc::chroot(rootfs.as_os_str().as_bytes().as_ptr() as *const i8) } != 0 { process::exit(127); }
+    let root = CString::new(rootfs.as_os_str().as_bytes()).unwrap();
+    if unsafe { libc::chroot(root.as_ptr()) } != 0 { process::exit(127); }
     if env::set_current_dir("/workspace").is_err() { process::exit(127); }
+    let cpu_seconds = (cfg.cpu_max_us / 1_000_000).max(1);
+    let rlim = libc::rlimit { rlim_cur: cpu_seconds, rlim_max: cpu_seconds + 1 };
+    if unsafe { libc::setrlimit(libc::RLIMIT_CPU, &rlim) } != 0 { process::exit(126); }
+    let fd_rlim = libc::rlimit { rlim_cur: cfg.max_file_descriptors, rlim_max: cfg.max_file_descriptors };
+    if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &fd_rlim) } != 0 { process::exit(126); }
 
     let exe = CString::new(cfg.executable.as_os_str().as_bytes()).unwrap();
     let args: Vec<CString> = std::iter::once(cfg.executable.as_os_str().as_bytes().to_vec())
@@ -255,11 +256,15 @@ fn main() {
     let mut input = String::new();
     if let Err(e) = io::stdin().read_to_string(&mut input) { fail(format!("stdin: {e}")); }
     let mut cfg: Config = serde_json::from_str(&input).unwrap_or_else(|e| fail(format!("invalid JSON: {e}")));
-    if cfg.timeout_ms == 0 || cfg.memory_bytes == 0 || cfg.cpu_max_us == 0 || cfg.cpu_period_us == 0 || cfg.pids_max == 0 { fail("invalid resource limits"); }
+    if cfg.timeout_ms == 0 || cfg.memory_bytes == 0 || cfg.cpu_max_us == 0 || cfg.cpu_period_us == 0 || cfg.pids_max == 0 || cfg.max_file_descriptors == 0 { fail("invalid resource limits"); }
     cfg.workspace = canonical_dir(&cfg.workspace, "workspace").unwrap_or_else(|e| fail(format!("workspace: {e}")));
     cfg.rootfs = canonical_dir(&cfg.rootfs, "rootfs").unwrap_or_else(|e| fail(format!("rootfs: {e}")));
-    cfg.executable = fs::canonicalize(&cfg.executable).unwrap_or_else(|e| fail(format!("executable: {e}")));
-    if !cfg.executable.is_file() || !cfg.executable.is_absolute() { fail("executable must be an absolute regular file"); }
+    if !cfg.executable.is_absolute() { fail("executable must be an absolute rootfs path"); }
+    let requested = cfg.executable.clone();
+    let inside = requested.strip_prefix("/").unwrap_or_else(|_| fail("invalid executable path"));
+    let host_executable = fs::canonicalize(cfg.rootfs.join(inside)).unwrap_or_else(|e| fail(format!("executable: {e}")));
+    if !host_executable.is_file() || !host_executable.starts_with(&cfg.rootfs) { fail("executable escapes rootfs"); }
+    cfg.executable = PathBuf::from("/").join(host_executable.strip_prefix(&cfg.rootfs).unwrap());
     if !cfg.rootfs.join("workspace").is_dir() { fail("rootfs must contain a /workspace directory"); }
 
     let cg = setup_cgroup(&cfg).unwrap_or_else(|e| fail(format!("cgroup: {e}")));
