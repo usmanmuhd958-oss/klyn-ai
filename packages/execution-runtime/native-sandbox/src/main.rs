@@ -45,7 +45,15 @@ fn canonical_dir(path: &Path, name: &str) -> io::Result<PathBuf> {
 fn cgroup_path(id: &str) -> io::Result<PathBuf> {
     if !valid_id(id) { return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid cgroup id")); }
     fs::create_dir_all(CGROUP_PARENT)?;
-    let p = Path::new(CGROUP_PARENT).join(id);
+    let parent = Path::new(CGROUP_PARENT);
+    let available = fs::read_to_string(parent.join("cgroup.controllers"))?;
+    for controller in ["memory", "cpu", "pids", "io"] {
+        if !available.split_whitespace().any(|v| v == controller) {
+            return Err(io::Error::new(io::ErrorKind::Unsupported, format!("controller not delegated to Klyn parent: {controller}")));
+        }
+    }
+    write(&parent.join("cgroup.subtree_control"), "+memory +cpu +pids +io")?;
+    let p = parent.join(id);
     fs::create_dir(&p)?;
     Ok(p)
 }
