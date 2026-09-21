@@ -161,3 +161,21 @@ JSON
           set -e
           test "${rc}" -eq 0
           test ! -d "/sys/fs/cgroup/klyn/ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+  kernel-release-gate:
+    name: Kernel release gate
+    runs-on: ubuntu-latest
+    needs: [typescript-kernel, rust-sandbox, linux-isolation]
+    if: ${{ always() }}
+    timeout-minutes: 5
+    steps:
+      - name: Assert all kernel jobs passed
+        env:
+          TS_RESULT: ${{ needs.typescript-kernel.result }}
+          RUST_RESULT: ${{ needs.rust-sandbox.result }}
+          LINUX_RESULT: ${{ needs.linux-isolation.result }}
+        run: |
+          set -euo pipefail
+          test "${TS_RESULT}" = "success"
+          test "${RUST_RESULT}" = "success"
+          test "${LINUX_RESULT}" = "success"
+          echo "Kernel release gate: PASS"
