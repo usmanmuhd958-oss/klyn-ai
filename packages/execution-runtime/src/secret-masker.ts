@@ -12,7 +12,6 @@ const DEFAULT_PATTERNS: readonly RegExp[] = [
   /\b(?:token|secret|password|passwd|api[_-]?key)\s*[:=]\s*[^\s,;]+/gi,
 ];
 
-/** Zero-trust environment filtering and output redaction for child processes. */
 export class SecretMasker {
   private readonly patterns: readonly RegExp[];
   private readonly replacement: string;
@@ -22,15 +21,16 @@ export class SecretMasker {
     this.replacement = options.replacement ?? "[REDACTED]";
   }
 
-  maskEnvironment(
-    environment: NodeJS.ProcessEnv,
-    allowedKeys: readonly string[] = [],
-  ): NodeJS.ProcessEnv {
+  /**
+   * Fail closed: an empty allowlist means an empty environment.
+   * Secret detection is only defense-in-depth and never the authorization mechanism.
+   */
+  maskEnvironment(environment: NodeJS.ProcessEnv, allowedKeys: readonly string[]): NodeJS.ProcessEnv {
     const allowed = new Set(allowedKeys);
     const masked: NodeJS.ProcessEnv = {};
-    for (const [key, value] of Object.entries(environment)) {
+    for (const key of allowed) {
+      const value = environment[key];
       if (value === undefined || this.isSecretKey(key)) continue;
-      if (allowed.size > 0 && !allowed.has(key)) continue;
       masked[key] = value;
     }
     return masked;
