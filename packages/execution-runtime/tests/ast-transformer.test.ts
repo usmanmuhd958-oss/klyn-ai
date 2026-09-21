@@ -60,3 +60,29 @@ test("AST engine rejects overlapping or missing targets", () => {
     AstMutationError,
   );
 });
+
+
+test("AST rename follows one resolved symbol and does not rename unrelated property names", () => {
+  const engine = new AstMutationEngine();
+  const source = [
+    "const answer = 1;",
+    "const other = { answer: 2 };",
+    "function read() { return answer + other.answer; }",
+  ].join("\n");
+  const result = engine.apply("symbols.ts", source, [
+    { kind: "rename-identifier", from: "answer", to: "result" },
+  ]);
+  assert.match(result.source, /const result = 1/);
+  assert.match(result.source, /answer: 2/);
+  assert.match(result.source, /other\.answer/);
+});
+
+test("AST mutation rejects new semantic diagnostics", () => {
+  const engine = new AstMutationEngine();
+  assert.throws(
+    () => engine.apply("semantic.ts", "const value: number = 1;\n", [
+      { kind: "replace-function-body", functionName: "missing", body: "return 1;" },
+    ]),
+    AstMutationError,
+  );
+});
