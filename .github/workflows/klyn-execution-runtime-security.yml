@@ -1,0 +1,89 @@
+name: Klyn Execution Runtime Security
+
+on:
+  pull_request:
+    paths:
+      - "packages/execution-runtime/**"
+      - ".github/workflows/klyn-execution-runtime-security.yml"
+  push:
+    branches:
+      - "feat/kernel-hard-sandbox-v1"
+    paths:
+      - "packages/execution-runtime/**"
+      - ".github/workflows/klyn-execution-runtime-security.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  typescript:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @klyn/execution-runtime typecheck
+      - run: pnpm --filter @klyn/execution-runtime test
+      - run: pnpm --filter @klyn/execution-runtime security-test
+
+  native:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --manifest-path packages/execution-runtime/native-sandbox/Cargo.toml
+
+  native-integration:
+    runs-on: ubuntu-24.04
+    needs: native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --manifest-path packages/execution-runtime/native-sandbox/Cargo.toml
+      - name: Build a minimal immutable rootfs
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/klyn-rootfs"
+          mkdir -p "$ROOT"/{bin,usr/bin,lib,lib64,workspace}
+          cp /usr/bin/true "$ROOT/usr/bin/true"
+          for f in $(ldd /usr/bin/true | awk '/=> \/|^\// {print $3}'); do
+            if [ -f "$f" ]; then
+              mkdir -p "$ROOT$(dirname "$f")"
+              cp -L "$f" "$ROOT$f"
+            fi
+          done
+          LOADER=$(ldd /usr/bin/true | awk '/ld-linux/ {print $1; exit}')
+          if [ -n "$LOADER" ] && [ -f "$LOADER" ]; then
+            mkdir -p "$ROOT$(dirname "$LOADER")"
+            cp -L "$LOADER" "$ROOT$LOADER"
+          fi
+          echo "KLYN_ROOTFS=$ROOT" >> "$GITHUB_ENV"
+      - name: Execute through namespaces, cgroup v2 and seccomp
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/klyn-workspace"
+          echo "sandbox-test" > "$RUNNER_TEMP/klyn-workspace/input.txt"
+          printf '%s' '{
+            "workspace":"'"$RUNNER_TEMP/klyn-workspace"'",
+            "rootfs":"'"$KLYN_ROOTFS"'",
+            "executable":"/usr/bin/true",
+            "args":[],
+            "cgroup_id":"ci-native-integration",
+            "timeout_ms":5000,
+            "memory_bytes":134217728,
+            "cpu_max_us":1000000,
+            "cpu_period_us":100000,
+            "pids_max":16,
+            "io_max_read_bps":1048576,
+            "io_max_write_bps":1048576,
+            "max_file_descriptors":64,
+            "syscall_profile":"strict-linux-v1"
+          }' | sudo packages/execution-runtime/native-sandbox/target/release/klyn-sandbox
