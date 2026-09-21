@@ -3,27 +3,51 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { ExecutionKernel } from "../src/index.ts";
+import { ExecutionKernel, ResourceBoundaryEnforcer, type ProcessSandboxManager, type ProcessSandboxResult } from "../src/index.ts";
 
-const processEnv = {
-  PATH: process.env.PATH ?? "",
-};
+function fakeProcess(result: Partial<ProcessSandboxResult>): ProcessSandboxManager {
+  return {
+    execute: async () => ({
+      exitCode: 0,
+      signal: null,
+      stdout: "",
+      stderr: "",
+      durationMs: 1,
+      timedOut: false,
+      memoryExceeded: false,
+      resourceLimitExceeded: false,
+      ...result,
+    }),
+  } as unknown as ProcessSandboxManager;
+}
 
-test("ExecutionKernel commits a verified AST mutation", async () => {
+function boundary(workspace: string): ResourceBoundaryEnforcer {
+  return new ResourceBoundaryEnforcer({
+    maxMemoryMb: 512,
+    maxCpuMs: 30_000,
+    maxFileDescriptors: 256,
+    maxExecutionMs: 30_000,
+    authorizedWorkspaces: [workspace],
+  });
+}
+
+test("ExecutionKernel mutates only the shadow and atomically commits verified output", async () => {
   const workspace = await mkdtemp(join(tmpdir(), "klyn-kernel-"));
-  const filePath = join(workspace, "module.mjs");
+  const filePath = join(workspace, "module.ts");
   await writeFile(filePath, "export const answer = 1;\n", "utf8");
 
-  const kernel = new ExecutionKernel();
+  const kernel = new ExecutionKernel({
+    processManager: fakeProcess({ exitCode: 0 }),
+    resourceBoundary: boundary(workspace),
+  });
   const result = await kernel.execute({
     executionId: "kernel-commit-test",
     workspace,
     sourcePath: filePath,
     mutations: [{ kind: "rename-identifier", from: "answer", to: "answerValue" }],
-    command: "node",
-    args: ["-e", "import('./module.mjs').then(m => { if (m.answerValue !== 1) process.exit(2); })"],
-    env: processEnv,
-    allowedEnv: ["PATH"],
+    command: "/usr/bin/node",
+    args: ["-e", "process.exit(0)"],
+    allowedEnv: [],
   });
 
   assert.equal(result.committed, true);
@@ -32,22 +56,24 @@ test("ExecutionKernel commits a verified AST mutation", async () => {
   assert.match(await readFile(filePath, "utf8"), /answerValue/);
 });
 
-test("ExecutionKernel rolls back a mutation when verification fails", async () => {
+test("ExecutionKernel discards shadow state when verification fails", async () => {
   const workspace = await mkdtemp(join(tmpdir(), "klyn-kernel-"));
-  const filePath = join(workspace, "module.mjs");
+  const filePath = join(workspace, "module.ts");
   const original = "export const answer = 1;\n";
   await writeFile(filePath, original, "utf8");
 
-  const kernel = new ExecutionKernel();
+  const kernel = new ExecutionKernel({
+    processManager: fakeProcess({ exitCode: 1 }),
+    resourceBoundary: boundary(workspace),
+  });
   const result = await kernel.execute({
     executionId: "kernel-rollback-test",
     workspace,
     sourcePath: filePath,
     mutations: [{ kind: "rename-identifier", from: "answer", to: "answerValue" }],
-    command: "node",
+    command: "/usr/bin/node",
     args: ["-e", "process.exit(1)"],
-    env: processEnv,
-    allowedEnv: ["PATH"],
+    allowedEnv: [],
   });
 
   assert.equal(result.committed, false);
