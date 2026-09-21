@@ -3,12 +3,17 @@
   "version": "6.3.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.json",
     "test": "tsx --test --test-timeout=15000 tests/**/*.test.ts",
-    "lint": "eslint src tests --ext .ts"
+    "lint": "eslint src tests --ext .ts",
+    "native-build:linux": "cargo build --release --manifest-path native-sandbox/Cargo.toml",
+    "native-test:linux": "cargo test --manifest-path native-sandbox/Cargo.toml",
+    "security-test": "tsx --test --test-timeout=15000 tests/security-boundary.test.ts tests/workspace-cas-engine.test.ts tests/ast-transformer.test.ts"
   },
   "dependencies": {
     "sql.js": "^1.13.0",
