@@ -245,6 +245,7 @@ fn run(cfg: &Config, cgroup: &Path) -> io::Result<i32> {
     let timeout = cfg.timeout_ms;
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(timeout));
+        eprintln!("[KLYN_TIMEOUT]");
         kill_cgroup(&killer);
     });
 
@@ -255,7 +256,11 @@ fn run(cfg: &Config, cgroup: &Path) -> io::Result<i32> {
         if r < 0 && io::Error::last_os_error().kind() != io::ErrorKind::Interrupted { return Err(io::Error::last_os_error()); }
     }
     if unsafe { libc::WIFEXITED(status) } { Ok(unsafe { libc::WEXITSTATUS(status) }) }
-    else if unsafe { libc::WIFSIGNALED(status) } { Ok(128 + unsafe { libc::WTERMSIG(status) }) }
+    else if unsafe { libc::WIFSIGNALED(status) } {
+        let sig = unsafe { libc::WTERMSIG(status) };
+        if sig == libc::SIGXCPU { eprintln!("[KLYN_CPU]"); }
+        Ok(128 + sig)
+    }
     else { Ok(125) }
 }
 
