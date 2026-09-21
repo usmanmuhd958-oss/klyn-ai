@@ -80,7 +80,7 @@ function changedPaths(before: WorkspaceRevision, after: WorkspaceRevision): stri
 }
 
 async function acquireLock(root: string): Promise<() => Promise<void>> {
-  const lock = join(root, ".klyn-cas-lock");
+  const lock = join(dirname(root), `.${basename(root)}.klyn-cas-lock`);
   for (let attempt = 0; attempt < 50; attempt += 1) {
     try {
       await mkdir(lock);
