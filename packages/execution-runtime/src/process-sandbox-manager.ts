@@ -1,5 +1,7 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync, realpathSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { dirname, isAbsolute, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { SecretMasker } from "./secret-masker.js";
 
 export interface ProcessSandboxRequest {
@@ -13,6 +15,9 @@ export interface ProcessSandboxRequest {
   maxCpuMs?: number;
   maxFileDescriptors?: number;
   maxOutputBytes?: number;
+  ioReadBps?: number;
+  ioWriteBps?: number;
+  rootfs?: string;
   fenceKey?: string;
   ownerId?: string;
 }
@@ -35,9 +40,14 @@ export interface ProcessSandboxPolicy {
   maxTimeoutMs: number;
   maxMemoryMb: number;
   maxOutputBytes: number;
-  maxCpuMs?: number;
-  maxFileDescriptors?: number;
+  maxCpuMs: number;
+  maxFileDescriptors: number;
   allowedCommands: ReadonlySet<string>;
+  nativeHelperPath?: string;
+  rootfs?: string;
+  syscallProfile: "strict-linux-v1";
+  ioReadBps?: number;
+  ioWriteBps?: number;
 }
 
 export const DEFAULT_PROCESS_SANDBOX_POLICY: ProcessSandboxPolicy = {
@@ -46,14 +56,20 @@ export const DEFAULT_PROCESS_SANDBOX_POLICY: ProcessSandboxPolicy = {
   maxOutputBytes: 1_000_000,
   maxCpuMs: 30_000,
   maxFileDescriptors: 256,
-  allowedCommands: new Set(["node", "python", "python3", "deno", "bun", "cargo", "rustc"]),
+  // Absolute paths only. Empty is intentional: production configuration must
+  // explicitly identify binaries inside the immutable sandbox rootfs.
+  allowedCommands: new Set(),
+  nativeHelperPath: process.env.KLYN_SANDBOX_HELPER,
+  rootfs: process.env.KLYN_SANDBOX_ROOTFS,
+  syscallProfile: "strict-linux-v1",
+  ioReadBps: 50 * 1024 * 1024,
+  ioWriteBps: 50 * 1024 * 1024,
 };
 
-/**
- * Host-process safety boundary. This is deliberately not a container escape
- * boundary: production deployments must place the manager inside an OS/container
- * sandbox with dropped privileges, seccomp/AppArmor, filesystem and network policy.
- */
+function helperDefaultPath(): string {
+  return resolve(dirname(fileURLToPath(import.meta.url)), "../native-sandbox/target/release/klyn-sandbox");
+}
+
 export class ProcessSandboxManager {
   private readonly owners = new Map<string, string>();
 
@@ -72,112 +88,117 @@ export class ProcessSandboxManager {
 
     const timeoutMs = Math.min(request.timeoutMs ?? this.policy.maxTimeoutMs, this.policy.maxTimeoutMs);
     const memoryMb = Math.min(request.memoryMb ?? this.policy.maxMemoryMb, this.policy.maxMemoryMb);
-    const maxCpuMs = Math.min(request.maxCpuMs ?? this.policy.maxCpuMs ?? this.policy.maxTimeoutMs, this.policy.maxCpuMs ?? this.policy.maxTimeoutMs);
-    const maxFileDescriptors = Math.min(request.maxFileDescriptors ?? this.policy.maxFileDescriptors ?? 256, this.policy.maxFileDescriptors ?? 256);
+    const maxCpuMs = Math.min(request.maxCpuMs ?? this.policy.maxCpuMs, this.policy.maxCpuMs);
+    const maxFileDescriptors = Math.min(request.maxFileDescriptors ?? this.policy.maxFileDescriptors, this.policy.maxFileDescriptors);
     const maxOutputBytes = Math.min(request.maxOutputBytes ?? this.policy.maxOutputBytes, this.policy.maxOutputBytes);
-    const env = this.secretMasker.maskEnvironment(request.env ?? process.env, request.allowedEnv ?? []);
+    const rootfs = request.rootfs ?? this.policy.rootfs;
+    const helper = this.policy.nativeHelperPath ?? helperDefaultPath();
+    const sourceEnv = request.env ?? process.env;
+    const env = this.secretMasker.maskEnvironment(sourceEnv, request.allowedEnv ?? []);
     const started = Date.now();
 
     return new Promise((resolve, reject) => {
-      let child: ChildProcess;
-      try {
-        child = spawn(request.command, [...(request.args ?? [])], {
-          cwd: request.cwd,
-          env,
-          shell: false,
-          detached: process.platform !== "win32",
-          stdio: ["ignore", "pipe", "pipe"],
-        });
-      } catch (error) {
-        if (fenceKey && ownerId) this.releaseFence(fenceKey, ownerId);
-        reject(error);
-        return;
-      }
+      const payload = JSON.stringify({
+        workspace: realpathSync(request.cwd),
+        rootfs: realpathSync(rootfs!),
+        executable: request.command,
+        args: [...(request.args ?? [])],
+        cgroup_id: `exec-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        timeout_ms: timeoutMs,
+        memory_bytes: memoryMb * 1024 * 1024,
+        cpu_max_us: maxCpuMs * 1000,
+        cpu_period_us: 100_000,
+        pids_max: 128,
+        io_max_read_bps: request.ioReadBps ?? this.policy.ioReadBps ?? null,
+        io_max_write_bps: request.ioWriteBps ?? this.policy.ioWriteBps ?? null,
+        max_file_descriptors: maxFileDescriptors,
+        syscall_profile: this.policy.syscallProfile,
+      });
+
+      const child = spawn(helper, [], {
+        cwd: request.cwd,
+        env,
+        shell: false,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
 
       let stdout = "";
       let stderr = "";
       let outputBytes = 0;
       let timedOut = false;
-      let memoryExceeded = false;
       let resourceLimitExceeded = false;
       let terminationReason: ProcessTerminationReason | undefined;
       let settled = false;
-      const timeoutTimer = globalThis.setTimeout(() => {
-        timedOut = true;
-        resourceLimitExceeded = true;
-        terminationReason = "timeout";
-        this.terminate(child);
-      }, timeoutMs);
+
+      const terminate = (): void => {
+        if (child.killed) return;
+        child.kill("SIGKILL");
+      };
 
       const append = (target: "stdout" | "stderr", chunk: Buffer): void => {
         if (settled) return;
-        const currentBytes = Buffer.byteLength(stdout, "utf8") + Buffer.byteLength(stderr, "utf8");
-        const remaining = Math.max(0, maxOutputBytes - currentBytes);
+        const remaining = Math.max(0, maxOutputBytes - outputBytes);
         const text = chunk.toString("utf8", 0, Math.min(chunk.byteLength, remaining));
         if (target === "stdout") stdout += text;
         else stderr += text;
-        outputBytes = Math.min(maxOutputBytes + 1, outputBytes + chunk.byteLength);
+        outputBytes += chunk.byteLength;
         if (outputBytes > maxOutputBytes) {
           resourceLimitExceeded = true;
           terminationReason = "output";
           stderr += "\n[Sandbox output limit exceeded]";
-          this.terminate(child);
+          terminate();
         }
       };
 
-      child.stdout?.on("data", (chunk: Buffer) => append("stdout", chunk));
-      child.stderr?.on("data", (chunk: Buffer) => append("stderr", chunk));
+      child.stdout.on("data", (chunk: Buffer) => append("stdout", chunk));
+      child.stderr.on("data", (chunk: Buffer) => append("stderr", chunk));
+      child.once("error", (error) => finish(error));
 
-      const resourceTimer = globalThis.setInterval(() => {
-        if (!child.pid) return;
-        const rss = this.readResidentMemoryBytes(child.pid);
-        const cpuMs = this.readCpuTimeMs(child.pid);
-        const descriptors = this.readFileDescriptorCount(child.pid);
-        if (rss > memoryMb * 1024 * 1024) {
-          memoryExceeded = true;
-          resourceLimitExceeded = true;
-          terminationReason = "memory";
-          this.terminate(child);
-          return;
-        }
-        if (cpuMs > maxCpuMs) {
-          resourceLimitExceeded = true;
-          terminationReason = "cpu";
-          this.terminate(child);
-          return;
-        }
-        if (descriptors > maxFileDescriptors) {
-          resourceLimitExceeded = true;
-          terminationReason = "file-descriptors";
-          this.terminate(child);
-        }
-      }, 100);
+      const wallTimer = setTimeout(() => {
+        timedOut = true;
+        resourceLimitExceeded = true;
+        terminationReason = "timeout";
+        terminate();
+      }, timeoutMs + 1_000);
 
-      const finish = (error?: Error): void => {
+      child.once("close", (code, signal) => {
+        finish(undefined, code, signal);
+      });
+
+      child.stdin.end(payload);
+
+      function finish(error?: Error, code: number | null = null, signal: NodeJS.Signals | null = null): void {
         if (settled) return;
         settled = true;
-        globalThis.clearTimeout(timeoutTimer);
-        globalThis.clearInterval(resourceTimer);
-        if (fenceKey && ownerId) this.releaseFence(fenceKey, ownerId);
+        clearTimeout(wallTimer);
+        if (fenceKey && ownerId) {
+          // The fence is process-local; the OS cgroup is the real lifecycle boundary.
+          if (fenceKey && ownerId) { /* release below */ }
+        }
         if (error) {
+          if (fenceKey && ownerId) this.releaseFence(fenceKey, ownerId);
           reject(error);
           return;
         }
+        const helperFailure = code === 125;
+        if (helperFailure) {
+          if (fenceKey && ownerId) this.releaseFence(fenceKey, ownerId);
+          reject(new Error(`Native sandbox failed: ${stderr || "unknown error"}`));
+          return;
+        }
+        if (fenceKey && ownerId) this.releaseFence(fenceKey, ownerId);
         resolve({
-          exitCode: child.exitCode,
-          signal: child.signalCode,
+          exitCode: code,
+          signal,
           stdout: this.secretMasker.redact(stdout),
           stderr: this.secretMasker.redact(stderr),
           durationMs: Date.now() - started,
           timedOut,
-          memoryExceeded,
+          memoryExceeded: /memory\.events.*oom_kill|memory limit/i.test(stderr),
           resourceLimitExceeded,
           ...(terminationReason === undefined ? {} : { terminationReason }),
         });
-      };
-
-      child.once("error", (error) => finish(error));
-      child.once("close", () => finish());
+      }
     });
   }
 
@@ -195,69 +216,22 @@ export class ProcessSandboxManager {
   }
 
   private validate(request: ProcessSandboxRequest): void {
-    if (!this.policy.allowedCommands.has(request.command)) {
-      throw new Error(`Command is not permitted: ${request.command}`);
-    }
-    if (!request.cwd) throw new Error("cwd is required");
-    if (!Number.isInteger(request.timeoutMs ?? this.policy.maxTimeoutMs) || (request.timeoutMs ?? this.policy.maxTimeoutMs) <= 0) {
-      throw new Error("timeoutMs must be a positive integer");
-    }
-    if (!Number.isInteger(request.memoryMb ?? this.policy.maxMemoryMb) || (request.memoryMb ?? this.policy.maxMemoryMb) <= 0) {
-      throw new Error("memoryMb must be a positive integer");
-    }
-    if (!Number.isInteger(request.maxCpuMs ?? this.policy.maxCpuMs ?? this.policy.maxTimeoutMs) || (request.maxCpuMs ?? this.policy.maxCpuMs ?? this.policy.maxTimeoutMs) <= 0) {
-      throw new Error("maxCpuMs must be a positive integer");
-    }
-    if (!Number.isInteger(request.maxFileDescriptors ?? this.policy.maxFileDescriptors ?? 256) || (request.maxFileDescriptors ?? this.policy.maxFileDescriptors ?? 256) <= 0) {
-      throw new Error("maxFileDescriptors must be a positive integer");
-    }
-    if (!Number.isInteger(request.maxOutputBytes ?? this.policy.maxOutputBytes) || (request.maxOutputBytes ?? this.policy.maxOutputBytes) <= 0) {
-      throw new Error("maxOutputBytes must be a positive integer");
-    }
-  }
-
-  private terminate(child: ChildProcess): void {
-    if (child.killed) return;
-    if (process.platform !== "win32" && child.pid) {
-      try {
-        process.kill(-child.pid, "SIGKILL");
-        return;
-      } catch {
-        // Fall back to the direct child when process-group fencing is unavailable.
-      }
-    }
-    child.kill("SIGKILL");
-  }
-
-  private readResidentMemoryBytes(pid: number): number {
-    if (process.platform !== "linux") return 0;
-    try {
-      const status = readFileSync(`/proc/${pid}/status`, "utf8");
-      const match = /VmRSS:\s+(\d+)\s+kB/.exec(status);
-      return match ? Number(match[1]) * 1024 : 0;
-    } catch {
-      return 0;
-    }
-  }
-
-  private readCpuTimeMs(pid: number): number {
-    if (process.platform !== "linux") return 0;
-    try {
-      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-      const fields = stat.trim().split(" ");
-      const ticks = Number(fields[13] ?? 0) + Number(fields[14] ?? 0);
-      return (ticks / 100) * 1000;
-    } catch {
-      return 0;
-    }
-  }
-
-  private readFileDescriptorCount(pid: number): number {
-    if (process.platform !== "linux") return 0;
-    try {
-      return readdirSync(`/proc/${pid}/fd`).length;
-    } catch {
-      return 0;
-    }
+    if (process.platform !== "linux") throw new Error("Execution sandbox requires Linux");
+    if (!isAbsolute(request.command)) throw new Error("Command must be an absolute executable path inside the sandbox rootfs");
+    if (!this.policy.allowedCommands.has(request.command)) throw new Error(`Command is not permitted: ${request.command}`);
+    if (!request.cwd || !isAbsolute(request.cwd)) throw new Error("cwd must be absolute");
+    if (!request.rootfs && !this.policy.rootfs) throw new Error("A dedicated immutable sandbox rootfs is required");
+    const helper = this.policy.nativeHelperPath ?? helperDefaultPath();
+    if (!existsSync(helper)) throw new Error(`Native sandbox helper not found: ${helper}`);
+    const values = [
+      request.timeoutMs ?? this.policy.maxTimeoutMs,
+      request.memoryMb ?? this.policy.maxMemoryMb,
+      request.maxCpuMs ?? this.policy.maxCpuMs,
+      request.maxFileDescriptors ?? this.policy.maxFileDescriptors,
+      request.maxOutputBytes ?? this.policy.maxOutputBytes,
+    ];
+    if (values.some((v) => !Number.isSafeInteger(v) || v <= 0)) throw new Error("Sandbox resource limits must be positive integers");
+    if (!realpathSync(request.cwd)) throw new Error("Workspace canonicalization failed");
+    if (!realpathSync(request.rootfs ?? this.policy.rootfs!)) throw new Error("Rootfs canonicalization failed");
   }
 }
