@@ -18,6 +18,8 @@ export { ResourceBoundaryEnforcer, ResourceBoundaryViolation, DEFAULT_RESOURCE_B
 export type { ResourceBoundaryPolicy, ResourceBoundaryRequest } from "./resource-boundary-enforcer.js";
 export { RuntimeSnapshotEngine } from "./runtime-snapshot-engine.js";
 export type { RuntimeSnapshot } from "./runtime-snapshot-engine.js";
+export { WorkspaceCasEngine, snapshotWorkspace } from "./workspace-cas-engine.js";
+export type { WorkspaceEntry, WorkspaceRevision, ShadowWorkspace, CommitResult } from "./workspace-cas-engine.js";
 export { EphemeralSandboxRuntime } from "./ephemeral-sandbox-runtime.js";
 export type { EphemeralSandboxRequest, EphemeralSandboxRuntimeOptions } from "./ephemeral-sandbox-runtime.js";
 export { SandboxPolicyEngine, DEFAULT_SANDBOX_POLICY_CEILINGS, SandboxPolicyViolation } from "./SandboxPolicyEngine.js";
