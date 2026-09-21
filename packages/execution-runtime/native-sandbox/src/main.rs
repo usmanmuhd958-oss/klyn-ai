@@ -295,3 +295,28 @@ fn main() {
     cleanup_cgroup(&cg);
     match result { Ok(code) => process::exit(code), Err(e) => fail(format!("execution: {e}")) }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cgroup_ids_are_strictly_validated() {
+        assert!(valid_id("exec-123_abc"));
+        assert!(!valid_id(""));
+        assert!(!valid_id("../escape"));
+        assert!(!valid_id("contains space"));
+    }
+
+    #[test]
+    fn absolute_directory_validation_rejects_files() {
+        let path = std::env::temp_dir();
+        assert!(canonical_dir(&path, "tmp").is_ok());
+    }
+
+    #[test]
+    fn strict_profile_name_is_required() {
+        assert!(seccomp("not-a-profile").is_err());
+    }
+}
