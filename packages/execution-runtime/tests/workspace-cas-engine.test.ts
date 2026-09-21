@@ -29,3 +29,14 @@ test("CAS rejects stale workspaces instead of overwriting concurrent changes", a
   await assert.rejects(() => cas.commit(shadow), /CAS conflict/);
   assert.equal((await snapshotWorkspace(workspace)).digest, before);
 });
+
+
+test("CAS rejects symlink escapes before commit", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "klyn-cas-"));
+  await writeFile(join(workspace, "safe.txt"), "ok");
+  const cas = new WorkspaceCasEngine();
+  const shadow = await cas.createShadow(workspace);
+  const { symlink } = await import("node:fs/promises");
+  await symlink("/etc/passwd", join(shadow.shadowRoot, "escape"));
+  await assert.rejects(() => cas.commit(shadow), /symlink escapes workspace/);
+});
