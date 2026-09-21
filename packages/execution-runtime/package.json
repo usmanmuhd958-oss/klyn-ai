@@ -13,7 +13,8 @@
     "lint": "eslint src tests --ext .ts",
     "native-build:linux": "cargo build --release --manifest-path native-sandbox/Cargo.toml",
     "native-test:linux": "cargo test --manifest-path native-sandbox/Cargo.toml",
-    "security-test": "tsx --test --test-timeout=15000 tests/security-boundary.test.ts tests/workspace-cas-engine.test.ts tests/ast-transformer.test.ts"
+    "security-test": "tsx --test --test-timeout=15000 tests/security-boundary.test.ts tests/workspace-cas-engine.test.ts tests/ast-transformer.test.ts",
+    "benchmark:ast": "tsx benchmarks/ast-semantic-validation.bench.ts"
   },
   "dependencies": {
     "sql.js": "^1.13.0",
