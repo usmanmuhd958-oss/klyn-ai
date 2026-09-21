@@ -94,6 +94,14 @@ fn kill_cgroup(path: &Path) {
 }
 
 fn cleanup_cgroup(path: &Path) { let _ = fs::remove_dir(path); }
+fn memory_oom(path: &Path) -> bool {
+    fs::read_to_string(path.join("memory.events"))
+        .ok()
+        .and_then(|s| s.lines().find_map(|line| line.strip_prefix("oom_kill ").and_then(|v| v.parse::<u64>().ok())))
+        .map(|v| v > 0)
+        .unwrap_or(false)
+}
+
 
 fn bind(src: &Path, dst: &Path, readonly: bool) -> io::Result<()> {
     if !src.exists() || !dst.exists() { return Err(io::Error::new(io::ErrorKind::NotFound, "mount source/target missing")); }
@@ -282,6 +290,7 @@ fn main() {
 
     let cg = setup_cgroup(&cfg).unwrap_or_else(|e| fail(format!("cgroup: {e}")));
     let result = run(&cfg, &cg);
+    if memory_oom(&cg) { eprintln!("[KLYN_MEMORY]"); }
     kill_cgroup(&cg);
     cleanup_cgroup(&cg);
     match result { Ok(code) => process::exit(code), Err(e) => fail(format!("execution: {e}")) }
