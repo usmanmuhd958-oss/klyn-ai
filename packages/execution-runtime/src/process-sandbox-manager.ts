@@ -180,6 +180,12 @@ export class ProcessSandboxManager {
           reject(error);
           return;
         }
+        const timedOutByNative = stderr.includes("[KLYN_TIMEOUT]");
+        const memoryByNative = stderr.includes("[KLYN_MEMORY]");
+        const cpuByNative = stderr.includes("[KLYN_CPU]");
+        if (timedOutByNative) { timedOut = true; resourceLimitExceeded = true; terminationReason = "timeout"; }
+        if (memoryByNative) { resourceLimitExceeded = true; terminationReason = "memory"; }
+        if (cpuByNative) { resourceLimitExceeded = true; terminationReason = "cpu"; }
         const helperFailure = code === 125;
         if (helperFailure) {
           if (fenceKey && ownerId) this.releaseFence(fenceKey, ownerId);
