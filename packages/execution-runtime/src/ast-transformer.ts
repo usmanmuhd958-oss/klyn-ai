@@ -162,6 +162,49 @@ function removeTrailingNewline(source: string, end: number): number {
   return end;
 }
 
+function compilerFor(fileName: string, source: string): { program: ts.Program; sourceFile: ts.SourceFile; checker: ts.TypeChecker } {
+  const absolute = ts.sys.resolvePath(fileName);
+  const options: ts.CompilerOptions = {
+    target: ts.ScriptTarget.ES2022,
+    module: ts.ModuleKind.NodeNext,
+    moduleResolution: ts.ModuleResolutionKind.NodeNext,
+    strict: true,
+    noEmit: true,
+    skipLibCheck: true,
+    allowJs: true,
+  };
+  const host = ts.createCompilerHost(options, true);
+  const original = host.getSourceFile.bind(host);
+  host.getSourceFile = (name, languageVersion, onError, shouldCreateNewSourceFile) => {
+    if (ts.sys.resolvePath(name) === absolute) {
+      return ts.createSourceFile(name, source, languageVersion, true, scriptKindFor(name));
+    }
+    return original(name, languageVersion, onError, shouldCreateNewSourceFile);
+  };
+  const program = ts.createProgram([absolute], options, host);
+  const sourceFile = program.getSourceFile(absolute);
+  if (!sourceFile) throw new AstMutationError("TypeScript compiler could not materialize the mutation target");
+  return { program, sourceFile, checker: program.getTypeChecker() };
+}
+
+function diagnosticKey(diagnostic: ts.Diagnostic): string {
+  return `${diagnostic.code}:${ts.flattenDiagnosticMessageText(diagnostic.messageText, " ")}`;
+}
+
+function semanticDiagnostics(fileName: string, source: string): ReadonlySet<string> {
+  const { program, sourceFile } = compilerFor(fileName, source);
+  return new Set(program.getSemanticDiagnostics(sourceFile).map(diagnosticKey));
+}
+
+function assertNoNewSemanticErrors(fileName: string, before: string, after: string): void {
+  const baseline = semanticDiagnostics(fileName, before);
+  const next = semanticDiagnostics(fileName, after);
+  const added = [...next].filter((key) => !baseline.has(key));
+  if (added.length > 0) {
+    throw new AstMutationError(`Mutation introduced new semantic diagnostics: ${added.slice(0, 8).join(" | ")}`);
+  }
+}
+
 function collectRenameEdits(
   sourceFile: ts.SourceFile,
   mutation: RenameIdentifierMutation,
@@ -169,15 +212,38 @@ function collectRenameEdits(
 ): AstTextEdit[] {
   requireIdentifier(mutation.from, "from");
   requireIdentifier(mutation.to, "to");
-  const edits: AstTextEdit[] = [];
+  const { program, sourceFile: typedFile, checker } = compilerFor(sourceFile.fileName, sourceFile.getFullText());
+
+  const candidates: ts.Identifier[] = [];
   const visit = (node: ts.Node): void => {
-    if (ts.isIdentifier(node) && node.text === mutation.from) {
-      edits.push({ mutationIndex, start: node.getStart(sourceFile), end: node.end, replacement: mutation.to });
+    if (ts.isIdentifier(node) && node.text === mutation.from && checker.getSymbolAtLocation(node)) {
+      candidates.push(node);
     }
     ts.forEachChild(node, visit);
   };
-  visit(sourceFile);
-  if (edits.length === 0) throw new AstMutationError(`Identifier not found: ${mutation.from}`);
+  visit(typedFile);
+  if (candidates.length === 0) throw new AstMutationError(`Identifier not found as a typed symbol: ${mutation.from}`);
+
+  const symbols = new Map<ts.Symbol, ts.Identifier>();
+  for (const node of candidates) {
+    const symbol = checker.getSymbolAtLocation(node);
+    if (symbol) symbols.set(symbol, node);
+  }
+  if (symbols.size !== 1) {
+    throw new AstMutationError(`Identifier is ambiguous across lexical/type symbols: ${mutation.from}`);
+  }
+
+  const target = [...symbols.keys()][0]!;
+  const edits: AstTextEdit[] = [];
+  const collect = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && node.text === mutation.from && checker.getSymbolAtLocation(node) === target) {
+      edits.push({ mutationIndex, start: node.getStart(typedFile), end: node.end, replacement: mutation.to });
+    }
+    ts.forEachChild(node, collect);
+  };
+  collect(typedFile);
+  void program;
+  if (edits.length === 0) throw new AstMutationError(`No references resolved to symbol: ${mutation.from}`);
   return edits;
 }
 
@@ -366,6 +432,7 @@ export class AstMutationEngine {
     const edits = this.plan(fileName, source, mutations);
     const result = applyEdits(source, edits);
     parseSource(fileName, result);
+    assertNoNewSemanticErrors(fileName, source, result);
     return Object.freeze({
       source: result,
       sourceHash: sha256(result),
