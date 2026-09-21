@@ -123,6 +123,8 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
+  packages/control-plane: {}
+
   packages/database:
     dependencies:
       '@supabase/supabase-js':
