@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { cp, lstat, mkdir, open, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, readdir, readFile, readlink, rename, rm, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 export interface WorkspaceEntry {
   readonly path: string;
@@ -79,6 +79,28 @@ function changedPaths(before: WorkspaceRevision, after: WorkspaceRevision): stri
   return [...paths].sort();
 }
 
+async function assertSafeSymlinks(root: string): Promise<void> {
+  const walk = async (dir: string, prefix: string): Promise<void> => {
+    const names = await readdir(dir, { withFileTypes: true });
+    for (const entry of names) {
+      const rel = prefix ? join(prefix, entry.name) : entry.name;
+      const abs = resolve(root, rel);
+      if (entry.isSymbolicLink()) {
+        const target = await readlink(abs);
+        const candidate = isAbsolute(target) ? resolve(root, "." + target) : resolve(dirname(abs), target);
+        if (relative(root, candidate).startsWith("..") || isAbsolute(relative(root, candidate))) {
+          throw new Error(`Commit rejected: symlink escapes workspace: ${rel} -> ${target}`);
+        }
+      } else if (entry.isDirectory()) {
+        await walk(abs, rel);
+      } else if (!entry.isFile()) {
+        throw new Error(`Commit rejected: unsupported filesystem object: ${rel}`);
+      }
+    }
+  };
+  await walk(root, "");
+}
+
 async function acquireLock(root: string): Promise<() => Promise<void>> {
   const lock = join(dirname(root), `.${basename(root)}.klyn-cas-lock`);
   for (let attempt = 0; attempt < 50; attempt += 1) {
@@ -117,6 +139,7 @@ export class WorkspaceCasEngine {
         throw new Error(`CAS conflict: workspace changed from ${shadow.baseRevision.digest} to ${current.digest}`);
       }
       const after = await snapshotWorkspace(shadow.shadowRoot);
+      await assertSafeSymlinks(shadow.shadowRoot);
       const changed = changedPaths(current, after);
 
       const backup = `${shadow.sourceRoot}.klyn-backup-${shadow.id}`;
