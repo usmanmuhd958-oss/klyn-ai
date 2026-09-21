@@ -167,7 +167,7 @@ export class ProcessSandboxManager {
 
       child.stdin.end(payload);
 
-      function finish(error?: Error, code: number | null = null, signal: NodeJS.Signals | null = null): void {
+      const finish = (error?: Error, code: number | null = null, signal: NodeJS.Signals | null = null): void => {
         if (settled) return;
         settled = true;
         clearTimeout(wallTimer);
@@ -198,7 +198,7 @@ export class ProcessSandboxManager {
           resourceLimitExceeded,
           ...(terminationReason === undefined ? {} : { terminationReason }),
         });
-      }
+      };
     });
   }
 
