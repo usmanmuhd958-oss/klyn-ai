@@ -1,0 +1,9 @@
+[package]
+name = "klyn-types"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+serde.workspace = true
+uuid.workspace = true
