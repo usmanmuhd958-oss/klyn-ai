@@ -1,0 +1,181 @@
+name: Klyn Kernel Tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "packages/execution-runtime/**"
+      - ".github/workflows/kernel-tests.yml"
+  push:
+    branches:
+      - "feat/kernel-execution-primitives-clean-2026"
+    paths:
+      - "packages/execution-runtime/**"
+      - ".github/workflows/kernel-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: klyn-kernel-tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: true
+  NODE_VERSION: "22"
+  PNPM_VERSION: "11.24.0"
+
+jobs:
+  typescript-kernel:
+    name: TypeScript kernel + AST security
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck execution runtime
+        run: pnpm --filter @klyn/execution-runtime typecheck
+      - name: Full execution-runtime test suite
+        run: pnpm --filter @klyn/execution-runtime test
+      - name: Security boundary suite
+        run: pnpm --filter @klyn/execution-runtime security-test
+      - name: AST semantic-validation benchmark
+        env:
+          KLYN_AST_BENCH_OUTPUT: ${{ runner.temp }}/klyn-ast-benchmark.json
+          KLYN_AST_BENCH_SAMPLES: "5"
+          KLYN_AST_BENCH_WARMUPS: "1"
+        run: |
+          set -euo pipefail
+          pnpm --filter @klyn/execution-runtime benchmark:ast | tee "${RUNNER_TEMP}/klyn-ast-benchmark.txt"
+          {
+            echo "## AST semantic-validation benchmark"
+            echo
+            echo '```text'
+            cat "${RUNNER_TEMP}/klyn-ast-benchmark.txt"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  rust-sandbox:
+    name: Rust sandbox unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cargo format check
+        run: cargo fmt --manifest-path packages/execution-runtime/native-sandbox/Cargo.toml --all -- --check
+      - name: Cargo test
+        run: cargo test --manifest-path packages/execution-runtime/native-sandbox/Cargo.toml
+
+  linux-isolation:
+    name: Linux cgroups v2 + namespace + seccomp integration
+    runs-on: ubuntu-latest
+    needs: rust-sandbox
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Verify privileged runner access
+        run: |
+          set -euo pipefail
+          sudo -n true
+          test "$(sudo -n id -u)" = "0"
+      - name: Verify cgroups v2 and required controllers
+        run: |
+          set -euo pipefail
+          test "$(stat -fc %T /sys/fs/cgroup)" = "cgroup2fs"
+          test -r /sys/fs/cgroup/cgroup.controllers
+          controllers="$(cat /sys/fs/cgroup/cgroup.controllers)"
+          for controller in memory cpu pids io; do
+            printf '%s\n' "${controllers}" | tr ' ' '\n' | grep -Fx "${controller}" >/dev/null
+          done
+          echo "cgroups v2 controllers: ${controllers}"
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build native sandbox
+        run: cargo build --release --manifest-path packages/execution-runtime/native-sandbox/Cargo.toml
+      - name: Build minimal immutable rootfs
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="${RUNNER_TEMP}/klyn-rootfs"
+          mkdir -p "${ROOT}/usr/bin" "${ROOT}/lib" "${ROOT}/lib64" "${ROOT}/workspace"
+          cp --reflink=auto /usr/bin/true "${ROOT}/usr/bin/true"
+          while read -r library; do
+            [ -n "${library}" ] || continue
+            if [ -f "${library}" ]; then
+              mkdir -p "${ROOT}$(dirname "${library}")"
+              cp -L --reflink=auto "${library}" "${ROOT}${library}"
+            fi
+          done < <(ldd /usr/bin/true | awk '/=> \/|^\// { if ($3 ~ /^\//) print $3; else if ($1 ~ /^\//) print $1 }')
+          loader="$(ldd /usr/bin/true | awk '/ld-linux/ {print $1; exit}')"
+          if [ -n "${loader}" ] && [ -f "${loader}" ]; then
+            mkdir -p "${ROOT}$(dirname "${loader}")"
+            cp -L --reflink=auto "${loader}" "${ROOT}${loader}"
+          fi
+          test -x "${ROOT}/usr/bin/true"
+          test -d "${ROOT}/workspace"
+          echo "KLYN_ROOTFS=${ROOT}" >> "${GITHUB_ENV}"
+      - name: Execute sandbox with sudo + cgroups + namespaces + seccomp
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORKSPACE="${RUNNER_TEMP}/klyn-workspace"
+          mkdir -p "${WORKSPACE}"
+          printf 'kernel-tests\n' > "${WORKSPACE}/input.txt"
+          cat > "${RUNNER_TEMP}/klyn-sandbox.json" <<JSON
+{
+  "workspace": "${WORKSPACE}",
+  "rootfs": "${KLYN_ROOTFS}",
+  "executable": "/usr/bin/true",
+  "args": [],
+  "cgroup_id": "ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}",
+  "timeout_ms": 5000,
+  "memory_bytes": 134217728,
+  "cpu_max_us": 1000000,
+  "cpu_period_us": 100000,
+  "pids_max": 16,
+  "io_max_read_bps": 1048576,
+  "io_max_write_bps": 1048576,
+  "max_file_descriptors": 64,
+  "syscall_profile": "strict-linux-v1"
+}
+JSON
+          set +e
+          sudo -n packages/execution-runtime/native-sandbox/target/release/klyn-sandbox < "${RUNNER_TEMP}/klyn-sandbox.json"
+          rc=$?
+          set -e
+          test "${rc}" -eq 0
+          test ! -d "/sys/fs/cgroup/klyn/ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+  kernel-release-gate:
+    name: Kernel release gate
+    runs-on: ubuntu-latest
+    needs: [typescript-kernel, rust-sandbox, linux-isolation]
+    if: ${{ always() }}
+    timeout-minutes: 5
+    steps:
+      - name: Assert all kernel jobs passed
+        env:
+          TS_RESULT: ${{ needs.typescript-kernel.result }}
+          RUST_RESULT: ${{ needs.rust-sandbox.result }}
+          LINUX_RESULT: ${{ needs.linux-isolation.result }}
+        run: |
+          set -euo pipefail
+          test "${TS_RESULT}" = "success"
+          test "${RUST_RESULT}" = "success"
+          test "${LINUX_RESULT}" = "success"
+          echo "Kernel release gate: PASS"

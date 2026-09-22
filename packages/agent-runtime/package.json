@@ -1,18 +1,17 @@
 {
-  "name": "@klyn/mission-engine",
+  "name": "@klyn/agent-runtime",
   "version": "1.1.0",
   "private": true,
   "type": "module",
   "exports": {
-    ".": {
-      "types": "./dist/src/index.d.ts",
-      "default": "./dist/src/index.js"
-    }
+    ".": "./src/index.ts",
+    "./swarm": "./src/swarm-state-machine.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.json",
-    "test": "tsx --test --test-timeout=15000 tests/**/*.test.ts"
+    "test": "tsx --test --test-timeout=15000 tests/**/*.test.ts",
+    "lint": "eslint src tests --ext .ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

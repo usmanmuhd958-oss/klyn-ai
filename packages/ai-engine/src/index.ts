@@ -303,3 +303,14 @@ export {
   findProviderCost,
   estimateCostMicrousd,
 } from "./routing/index.js";
+
+export { DynamicProviderRouter } from "./dynamic-provider-router.js";
+export type {
+  DynamicProviderCandidate,
+  DynamicProviderRouterOptions,
+  DynamicRoutingObjective,
+  DynamicRoutingPolicy,
+  DynamicRouteCandidateScore,
+  DynamicRouteDecision,
+  ProviderHealthSnapshot as DynamicProviderHealthSnapshot,
+} from "./dynamic-provider-router.js";

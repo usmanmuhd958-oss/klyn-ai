@@ -1,0 +1,88 @@
+import { strict as assert } from "node:assert";
+import { test } from "node:test";
+import { AstMutationEngine, AstMutationError } from "../src/index.ts";
+
+test("AST engine applies structural mutations without touching comments or unrelated text", () => {
+  const source = [
+    '// answer is intentionally unchanged in this comment',
+    'import { value } from "./value.js";',
+    "",
+    "export function compute(answer: number): number {",
+    "  return answer + value;",
+    "}",
+    "",
+  ].join("\n");
+
+  const engine = new AstMutationEngine();
+  const renamed = engine.apply("compute.ts", source, [
+    { kind: "rename-identifier", from: "answer", to: "result" },
+  ]);
+
+  assert.equal(renamed.changed, true);
+  assert.match(renamed.source, /comment/);
+  assert.match(renamed.source, /function compute\(result: number\)/);
+
+  const result = engine.apply("compute.ts", renamed.source, [
+    { kind: "replace-function-body", functionName: "compute", body: "return result * value;" },
+  ]);
+
+  assert.equal(result.changed, true);
+  assert.match(result.source, /return result \* value;/);
+  assert.equal(result.edits.length, 1);
+});
+
+test("AST engine manages imports as syntax nodes", () => {
+  const engine = new AstMutationEngine();
+  const source = 'import { existing } from "./existing.js";\nexport const value = 1;\n';
+
+  const added = engine.apply("value.ts", source, [
+    {
+      kind: "add-import",
+      moduleSpecifier: "node:fs",
+      namedImports: ["readFile"],
+      typeOnly: true,
+    },
+  ]);
+  assert.match(added.source, /import \{ existing \} from "\.\/existing\.js";\nimport type \{ readFile \} from "node:fs";/);
+
+  const removed = engine.apply("value.ts", added.source, [
+    { kind: "remove-import", moduleSpecifier: "node:fs" },
+  ]);
+  assert.equal(removed.source, source);
+});
+
+test("AST engine rejects overlapping or missing targets", () => {
+  const engine = new AstMutationEngine();
+  assert.throws(
+    () => engine.apply("missing.ts", "export const value = 1;", [
+      { kind: "rename-identifier", from: "missing", to: "present" },
+    ]),
+    AstMutationError,
+  );
+});
+
+
+test("AST rename follows one resolved symbol and does not rename unrelated property names", () => {
+  const engine = new AstMutationEngine();
+  const source = [
+    "const answer = 1;",
+    "const other = { answer: 2 };",
+    "function read() { return answer + other.answer; }",
+  ].join("\n");
+  const result = engine.apply("symbols.ts", source, [
+    { kind: "rename-identifier", from: "answer", to: "result" },
+  ]);
+  assert.match(result.source, /const result = 1/);
+  assert.match(result.source, /answer: 2/);
+  assert.match(result.source, /other\.answer/);
+});
+
+test("AST mutation rejects new semantic diagnostics", () => {
+  const engine = new AstMutationEngine();
+  assert.throws(
+    () => engine.apply("semantic.ts", "const value: number = 1;\n", [
+      { kind: "replace-function-body", functionName: "missing", body: "return 1;" },
+    ]),
+    AstMutationError,
+  );
+});

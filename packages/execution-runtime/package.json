@@ -1,20 +1,28 @@
 {
   "name": "@klyn/execution-runtime",
-  "version": "6.2.0",
+  "version": "6.3.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.json",
     "test": "tsx --test --test-timeout=15000 tests/**/*.test.ts",
-    "lint": "eslint src tests --ext .ts"
+    "lint": "eslint src tests --ext .ts",
+    "native-build:linux": "cargo build --release --manifest-path native-sandbox/Cargo.toml",
+    "native-test:linux": "cargo test --manifest-path native-sandbox/Cargo.toml",
+    "security-test": "tsx --test --test-timeout=15000 tests/security-boundary.test.ts tests/workspace-cas-engine.test.ts tests/ast-transformer.test.ts",
+    "benchmark:ast": "tsx benchmarks/ast-semantic-validation.bench.ts"
   },
-  "dependencies": { "sql.js": "^1.13.0" },
+  "dependencies": {
+    "sql.js": "^1.13.0",
+    "typescript": "^5.9.3"
+  },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/sql.js": "^1.4.9",
-    "tsx": "^4.20.5",
-    "typescript": "^5.9.3"
+    "tsx": "^4.20.5"
   }
 }
