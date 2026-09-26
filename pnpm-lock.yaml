@@ -14,9 +14,6 @@ importers:
       '@google/generative-ai':
         specifier: ^0.24.1
         version: 0.24.1
-      '@klyn/autonomy':
-        specifier: workspace:*
-        version: link:../autonomy
       openai:
         specifier: ^7.4.0
         version: 7.15.0(zod@4.6.5)
