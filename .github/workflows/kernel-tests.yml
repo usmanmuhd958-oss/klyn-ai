@@ -149,8 +149,6 @@ jobs:
   "cpu_max_us": 1000000,
   "cpu_period_us": 100000,
   "pids_max": 16,
-  "io_max_read_bps": 1048576,
-  "io_max_write_bps": 1048576,
   "max_file_descriptors": 64,
   "syscall_profile": "strict-linux-v1"
 }
