@@ -47,12 +47,17 @@ fn cgroup_path(id: &str) -> io::Result<PathBuf> {
     fs::create_dir_all(CGROUP_PARENT)?;
     let parent = Path::new(CGROUP_PARENT);
     let available = fs::read_to_string(parent.join("cgroup.controllers"))?;
-    for controller in ["memory", "cpu", "pids", "io"] {
-        if !available.split_whitespace().any(|v| v == controller) {
+    let mut controllers = vec!["memory", "cpu", "pids"];
+    if cfg.io_max_read_bps.is_some() || cfg.io_max_write_bps.is_some() {
+        controllers.push("io");
+    }
+    for controller in &controllers {
+        if !available.split_whitespace().any(|v| v == *controller) {
             return Err(io::Error::new(io::ErrorKind::Unsupported, format!("controller not delegated to Klyn parent: {controller}")));
         }
     }
-    write(&parent.join("cgroup.subtree_control"), "+memory +cpu +pids +io")?;
+    let control = controllers.iter().map(|c| format!("+{c}")).collect::<Vec<_>>().join(" ");
+    write(&parent.join("cgroup.subtree_control"), &control)?;
     let p = parent.join(id);
     fs::create_dir(&p)?;
     Ok(p)
@@ -79,6 +84,13 @@ fn setup_cgroup(cfg: &Config) -> io::Result<PathBuf> {
     let major = unsafe { libc::major(dev as c_ulong) };
     let minor = unsafe { libc::minor(dev as c_ulong) };
     if cfg.io_max_read_bps.is_some() || cfg.io_max_write_bps.is_some() {
+        // io.max accepts block-device major:minor pairs. CI and some container
+        // filesystems expose an overlay/tmpfs device that is not an IO-throttle
+        // target; fail closed instead of pretending the limit was enforced.
+        let block_device = PathBuf::from(format!("/sys/dev/block/{}:{}", major, minor));
+        if !block_device.exists() {
+            return Err(io::Error::new(io::ErrorKind::Unsupported, format!("workspace device {}:{} is not a block IO target", major, minor)));
+        }
         let mut rule = format!("{}:{}", major, minor);
         if let Some(v) = cfg.io_max_read_bps { rule.push_str(&format!(" rbps={v}")); }
         if let Some(v) = cfg.io_max_write_bps { rule.push_str(&format!(" wbps={v}")); }
@@ -169,7 +181,8 @@ fn seccomp(profile: &str) -> io::Result<()> {
         libc::SYS_rt_sigaction as c_int, libc::SYS_rt_sigprocmask as c_int, libc::SYS_rt_sigreturn as c_int,
         libc::SYS_sigaltstack as c_int, libc::SYS_exit as c_int, libc::SYS_exit_group as c_int,
         libc::SYS_wait4 as c_int, libc::SYS_clone as c_int, libc::SYS_clone3 as c_int,
-        libc::SYS_execve as c_int, libc::SYS_execveat as c_int, libc::SYS_prlimit64 as c_int,
+        libc::SYS_execve as c_int, libc::SYS_execveat as c_int, libc::SYS_chroot as c_int,
+        libc::SYS_prlimit64 as c_int,
         libc::SYS_mmap as c_int, libc::SYS_mprotect as c_int, libc::SYS_munmap as c_int,
         libc::SYS_madvise as c_int, libc::SYS_brk as c_int, libc::SYS_openat as c_int,
         libc::SYS_openat2 as c_int, libc::SYS_dup as c_int, libc::SYS_dup2 as c_int, libc::SYS_dup3 as c_int,
