@@ -42,7 +42,11 @@ function loadVault() {
       memoryMap.set(item.id, item);
     }
 
-  } catch {}
+  } catch (err) {
+    // A corrupt vault means every stored memory is gone; that must never be
+    // invisible, but it also must not stop the process from booting empty.
+    process.stderr.write(`[KLYN Vault] Failed to load ${vaultFile}: ${err.message} — continuing with an empty memory store.\n`);
+  }
 }
 
 export function initializeVault(vaultPath) {

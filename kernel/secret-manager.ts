@@ -289,7 +289,10 @@ class SecretManager {
         });
         try {
             fs.appendFileSync(this.#auditPath, entry + '\n', { mode: 0o600 });
-        } catch (_) {}
+        } catch (err) {
+            // Losing the secret audit trail is security-relevant — never silent.
+            process.stderr.write(`[SecretManager] Audit write failed (${op} ${name}): ${err.message}\n`);
+        }
     }
 
     // ── VALIDATION ────────────────────────────────────────────

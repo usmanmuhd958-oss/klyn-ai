@@ -1071,45 +1071,8 @@ const originalCallAI = (Healer.prototype as any).callAI;
   }
 };
 
-// Safe execution wrapper for ts files & offline auto-heal fallback
-(Healer.prototype as any).executeAndHeal = async function(commandOrPath: string): Promise<any> {
-  const fs = require('fs');
-  const { execSync } = require('child_process');
-
-  let cmd = commandOrPath;
-  let targetFile = commandOrPath;
-
-  if (commandOrPath.endsWith('.ts') || commandOrPath.endsWith('.js')) {
-    cmd = `npx tsx "${commandOrPath}"`;
-  }
-
-  try {
-    execSync(cmd, { stdio: 'pipe' });
-    return { success: true, wasHealed: false };
-  } catch (execErr: any) {
-    if (fs.existsSync(targetFile)) {
-      let code = fs.readFileSync(targetFile, 'utf-8');
-      // Auto-fix the buggy reference (naam();)
-      code = code.replace(/naam\(\);?/g, '// auto-healed: naam() disabled');
-      fs.writeFileSync(targetFile, code, 'utf-8');
-
-      try {
-        execSync(cmd, { stdio: 'pipe' });
-      } catch (e) {}
-
-      return {
-        success: true,
-        wasHealed: true,
-        attempts: 1,
-        filePath: targetFile
-      };
-    }
-
-    return { success: true, wasHealed: true, attempts: 1 };
-  }
-};
-
-// Fix for ESM mode: dynamic import instead of require()
+// Safe execution wrapper for ts files & offline auto-heal fallback (ESM: uses
+// dynamic import instead of require()).
 (Healer.prototype as any).executeAndHeal = async function(commandOrPath: string): Promise<any> {
   const fs = await import('fs');
   const { execSync } = await import('child_process');
@@ -1131,9 +1094,20 @@ const originalCallAI = (Healer.prototype as any).callAI;
       code = code.replace(/naam\(\);?/g, '// auto-healed: naam() disabled');
       fs.writeFileSync(targetFile, code, 'utf-8');
 
+      // The heal only counts if the command actually passes afterwards; a
+      // still-failing re-run is reported as a failed heal, not a success.
       try {
         execSync(cmd, { stdio: 'pipe' });
-      } catch (e) {}
+      } catch (verifyErr: any) {
+        console.error(`   ❌ Heal verification failed for ${targetFile}: ${verifyErr?.message || verifyErr}`);
+        return {
+          success: false,
+          wasHealed: false,
+          attempts: 1,
+          filePath: targetFile,
+          error: verifyErr instanceof Error ? verifyErr.message : String(verifyErr)
+        };
+      }
 
       return {
         success: true,
@@ -1143,6 +1117,13 @@ const originalCallAI = (Healer.prototype as any).callAI;
       };
     }
 
-    return { success: true, wasHealed: true, attempts: 1 };
+    // Nothing to heal — the original failure stands and must be propagated.
+    return {
+      success: false,
+      wasHealed: false,
+      attempts: 1,
+      filePath: targetFile,
+      error: execErr instanceof Error ? execErr.message : String(execErr)
+    };
   }
 };

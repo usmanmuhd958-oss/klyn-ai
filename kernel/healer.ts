@@ -210,7 +210,12 @@ class SelfHealingEngine extends EventEmitter {
                     `Agent '${id}' stuck in STARTING for >30s`, {});
                 try {
                     await this.#orchestrator.restartAgent(id);
-                } catch (_) {}
+                } catch (err) {
+                    // A failed restart is the healer's own failure to heal:
+                    // record it instead of pretending the action succeeded.
+                    await this.#act(HEAL_ACTION.WARN, id,
+                        `Restart of stuck agent '${id}' failed: ${err.message}`, { error: err.message });
+                }
             }
         }
     }
@@ -237,7 +242,9 @@ class SelfHealingEngine extends EventEmitter {
                         priority: 1,   // Highest priority
                         payload:  { reason: 'depth_exceeded', depth },
                         ttl:      60_000,
-                    }).catch(() => {});
+                    }).catch((err) => {
+                        this.#logger?.warn(`Healer: drain request to mailbox '${name}' failed`, { error: err.message });
+                    });
                 }
 
             } else if (depth >= THRESHOLDS.MAILBOX_DEPTH_WARN) {
@@ -325,7 +332,9 @@ class SelfHealingEngine extends EventEmitter {
                     JSON.stringify(entry) + '\n',
                     { mode: 0o640 }
                 );
-            } catch (_) {}
+            } catch (err) {
+                process.stderr.write(`[KLYN Healer] Failed to append heal log ${healLogPath}: ${err.message}\n`);
+            }
         }
     }
 

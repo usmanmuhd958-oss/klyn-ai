@@ -243,8 +243,11 @@ Timestamp: ${new Date().toISOString()}
             try {
                 await git(['checkout', branch], this.#repoDir);
                 return branch;
-            } catch (_) {}
+            } catch (err) {
+                this.#logger?.debug?.(`Git checkout of '${branch}' failed`, { error: err.message });
+            }
         }
+        this.#logger?.warn('Git checkout failed for every candidate branch', { candidates: ['main', 'master', 'develop'] });
         return null;
     }
 
@@ -266,7 +269,9 @@ Timestamp: ${new Date().toISOString()}
                 }
 
                 this.#lastCommit = commit;
-            } catch (_) {}
+            } catch (err) {
+                this.#logger?.warn('Git watcher poll failed', { error: err.message });
+            }
         }, intervalMs);
 
         this.#watchTimer.unref?.();
