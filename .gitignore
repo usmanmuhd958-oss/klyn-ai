@@ -51,3 +51,5 @@ coverage/
 # TypeScript cache
 *.tsbuildinfo
 *.zip
+.vercel
+.env*
