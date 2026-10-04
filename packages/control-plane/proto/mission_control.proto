@@ -1,0 +1,111 @@
+syntax = "proto3";
+
+package klyn.controlplane.v1;
+
+service MissionControl {
+  rpc CreateMission(CreateMissionRequest) returns (CreateMissionResponse);
+  rpc GetMission(GetMissionRequest) returns (Mission);
+  rpc TransitionMission(TransitionMissionRequest) returns (TransitionMissionResponse);
+  rpc StreamLedgerEvents(StreamLedgerEventsRequest) returns (stream LedgerEvent);
+  rpc EvaluateAnomaly(EvaluateAnomalyRequest) returns (AnomalyDecision);
+  rpc RequestCredential(CredentialRequest) returns (CredentialGrant);
+}
+
+message CreateMissionRequest {
+  string tenant_id = 1;
+  string objective = 2;
+  repeated string constraints = 3;
+  string policy_id = 4;
+  string idempotency_key = 5;
+}
+
+message CreateMissionResponse {
+  string mission_id = 1;
+  string current_state = 2;
+  uint64 version = 3;
+  string created_at = 4;
+}
+
+message GetMissionRequest { string mission_id = 1; }
+
+message Mission {
+  string mission_id = 1;
+  string tenant_id = 2;
+  string policy_id = 3;
+  string state = 4;
+  string breaker_level = 5;
+  uint64 version = 6;
+  uint64 ledger_sequence = 7;
+  bytes ledger_head_hash = 8;
+  string updated_at = 9;
+}
+
+message TransitionMissionRequest {
+  string mission_id = 1;
+  string from_state = 2;
+  string to_state = 3;
+  uint64 expected_version = 4;
+  string authorization_token = 5;
+  string idempotency_key = 6;
+  string payload_json = 7;
+}
+
+message TransitionMissionResponse {
+  string mission_id = 1;
+  string new_state = 2;
+  uint64 new_version = 3;
+  uint64 ledger_sequence = 4;
+  bool success = 5;
+}
+
+message LedgerEvent {
+  string event_id = 1;
+  string mission_id = 2;
+  string execution_id = 3;
+  uint64 sequence = 4;
+  string event_type = 5;
+  bytes previous_hash = 6;
+  bytes payload_hash = 7;
+  bytes event_hash = 8;
+  string payload_json = 9;
+  string occurred_at = 10;
+}
+
+message StreamLedgerEventsRequest {
+  string mission_id = 1;
+  uint64 after_sequence = 2;
+}
+
+message EvaluateAnomalyRequest {
+  string mission_id = 1;
+  string actor_id = 2;
+  string observed_json = 3;
+  string expected_json = 4;
+  string system_baseline_json = 5;
+  repeated string hard_violations = 6;
+}
+
+message AnomalyDecision {
+  string mission_id = 1;
+  string breaker_level = 2;
+  double behavioral_distance = 3;
+  double system_drift_distance = 4;
+}
+
+message CredentialRequest {
+  string execution_id = 1;
+  string provider = 2;
+  repeated string requested_scopes = 3;
+  string audience = 4;
+  uint32 ttl_seconds = 5;
+}
+
+message CredentialGrant {
+  string credential_id = 1;
+  string execution_id = 2;
+  string provider = 3;
+  repeated string scopes = 4;
+  string expires_at = 5;
+  string audience = 6;
+  string token = 7;
+}
