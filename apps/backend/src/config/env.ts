@@ -8,6 +8,7 @@ const envSchema = z.object({
   ADMIN_PASSWORD: z.string().min(12),
   SUPABASE_URL: z.url().optional(),
   SUPABASE_ANON_KEY: z.string().min(1).optional(),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
   OPENAI_API_KEY: z.string().min(1).optional(),
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
   GEMINI_API_KEY: z.string().min(1).optional()
