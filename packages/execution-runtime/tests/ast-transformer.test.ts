@@ -86,3 +86,13 @@ test("AST mutation rejects new semantic diagnostics", () => {
     AstMutationError,
   );
 });
+
+test("AST engine rejects syntactically invalid source", () => {
+  const engine = new AstMutationEngine();
+  assert.throws(
+    () => engine.apply("invalid.ts", "export function {", [
+      { kind: "replace-string-literal", from: "missing", to: "present" },
+    ]),
+    /Cannot mutate syntactically invalid source/,
+  );
+});
