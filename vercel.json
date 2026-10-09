@@ -2,10 +2,5 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "pnpm install --frozen-lockfile",
   "buildCommand": "pnpm vercel-build",
-  "ignoreCommand": "bash vercel-ignore-build.sh",
-  "functions": {
-    "apps/backend/api/index.ts": {
-      "runtime": "nodejs22.x"
-    }
-  }
+  "ignoreCommand": "bash vercel-ignore-build.sh"
 }
