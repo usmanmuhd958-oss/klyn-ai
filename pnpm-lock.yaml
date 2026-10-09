@@ -14,9 +14,6 @@ importers:
       '@google/generative-ai':
         specifier: ^0.24.1
         version: 0.24.1
-      '@klyn/autonomy':
-        specifier: workspace:*
-        version: link:../autonomy
       openai:
         specifier: ^7.4.0
         version: 7.15.0(zod@4.6.5)
@@ -86,6 +83,22 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
+  packages/agent-governance:
+    dependencies:
+      '@klyn/governance':
+        specifier: workspace:*
+        version: link:../governance
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.4
+      tsx:
+        specifier: ^4.20.5
+        version: 4.23.13
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
   packages/agent-runtime:
     devDependencies:
       '@types/node':
@@ -106,6 +119,9 @@ importers:
       '@google/generative-ai':
         specifier: ^0.24.1
         version: 0.24.1
+      '@klyn/autonomy':
+        specifier: workspace:*
+        version: link:../autonomy
       openai:
         specifier: ^7.4.0
         version: 7.15.0(zod@4.6.5)
