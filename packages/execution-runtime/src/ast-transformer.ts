@@ -77,23 +77,44 @@ function scriptKindFor(fileName: string): ts.ScriptKind {
 }
 
 function parseSource(fileName: string, source: string): ts.SourceFile {
-  const parsed = ts.createSourceFile(
-    fileName,
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    scriptKindFor(fileName),
-  );
-  if (parsed.parseDiagnostics.length > 0) {
+  const absoluteFileName = ts.sys.resolvePath(fileName);
+  const options: ts.CompilerOptions = {
+    allowJs: true,
+    noEmit: true,
+    target: ts.ScriptTarget.Latest,
+    jsx: ts.JsxEmit.Preserve,
+  };
+  const host = ts.createCompilerHost(options, true);
+  const originalGetSourceFile = host.getSourceFile.bind(host);
+  host.getSourceFile = (name, languageVersion, onError, shouldCreateNewSourceFile) => {
+    if (ts.sys.resolvePath(name) === absoluteFileName) {
+      return ts.createSourceFile(
+        name,
+        source,
+        languageVersion,
+        true,
+        scriptKindFor(name),
+      );
+    }
+    return originalGetSourceFile(name, languageVersion, onError, shouldCreateNewSourceFile);
+  };
+
+  const program = ts.createProgram([absoluteFileName], options, host);
+  const parsed = program.getSourceFile(absoluteFileName);
+  if (!parsed) {
+    throw new AstMutationError("TypeScript compiler could not materialize the mutation target");
+  }
+
+  const firstDiagnostic = program.getSyntacticDiagnostics(parsed)[0];
+  if (firstDiagnostic) {
     const message = ts.flattenDiagnosticMessageText(
-      parsed.parseDiagnostics[0]?.messageText ?? "Invalid source",
+      firstDiagnostic.messageText ?? "Invalid source",
       "\n",
     );
     throw new AstMutationError(`Cannot mutate syntactically invalid source: ${message}`);
   }
   return parsed;
 }
-
 function requireIdentifier(value: string, field: string): void {
   if (!/^[$A-Z_a-z][$\w]*$/.test(value)) {
     throw new AstMutationError(`${field} must be a valid identifier`);
