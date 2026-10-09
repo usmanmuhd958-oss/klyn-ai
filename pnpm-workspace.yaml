@@ -4,6 +4,7 @@ packages:
   - "apps/backend"
   - "packages/agent-runtime"
   - "packages/ai-engine"
+  - "packages/autonomy"
   - "packages/ai-gateway"
   - "packages/ai-orchestrator"
   - "packages/autonomous-runtime"
