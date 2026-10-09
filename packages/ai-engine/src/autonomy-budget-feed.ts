@@ -113,7 +113,7 @@ export class AutonomyBudgetFeed {
 
   public constructor(options: AutonomyBudgetFeedOptions) {
     this.interceptor = new RealTimeContainmentInterceptor(options.ledger, {
-      onDecision: async (decision) => {
+      onDecision: async (decision: ContainmentDecision) => {
         this.decisions.push(decision);
         await options.onDecision?.(decision);
       },
