@@ -9,7 +9,7 @@ if ! git rev-parse --verify "${BASE_SHA}^{commit}" >/dev/null 2>&1; then
   exit 1
 fi
 
-if git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- apps/backend vercel.json package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json; then
+if git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- apps/backend packages vercel.json vercel-ignore-build.sh package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json; then
   echo "Vercel build ignored: no backend source or build configuration changes."
   exit 0
 fi
