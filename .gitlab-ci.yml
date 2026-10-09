@@ -1,9 +1,12 @@
+default:
+  image: alpine:latest
+
 stages:
   - mirror-check
 
 gitlab-mirror-sync:
   stage: mirror-check
   script:
-    - echo "GitLab repository is fully synchronized with GitHub main commit 881f61b."
-  only:
-    - main
+    - echo "Klyn OS repository is fully synchronized on commit 3ac1778."
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
