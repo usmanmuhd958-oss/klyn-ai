@@ -30,19 +30,24 @@ export class TypeScriptASTValidator {
     try {
       this.logger.debug('Validating TypeScript code', { fileName });
 
-      const sourceFile = ts.createSourceFile(
-        fileName,
-        code,
-        ts.ScriptTarget.ES2022,
-        true,
-        ts.ScriptKind.TS
-      );
+      const program = this.createProgram([{ fileName, content: code }]);
+      const sourceFile =
+        program.getSourceFile(fileName) ??
+        program.getSourceFiles().find(
+          (candidate) => ts.sys.resolvePath(candidate.fileName) === ts.sys.resolvePath(fileName),
+        ) ??
+        ts.createSourceFile(
+          fileName,
+          code,
+          ts.ScriptTarget.ES2022,
+          true,
+          ts.ScriptKind.TS,
+        );
 
       // Syntactic validation
-      const syntacticDiagnostics = this.getSyntacticDiagnostics(sourceFile);
+      const syntacticDiagnostics = this.getSyntacticDiagnostics(program, sourceFile);
 
       // Semantic validation
-      const program = this.createProgram([{ fileName, content: code }]);
       const semanticDiagnostics = this.getSemanticDiagnostics(program, fileName);
       const semanticIssues = this.extractSemanticIssues(semanticDiagnostics);
 
@@ -77,22 +82,9 @@ export class TypeScriptASTValidator {
     }
   }
 
-  private getSyntacticDiagnostics(sourceFile: ts.SourceFile): ts.Diagnostic[] {
-    const diagnostics: ts.Diagnostic[] = [];
-    
-    function visit(node: ts.Node) {
-      // Check for syntax errors
-      const nodeDiagnostics = (node as any).parseDiagnostics;
-      if (nodeDiagnostics) {
-        diagnostics.push(...nodeDiagnostics);
-      }
-      ts.forEachChild(node, visit);
-    }
-
-    visit(sourceFile);
-    return diagnostics;
+  private getSyntacticDiagnostics(program: ts.Program, sourceFile: ts.SourceFile): ts.Diagnostic[] {
+    return [...program.getSyntacticDiagnostics(sourceFile)];
   }
-
   private createProgram(files: Array<{ fileName: string; content: string }>): ts.Program {
     const fileMap = new Map(files.map(f => [f.fileName, f.content]));
 
