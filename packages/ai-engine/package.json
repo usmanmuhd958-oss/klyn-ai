@@ -17,6 +17,7 @@
     "@google/generative-ai": "^0.24.1",
     "openai": "^7.4.0",
     "zod": "^4.1.5",
+    "@klyn/autonomy": "workspace:*",
     "@klyn/execution-runtime": "workspace:*"
   },
   "devDependencies": {

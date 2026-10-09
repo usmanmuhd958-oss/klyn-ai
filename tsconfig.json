@@ -10,6 +10,8 @@
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "paths": {
+      "@klyn/autonomy": ["packages/autonomy/src/index.ts"],
+      "@klyn/autonomy/*": ["packages/autonomy/src/*"],
       "@klyn/agent-runtime": [
         "packages/agent-runtime/src/index.ts"
       ],
