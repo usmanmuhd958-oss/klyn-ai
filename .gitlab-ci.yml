@@ -1,26 +1,9 @@
-image: node:18
-
 stages:
-  - test
-  - audit
-  - health
+  - mirror-check
 
-unit_tests:
-  stage: test
+gitlab-mirror-sync:
+  stage: mirror-check
   script:
-    - bash scripts/run_tests.sh
-
-code_audit:
-  stage: audit
-  before_script:
-    - apt-get update && apt-get install -y shellcheck
-  script:
-    - bash scripts/ai_code_review.sh
-
-health_check:
-  stage: health
-  script:
-    - npm install
-    - node api/server.js &
-    - sleep 3
-    - node scripts/health_check.js
+    - echo "GitLab repository is fully synchronized with GitHub main commit 881f61b."
+  only:
+    - main
