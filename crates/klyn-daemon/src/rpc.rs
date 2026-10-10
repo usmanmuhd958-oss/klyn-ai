@@ -8,7 +8,7 @@
 use crate::{EvidenceStore, LedgerError};
 use klyn_evidence::DsseEnvelopeV1;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::{
     fs,
     io::{self, Read, Write},
@@ -181,7 +181,7 @@ fn dispatch(request: &RpcRequestV1, token: &[u8], store: &Arc<Mutex<EvidenceStor
             }
         }
         "proof.get" => {
-            let params: ProofParamsV1 = match serde_json::from_value(request.params.clone()) {
+            let params: ProofParamsV1 = match serde_json::from_value::<ProofParamsV1>(request.params.clone()) {
                 Ok(params) if !params.evidence_id.trim().is_empty() && params.evidence_id.len() <= 256 => params,
                 _ => return response_error(&request.id, "invalid_params", "proof.get requires a non-empty evidenceId"),
             };
