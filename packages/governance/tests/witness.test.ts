@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import test from 'node:test';
@@ -11,6 +14,7 @@ import {
 } from '../src/kel.js';
 import {
   InMemoryKeyRegistryStorage,
+  JsonFileKeyRegistryStorage,
   KeyLifecycleError,
   KeyLifecycleRegistry,
   WitnessQuorumVerifier,
@@ -138,4 +142,21 @@ test('registry never reuses key IDs or epochs and persists the new revision', ()
   assert.throws(() => registerKey(registry, 'id-1', 'producer-a', 'witness', pair));
   assert.equal(storage.load()?.records.length, 1);
   assert.ok(BigInt(registry.snapshot().revision) >= 2n);
+});
+
+test('file registry persists across instances with restrictive file permissions', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'kel-key-registry-'));
+  const registryPath = join(directory, 'keys.json');
+  try {
+    const pair = generateKeyPairSync('ed25519');
+    const storage = new JsonFileKeyRegistryStorage(registryPath);
+    const first = new KeyLifecycleRegistry(storage);
+    registerKey(first, 'persisted-key', 'producer-1', 'witness', pair);
+    assert.equal(statSync(registryPath).mode & 0o777, 0o600);
+    const second = new KeyLifecycleRegistry(new JsonFileKeyRegistryStorage(registryPath));
+    assert.deepEqual(second.keyIds('witness', NOW), ['persisted-key']);
+    assert.equal(second.snapshot().records.length, 1);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
