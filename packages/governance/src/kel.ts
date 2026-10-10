@@ -5,7 +5,8 @@
  * JSON-only inputs and the same RFC 8785-compatible ECMAScript number/string
  * serialization and RFC 9162 Merkle domain separators.
  */
-import { createHash } from 'node:crypto';
+import { createHash, type KeyObject } from 'node:crypto';
+import { verifyEd25519 } from './crypto.js';
 import type { JsonValue } from './types.js';
 
 export const KEL_EVIDENCE_SCHEMA = 'urn:klyn:evidence:v1';
