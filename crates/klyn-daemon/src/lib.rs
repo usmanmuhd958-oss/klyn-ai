@@ -7,7 +7,7 @@ use ed25519_dalek::{SigningKey, VerifyingKey};
 use klyn_evidence::{
     canonicalize, digest_json, envelope_digest, leaf_hash, merkle_root, node_hash, sign_envelope,
     validate_evidence, verify_envelope, DsseEnvelopeV1, EvidenceStatementV1, LedgerLeafV1,
-    TreeHeadV1, EVIDENCE_PAYLOAD_TYPE, TREE_HEAD_PAYLOAD_TYPE,
+    InclusionProofV1, TreeHeadV1, EVIDENCE_PAYLOAD_TYPE, TREE_HEAD_PAYLOAD_TYPE,
 };
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
@@ -47,6 +47,24 @@ pub struct AppendReceiptV1 {
     pub root_hash: String,
     pub checkpoint_envelope: DsseEnvelopeV1,
     pub idempotent_replay: bool,
+}
+
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EvidenceProofBundleV1 {
+    pub evidence_id: String,
+    pub leaf: LedgerLeafV1,
+    pub proof: InclusionProofV1,
+    pub checkpoint_envelope: DsseEnvelopeV1,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LedgerHealthV1 {
+    pub ledger_id: String,
+    pub tree_size: String,
+    pub root_hash: String,
 }
 
 pub struct EvidenceStore {
@@ -320,6 +338,12 @@ impl EvidenceStore {
              previous_checkpoint_digest=?4, key_epoch=?5 WHERE ledger_id=?6",
             params![sequence, root_hash, leaf_hash_hex, checkpoint_digest, self.checkpoint_key_epoch, self.ledger_id],
         )?;
+        // Test-only failpoint: abrupt process death while the write transaction is open.
+        // Compiled out of release builds; used to prove WAL rollback/recovery.
+        #[cfg(debug_assertions)]
+        if std::env::var_os("KEL_TEST_CRASH_BEFORE_COMMIT").is_some() {
+            std::process::abort();
+        }
         tx.commit()?;
 
         Ok(AppendReceiptV1 {
@@ -350,6 +374,60 @@ impl EvidenceStore {
         )?;
         Ok(size as u64)
     }
+
+    /// Retrieve a stored leaf together with an inclusion path against the latest checkpoint.
+    /// The server returns a self-contained cryptographic bundle; callers must still verify
+    /// the checkpoint signature and the proof against the checkpoint's root.
+    pub fn evidence_proof(&self, evidence_id: &str) -> Result<EvidenceProofBundleV1> {
+        let (sequence, leaf_json, leaf_hash_value): (i64, String, String) = self.connection.query_row(
+            "SELECT sequence, leaf_json, leaf_hash FROM ledger_leaves WHERE evidence_id=?1",
+            params![evidence_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        if sequence < 1 {
+            return Err(LedgerError::Invariant("invalid leaf sequence".into()));
+        }
+        let leaf: LedgerLeafV1 = serde_json::from_str(&leaf_json)?;
+        let hashes = self.load_leaf_hashes()?;
+        let tree_size = hashes.len();
+        let path = klyn_evidence::inclusion_proof(&hashes, (sequence - 1) as usize)?;
+        let checkpoint_envelope = self.latest_tree_head()?
+            .ok_or_else(|| LedgerError::Invariant("checkpoint missing for non-empty ledger".into()))?;
+        let checkpoint_digest = digest_json(&checkpoint_envelope)?;
+        let audit_path = path.iter().map(hex::encode).collect::<Vec<_>>();
+        let proof = InclusionProofV1 {
+            ledger_id: self.ledger_id.clone(),
+            leaf_index: (sequence - 1).to_string(),
+            tree_size: tree_size.to_string(),
+            leaf_hash: leaf_hash_value,
+            audit_path,
+            tree_head_envelope_digest: checkpoint_digest,
+        };
+        Ok(EvidenceProofBundleV1 {
+            evidence_id: evidence_id.to_owned(),
+            leaf,
+            proof,
+            checkpoint_envelope,
+        })
+    }
+
+    /// Return a compact status snapshot used by authenticated IPC health checks.
+    pub fn health_snapshot(&self) -> Result<LedgerHealthV1> {
+        let size: i64 = self.connection.query_row(
+            "SELECT tree_size FROM ledger_meta WHERE ledger_id=?1",
+            params![self.ledger_id], |row| row.get(0)
+        )?;
+        let root: String = self.connection.query_row(
+            "SELECT root_hash FROM ledger_meta WHERE ledger_id=?1",
+            params![self.ledger_id], |row| row.get(0)
+        )?;
+        Ok(LedgerHealthV1 {
+            ledger_id: self.ledger_id.clone(),
+            tree_size: size.to_string(),
+            root_hash: format!("sha256:{root}"),
+        })
+    }
+
 }
 
 
