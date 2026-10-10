@@ -5,13 +5,17 @@ import {
   digestJcs,
   verifyDsseEnvelope,
   verifyInclusionProof,
+  KEL_EVIDENCE_PAYLOAD_TYPE,
   KEL_TREE_HEAD_PAYLOAD_TYPE,
+  validateEvidenceStatement,
+  type EvidenceStatementV1,
   type DsseEnvelopeV1,
   type KelAppendReceiptV1,
   type KelDaemonTransport,
   type TreeHeadV1,
   type VerificationReportV1,
 } from './kel.js';
+import { WitnessQuorumVerifier, type WitnessSignatureV1 } from './witness.js';
 
 const PROTOCOL_VERSION = 1;
 const MAX_FRAME_BYTES = 1_048_576;
@@ -39,6 +43,7 @@ export interface KelUnixSocketTransportOptions {
 }
 export interface KelProofBundleV1 {
   readonly evidenceId: string;
+  readonly evidenceEnvelope: DsseEnvelopeV1;
   readonly leaf: {
     readonly ledgerId: string;
     readonly sequence: string;
@@ -88,6 +93,7 @@ export class KelUnixSocketTransport implements KelDaemonTransport {
     this.socketPath = options.socketPath;
     this.token = options.authTokenHex;
     this.trustedCheckpointKeys = options.trustedCheckpointKeys;
+    this.trustedProducerKeys = options.trustedProducerKeys;
     this.timeoutMs = timeoutMs;
   }
 
@@ -190,11 +196,91 @@ export class KelUnixSocketTransport implements KelDaemonTransport {
   }
 
   public async verifyEvidence(evidenceId: string): Promise<VerificationReportV1> {
+    return this.verifyBundle(await this.getProof(evidenceId), evidenceId);
+  }
+
+  /**
+   * Complete a trust decision only after producer, inclusion, checkpoint, independent
+   * witness quorum, and caller-defined evidence policy checks all pass. The callback
+   * must validate the semantics of the evidence, not merely its signature.
+   */
+  public async verifyEvidenceWithWitnesses(
+    evidenceId: string,
+    witnessSignatures: readonly WitnessSignatureV1[],
+    witnessVerifier: WitnessQuorumVerifier,
+    nowEpochMs: string,
+    evaluateEvidencePolicy: (statement: EvidenceStatementV1) => boolean,
+  ): Promise<VerificationReportV1> {
     const bundle = await this.getProof(evidenceId);
+    const base = this.verifyBundle(bundle, evidenceId);
+    let witnessQuorum: VerificationReportV1['witnessQuorum'] = 'fail';
+    let evidencePolicy: VerificationReportV1['evidencePolicy'] = 'fail';
+    const reasonCodes = [...base.reasonCodes];
+
+    try {
+      const result = witnessVerifier.verify(bundle.checkpointEnvelope, witnessSignatures, nowEpochMs);
+      witnessQuorum = result.accepted ? 'pass' : 'fail';
+      for (const code of result.reasonCodes) reasonCodes.push(code);
+      for (const rejection of result.rejected) {
+        reasonCodes.push('witness:' + rejection.witnessId + ':' + rejection.code);
+      }
+    } catch {
+      reasonCodes.push('witness-verification-error');
+    }
+
+    try {
+      const value = verifyDsseEnvelope(
+        bundle.evidenceEnvelope,
+        KEL_EVIDENCE_PAYLOAD_TYPE,
+        this.trustedProducerKeys,
+      );
+      const statement = value as unknown as EvidenceStatementV1;
+      validateEvidenceStatement(statement);
+      if (statement.evidenceId !== evidenceId || statement.ledgerId !== bundle.leaf.ledgerId ||
+          digestJcs(bundle.evidenceEnvelope) !== bundle.leaf.envelopeDigest) {
+        throw new Error('evidence envelope does not match ledger leaf');
+      }
+      evidencePolicy = evaluateEvidencePolicy(statement) ? 'pass' : 'fail';
+      if (evidencePolicy === 'fail') reasonCodes.push('evidence-policy-rejected');
+    } catch {
+      evidencePolicy = 'fail';
+      reasonCodes.push('producer-envelope-or-policy-invalid');
+    }
+
+    const accepted = base.ledgerIntegrity === 'pass' &&
+      base.producerAuthentication === 'pass' &&
+      base.inclusion === 'pass' &&
+      base.checkpointAuthentication === 'pass' &&
+      witnessQuorum === 'pass' &&
+      evidencePolicy === 'pass';
+    if (!accepted && reasonCodes.length === 0) reasonCodes.push('verification-incomplete');
+    return { ...base, witnessQuorum, evidencePolicy, accepted, reasonCodes };
+  }
+
+  private verifyBundle(bundle: KelProofBundleV1, evidenceId: string): VerificationReportV1 {
     const reasonCodes: string[] = [];
+    let producerAuthentication: VerificationReportV1['producerAuthentication'] = 'fail';
     let checkpointAuthentication: VerificationReportV1['checkpointAuthentication'] = 'fail';
     let ledgerIntegrity: VerificationReportV1['ledgerIntegrity'] = 'fail';
     let inclusion: VerificationReportV1['inclusion'] = 'fail';
+
+    try {
+      const producerValue = verifyDsseEnvelope(
+        bundle.evidenceEnvelope,
+        KEL_EVIDENCE_PAYLOAD_TYPE,
+        this.trustedProducerKeys,
+      );
+      const statement = producerValue as unknown as EvidenceStatementV1;
+      validateEvidenceStatement(statement);
+      if (statement.evidenceId !== evidenceId || statement.ledgerId !== bundle.leaf.ledgerId ||
+          digestJcs(bundle.evidenceEnvelope) !== bundle.leaf.envelopeDigest ||
+          bundle.leaf.evidenceId !== evidenceId) {
+        throw new Error('producer envelope does not match ledger leaf');
+      }
+      producerAuthentication = 'pass';
+    } catch {
+      reasonCodes.push('producer-authentication-failed');
+    }
 
     try {
       const headValue = verifyDsseEnvelope(
@@ -232,13 +318,14 @@ export class KelUnixSocketTransport implements KelDaemonTransport {
       inclusion = 'fail';
       ledgerIntegrity = 'fail';
     }
-    const accepted = ledgerIntegrity === 'pass' &&
-      inclusion === 'pass' && checkpointAuthentication === 'pass';
-    if (!accepted && reasonCodes.length === 0) reasonCodes.push('verification-incomplete');
+    // A valid inclusion proof is not, by itself, a full KEL trust decision. Independent
+    // witness quorum and domain-specific evidence policy must also be satisfied.
+    const accepted = false;
+    if (reasonCodes.length === 0) reasonCodes.push('witness-quorum-and-evidence-policy-required');
 
     return {
       ledgerIntegrity,
-      producerAuthentication: 'unknown',
+      producerAuthentication,
       inclusion,
       checkpointAuthentication,
       consistency: 'unknown',
