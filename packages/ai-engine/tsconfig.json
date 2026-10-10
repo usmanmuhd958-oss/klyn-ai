@@ -1,6 +1,7 @@
 {
   "extends": "../tsconfig/node.json",
   "compilerOptions": {
+    "outDir": "dist",
     "paths": {
       "@klyn/autonomy": ["../autonomy/src/index.ts"]
     }
