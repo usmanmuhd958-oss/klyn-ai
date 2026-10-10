@@ -2,15 +2,24 @@ import { createHash, sign, verify, type KeyObject } from 'node:crypto';
 import type { JsonValue } from './types.js';
 import { isJsonValue } from './validation.js';
 
-export function canonicalize(value: JsonValue): string {
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') return JSON.stringify(value);
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new Error('non-finite number is not canonicalizable');
-    return JSON.stringify(value);
+export function canonicalize(obj: any): any {
+  if (obj === null || obj === undefined) {
+    return null;
   }
-  if (Array.isArray(value)) return `[${value.map(canonicalize).join(',')}]`;
-  const entries = Object.entries(value).sort(([a], [b]) => a.localeCompare(b));
-  return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${canonicalize(entry)}`).join(',')}}`;
+  if (typeof obj !== "object") {
+    return obj;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map(canonicalize);
+  }
+  const sorted: Record<string, any> = {};
+  for (const key of Object.keys(obj).sort()) {
+    const val = obj[key];
+    if (val !== undefined) {
+      sorted[key] = canonicalize(val);
+    }
+  }
+  return sorted;
 }
 
 export function sha256(value: string | Uint8Array): string {
