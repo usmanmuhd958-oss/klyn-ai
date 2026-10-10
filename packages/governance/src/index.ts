@@ -45,3 +45,7 @@ export type {
 } from './types.js';
 
 export * from './kel.js';
+
+export * from './kel-rpc.js';
+export * from './witness.js';
+export * from './legacy-kel-adapter.js';
