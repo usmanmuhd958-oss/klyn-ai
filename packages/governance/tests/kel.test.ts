@@ -7,6 +7,8 @@ import {
   merkleRoot,
   createInclusionProof,
   verifyInclusionProof,
+  createConsistencyProof,
+  verifyConsistencyProof,
 } from '../src/kel.js';
 
 test('KEL JCS rejects undefined and non-finite numbers rather than silently omitting fields', () => {
@@ -30,6 +32,23 @@ test('RFC 9162 Merkle inclusion proofs verify for irregular tree sizes', () => {
       const proof = createInclusionProof(hashes, index);
       assert.equal(verifyInclusionProof(hashes[index]!, index, size, proof, root), true);
       assert.equal(verifyInclusionProof(hashes[index]!, index, size, proof, '00'.repeat(32)), false);
+    }
+  }
+});
+
+
+test('RFC 9162 consistency proofs verify every non-empty prefix', () => {
+  for (let newSize = 2; newSize < 25; newSize += 1) {
+    const hashes = Array.from({ length: newSize }, (_, index) =>
+      merkleLeafHash(Buffer.from(String(index), 'utf8')),
+    );
+    const newRoot = Buffer.from(merkleRoot(hashes)).toString('hex');
+    for (let oldSize = 1; oldSize < newSize; oldSize += 1) {
+      const oldRoot = Buffer.from(merkleRoot(hashes.slice(0, oldSize))).toString('hex');
+      const proof = createConsistencyProof(hashes, oldSize);
+      assert.equal(verifyConsistencyProof(oldSize, newSize, oldRoot, newRoot, proof), true,
+        `old=${oldSize}, new=${newSize}`);
+      assert.equal(verifyConsistencyProof(oldSize, newSize, oldRoot, '00'.repeat(32), proof), false);
     }
   }
 });

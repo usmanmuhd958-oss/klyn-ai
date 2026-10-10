@@ -296,3 +296,192 @@ export function validateEvidenceStatement(value: EvidenceStatementV1): void {
     }
   }
 }
+
+
+export interface ConsistencyProofV1 {
+  readonly ledgerId: string;
+  readonly oldTreeSize: string;
+  readonly newTreeSize: string;
+  readonly oldRootHash: string;
+  readonly newRootHash: string;
+  readonly auditPath: readonly string[];
+}
+
+function buildConsistencySubproof(
+  oldSize: number,
+  hashes: readonly Uint8Array[],
+  complete: boolean,
+  proof: Uint8Array[],
+): void {
+  const size = hashes.length;
+  if (oldSize === size) {
+    if (!complete) proof.push(merkleRoot(hashes));
+    return;
+  }
+  const k = splitPoint(size);
+  if (oldSize <= k) {
+    buildConsistencySubproof(oldSize, hashes.slice(0, k), complete, proof);
+    proof.push(merkleRoot(hashes.slice(k)));
+  } else {
+    buildConsistencySubproof(oldSize - k, hashes.slice(k), false, proof);
+    proof.push(merkleRoot(hashes.slice(0, k)));
+  }
+}
+
+export function createConsistencyProof(hashes: readonly Uint8Array[], oldSize: number): readonly string[] {
+  if (!Number.isSafeInteger(oldSize) || oldSize < 0 || oldSize > hashes.length) {
+    throw new RangeError('old tree size must be within the new tree');
+  }
+  if (oldSize === 0 || oldSize === hashes.length) return [];
+  const proof: Uint8Array[] = [];
+  buildConsistencySubproof(oldSize, hashes, true, proof);
+  return proof.map((hash) => Buffer.from(hash).toString('hex'));
+}
+
+/** RFC 9162 consistency verifier; proof elements are lowercase SHA-256 hex. */
+export function verifyConsistencyProof(
+  oldSize: number,
+  newSize: number,
+  oldRootHex: string,
+  newRootHex: string,
+  proofHex: readonly string[],
+): boolean {
+  try {
+    if (!Number.isSafeInteger(oldSize) || !Number.isSafeInteger(newSize) ||
+        oldSize < 0 || newSize < oldSize) return false;
+    const oldRoot = decodeSha256(oldRootHex);
+    const newRoot = decodeSha256(newRootHex);
+    if (oldSize === 0) return true;
+    if (oldSize === newSize) {
+      return proofHex.length === 0 && Buffer.from(oldRoot).equals(Buffer.from(newRoot));
+    }
+    if (proofHex.length === 0) return false;
+    const proof = proofHex.map(decodeSha256);
+    let fn = oldSize - 1;
+    let sn = newSize - 1;
+    while ((fn & 1) === 1) { fn >>= 1; sn >>= 1; }
+    let firstRoot: Uint8Array;
+    let secondRoot: Uint8Array;
+    let cursor: number;
+    if (fn === 0) {
+      firstRoot = oldRoot;
+      secondRoot = oldRoot;
+      cursor = 0;
+    } else {
+      firstRoot = proof[0]!;
+      secondRoot = proof[0]!;
+      cursor = 1;
+    }
+    while (cursor < proof.length) {
+      const item = proof[cursor]!;
+      if ((fn & 1) === 1 || fn === sn) {
+        firstRoot = merkleNodeHash(item, firstRoot);
+        secondRoot = merkleNodeHash(item, secondRoot);
+        while (fn !== 0 && (fn & 1) === 0) { fn >>= 1; sn >>= 1; }
+      } else {
+        secondRoot = merkleNodeHash(secondRoot, item);
+      }
+      fn >>= 1;
+      sn >>= 1;
+      cursor += 1;
+    }
+    return Buffer.from(firstRoot).equals(Buffer.from(oldRoot)) &&
+      Buffer.from(secondRoot).equals(Buffer.from(newRoot));
+  } catch {
+    return false;
+  }
+}
+
+
+export function dssePreAuthEncoding(payloadType: string, payload: Uint8Array): Uint8Array {
+  if (!payloadType) throw new TypeError('DSSE payload type is required');
+  const typeBytes = Buffer.from(payloadType, 'utf8');
+  return Buffer.concat([
+    Buffer.from('DSSEv1 ' + typeBytes.length + ' ', 'utf8'),
+    typeBytes,
+    Buffer.from(' ' + payload.length + ' ', 'utf8'),
+    Buffer.from(payload),
+  ]);
+}
+
+export function verifyDsseEnvelope(
+  envelope: DsseEnvelopeV1,
+  expectedPayloadType: string,
+  trustedKeys: ReadonlyMap<string, KeyObject>,
+): JsonValue {
+  if (envelope.payloadType !== expectedPayloadType || envelope.signatures.length === 0) {
+    throw new TypeError('invalid DSSE payload type or empty signatures');
+  }
+  const payloadBytes = Buffer.from(envelope.payload, 'base64');
+  if (payloadBytes.toString('base64') !== envelope.payload) throw new TypeError('payload is not canonical Base64');
+  const canonical = Buffer.from(canonicalizeJcs(JSON.parse(payloadBytes.toString('utf8'))), 'utf8');
+  if (!canonical.equals(payloadBytes)) throw new TypeError('DSSE payload is not canonical JCS');
+  const pae = dssePreAuthEncoding(envelope.payloadType, payloadBytes).toString('utf8');
+  const valid = envelope.signatures.some((signature) => {
+    const key = trustedKeys.get(signature.keyid);
+    if (!key) return false;
+    const signatureBytes = Buffer.from(signature.sig, 'base64');
+    if (signatureBytes.toString('base64') !== signature.sig) return false;
+    return verifyEd25519(pae, signature.sig, key);
+  });
+  if (!valid) throw new TypeError('no trusted DSSE signature verified');
+  return JSON.parse(payloadBytes.toString('utf8')) as JsonValue;
+}
+
+export interface KelAppendReceiptV1 {
+  readonly ledgerId: string;
+  readonly sequence: string;
+  readonly evidenceId: string;
+  readonly envelopeDigest: string;
+  readonly leafHash: string;
+  readonly treeSize: string;
+  readonly rootHash: string;
+  readonly checkpointEnvelope: DsseEnvelopeV1;
+  readonly idempotentReplay: boolean;
+}
+
+export interface KelDaemonTransport {
+  appendEvidence(envelope: DsseEnvelopeV1, acceptedAtEpochMs: string): Promise<KelAppendReceiptV1>;
+  verifyEvidence(evidenceId: string): Promise<VerificationReportV1>;
+}
+
+export interface VerificationReportV1 {
+  readonly ledgerIntegrity: 'pass' | 'fail' | 'unknown' | 'not-applicable';
+  readonly producerAuthentication: 'pass' | 'fail' | 'unknown' | 'not-applicable';
+  readonly inclusion: 'pass' | 'fail' | 'unknown' | 'not-applicable';
+  readonly checkpointAuthentication: 'pass' | 'fail' | 'unknown' | 'not-applicable';
+  readonly consistency: 'pass' | 'fail' | 'unknown' | 'not-applicable';
+  readonly witnessQuorum: 'pass' | 'fail' | 'unknown' | 'not-applicable';
+  readonly evidencePolicy: 'pass' | 'fail' | 'unknown' | 'not-applicable';
+  readonly accepted: boolean;
+  readonly reasonCodes: readonly string[];
+}
+
+export class KelBridge {
+  public constructor(
+    private readonly transport: KelDaemonTransport,
+    private readonly trustedProducerKeys: ReadonlyMap<string, KeyObject>,
+  ) {}
+
+  public async submit(
+    envelope: DsseEnvelopeV1,
+    acceptedAtEpochMs: string,
+  ): Promise<{ receipt: KelAppendReceiptV1; verification: VerificationReportV1 }> {
+    if (!/^(0|[1-9][0-9]*)$/.test(acceptedAtEpochMs)) {
+      throw new TypeError('acceptedAtEpochMs must be a decimal integer string');
+    }
+    const decoded = verifyDsseEnvelope(envelope, KEL_EVIDENCE_PAYLOAD_TYPE, this.trustedProducerKeys);
+    const statement = decoded as unknown as EvidenceStatementV1;
+    validateEvidenceStatement(statement);
+    const payloadBytes = Buffer.from(envelope.payload, 'base64');
+    if (!Buffer.from(canonicalizeJcs(statement), 'utf8').equals(payloadBytes)) {
+      throw new TypeError('evidence statement and DSSE payload differ');
+    }
+    const receipt = await this.transport.appendEvidence(envelope, acceptedAtEpochMs);
+    if (receipt.evidenceId !== statement.evidenceId || receipt.ledgerId !== statement.ledgerId) {
+      throw new TypeError('daemon receipt does not match submitted evidence');
+    }
+    const verification = await this.transport.verifyEvidence(statement.evidenceId);
+    return { receipt, verification };
+  }
+}

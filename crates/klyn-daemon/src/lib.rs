@@ -5,7 +5,7 @@
 
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use klyn_evidence::{
-    canonicalize, digest_json, envelope_digest, leaf_hash, merkle_root, sign_envelope,
+    canonicalize, digest_json, envelope_digest, leaf_hash, merkle_root, node_hash, sign_envelope,
     validate_evidence, verify_envelope, DsseEnvelopeV1, EvidenceStatementV1, LedgerLeafV1,
     TreeHeadV1, EVIDENCE_PAYLOAD_TYPE, TREE_HEAD_PAYLOAD_TYPE,
 };
@@ -29,6 +29,8 @@ pub enum LedgerError {
     Invariant(String),
     #[error("JSON encoding error: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("hex decoding error: {0}")]
+    Hex(#[from] hex::FromHexError),
 }
 
 pub type Result<T> = std::result::Result<T, LedgerError>;
@@ -66,6 +68,7 @@ impl EvidenceStore {
         producer_keys: BTreeMap<String, VerifyingKey>,
     ) -> Result<Self> {
         let ledger_id = ledger_id.into();
+        let checkpoint_key_epoch = checkpoint_key_epoch.into();
         if ledger_id.trim().is_empty() {
             return Err(LedgerError::Invariant("ledger id is required".into()));
         }
@@ -125,19 +128,35 @@ impl EvidenceStore {
              CREATE TRIGGER IF NOT EXISTS evidence_blobs_no_delete
              BEFORE DELETE ON evidence_blobs BEGIN
                 SELECT RAISE(ABORT, 'KEL evidence blobs are immutable');
+             END;
+             CREATE TRIGGER IF NOT EXISTS merkle_nodes_no_update
+             BEFORE UPDATE ON merkle_nodes BEGIN
+                SELECT RAISE(ABORT, 'KEL Merkle nodes are immutable');
+             END;
+             CREATE TRIGGER IF NOT EXISTS merkle_nodes_no_delete
+             BEFORE DELETE ON merkle_nodes BEGIN
+                SELECT RAISE(ABORT, 'KEL Merkle nodes are immutable');
+             END;
+             CREATE TRIGGER IF NOT EXISTS signed_tree_heads_no_update
+             BEFORE UPDATE ON signed_tree_heads BEGIN
+                SELECT RAISE(ABORT, 'KEL tree heads are immutable');
+             END;
+             CREATE TRIGGER IF NOT EXISTS signed_tree_heads_no_delete
+             BEFORE DELETE ON signed_tree_heads BEGIN
+                SELECT RAISE(ABORT, 'KEL tree heads are immutable');
              END;"
         )?;
         connection.execute(
             "INSERT OR IGNORE INTO ledger_meta
              (ledger_id, tree_size, root_hash, previous_leaf_hash, previous_checkpoint_digest, key_epoch)
              VALUES (?1, 0, ?2, NULL, NULL, ?3)",
-            params![ledger_id, hex::encode(Sha256::digest([])), checkpoint_key_epoch.into()],
+            params![ledger_id, hex::encode(Sha256::digest(b"")), checkpoint_key_epoch],
         )?;
         let store = Self {
             connection,
             ledger_id,
             checkpoint_key_id: checkpoint_key_id.into(),
-            checkpoint_key_epoch: "1".into(),
+            checkpoint_key_epoch,
             checkpoint_signing_key,
             producer_keys,
         };
@@ -147,7 +166,7 @@ impl EvidenceStore {
 
     fn verify_meta(&self) -> Result<()> {
         let row: (String, i64, String) = self.connection.query_row(
-            "SELECT ledger_id, tree_size, root_hash FROM ledger_meta",
+            "SELECT ledger_id, tree_size, root_hash FROM ledger_meta WHERE ledger_id=?1", params![self.ledger_id],
             [],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )?;
@@ -198,10 +217,9 @@ impl EvidenceStore {
         let tx = self.connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if let Some((existing_digest, sequence, leaf_hash_value, tree_size, root_hash, checkpoint_json)) = tx
             .query_row(
-                "SELECT b.envelope_digest, l.sequence, l.leaf_hash, m.tree_size, m.root_hash,
-                        (SELECT envelope_json FROM signed_tree_heads ORDER BY tree_size DESC LIMIT 1)
+                "SELECT b.envelope_digest, l.sequence, l.leaf_hash, h.tree_size, h.root_hash, h.envelope_json
                  FROM evidence_blobs b JOIN ledger_leaves l ON l.evidence_id=b.evidence_id
-                 JOIN ledger_meta m ON m.ledger_id=l.ledger_id WHERE b.evidence_id=?1",
+                 JOIN signed_tree_heads h ON h.tree_size=l.sequence WHERE b.evidence_id=?1",
                 params![statement.evidence_id],
                 |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?,
                         r.get::<_, i64>(3)?, r.get::<_, String>(4)?, r.get::<_, Option<String>>(5)?)),
@@ -240,12 +258,6 @@ impl EvidenceStore {
         let leaf_bytes = canonicalize(&leaf)?;
         let leaf_hash_bytes = leaf_hash(&leaf_bytes);
         let leaf_hash_hex = hex::encode(leaf_hash_bytes);
-        let next_leaf_hashes = {
-            let mut hashes = self.load_leaf_hashes()?;
-            hashes.push(leaf_hash_bytes);
-            hashes
-        };
-        let root_hash = hex::encode(merkle_root(&next_leaf_hashes));
         let new_size = sequence as usize;
 
         tx.execute(
@@ -282,6 +294,7 @@ impl EvidenceStore {
             )?;
         }
 
+        let root_hash = root_from_frontier(&tx, sequence)?;
         let tree_head = TreeHeadV1 {
             schema: klyn_evidence::TREE_HEAD_SCHEMA.into(),
             ledger_id: self.ledger_id.clone(),
@@ -337,4 +350,35 @@ impl EvidenceStore {
         )?;
         Ok(size as u64)
     }
+}
+
+
+/// Reconstruct the RFC 9162 root from persisted complete subtree hashes.
+/// Appends update the Merkle frontier in O(log n); a full scan is reserved for startup.
+fn root_from_frontier(tx: &rusqlite::Transaction<'_>, size: i64) -> Result<String> {
+    if size == 0 {
+        return Ok(hex::encode(Sha256::digest(b"")));
+    }
+    let mut offset = 0i64;
+    let mut root: Option<[u8; 32]> = None;
+    let highest = 63 - (size as u64).leading_zeros() as i64;
+    for level in (0..=highest).rev() {
+        let width = 1i64 << level;
+        if size & width == 0 { continue; }
+        let node_index = offset >> level;
+        let encoded: String = tx.query_row(
+            "SELECT hash FROM merkle_nodes WHERE level=?1 AND node_index=?2",
+            params![level, node_index],
+            |row| row.get(0),
+        )?;
+        let bytes: [u8; 32] = hex::decode(encoded)?.try_into()
+            .map_err(|_| LedgerError::Invariant("invalid frontier hash".into()))?;
+        root = Some(match root {
+            None => bytes,
+            Some(previous) => node_hash(&previous, &bytes),
+        });
+        offset += width;
+    }
+    root.map(|value| hex::encode(value))
+        .ok_or_else(|| LedgerError::Invariant("empty Merkle frontier".into()))
 }
