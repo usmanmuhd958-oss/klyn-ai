@@ -1,5 +1,7 @@
 [workspace]
 members = [
-    "crates/klyn-vault"
+    "crates/klyn-vault",
+    "crates/klyn-evidence",
+    "crates/klyn-daemon",
 ]
 resolver = "2"
