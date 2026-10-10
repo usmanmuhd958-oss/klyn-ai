@@ -57,6 +57,7 @@ pub struct AppendReceiptV1 {
 pub struct EvidenceProofBundleV1 {
     pub evidence_id: String,
     pub leaf: LedgerLeafV1,
+    pub evidence_envelope: DsseEnvelopeV1,
     pub proof: InclusionProofV1,
     pub checkpoint_envelope: DsseEnvelopeV1,
 }
@@ -355,7 +356,7 @@ impl EvidenceStore {
             envelope_digest,
             leaf_hash: format!("sha256:{leaf_hash_hex}"),
             tree_size: sequence.to_string(),
-            root_hash,
+            root_hash: format!("sha256:{root_hash}"),
             checkpoint_envelope,
             idempotent_replay: false,
         })
@@ -381,10 +382,12 @@ impl EvidenceStore {
     /// The server returns a self-contained cryptographic bundle; callers must still verify
     /// the checkpoint signature and the proof against the checkpoint's root.
     pub fn evidence_proof(&self, evidence_id: &str) -> Result<EvidenceProofBundleV1> {
-        let (sequence, leaf_json, leaf_hash_value): (i64, String, String) = self.connection.query_row(
-            "SELECT sequence, leaf_json, leaf_hash FROM ledger_leaves WHERE evidence_id=?1",
+        let (sequence, leaf_json, leaf_hash_value, envelope_json): (i64, String, String, String) = self.connection.query_row(
+            "SELECT l.sequence, l.leaf_json, l.leaf_hash, b.envelope_json
+             FROM ledger_leaves l JOIN evidence_blobs b ON b.evidence_id=l.evidence_id
+             WHERE l.evidence_id=?1",
             params![evidence_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
         if sequence < 1 {
             return Err(LedgerError::Invariant("invalid leaf sequence".into()));
@@ -408,6 +411,7 @@ impl EvidenceStore {
         Ok(EvidenceProofBundleV1 {
             evidence_id: evidence_id.to_owned(),
             leaf,
+            evidence_envelope: serde_json::from_str(&envelope_json)?,
             proof,
             checkpoint_envelope,
         })
