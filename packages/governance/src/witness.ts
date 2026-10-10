@@ -166,8 +166,11 @@ export class KeyLifecycleRegistry {
     if (nextInput.subjectId !== previous.subjectId || nextInput.purpose !== previous.purpose) {
       throw new KeyLifecycleError('rotation_identity_mismatch', 'rotation must preserve subject and key purpose');
     }
-    if (decimal(nextInput.epoch, 'next key epoch') <= decimal(previous.epoch, 'previous key epoch')) {
-      throw new KeyLifecycleError('epoch_not_monotonic', 'rotated key epoch must increase');
+    const maximumEpoch = this.records
+      .filter((record) => record.subjectId === previous.subjectId && record.purpose === previous.purpose)
+      .reduce((maximum, record) => decimal(record.epoch, 'key epoch') > maximum ? decimal(record.epoch, 'key epoch') : maximum, 0n);
+    if (decimal(nextInput.epoch, 'next key epoch') <= maximumEpoch) {
+      throw new KeyLifecycleError('epoch_not_monotonic', 'rotated key epoch must exceed every registered epoch');
     }
     if (decimal(nextInput.notBeforeEpochMs, 'notBeforeEpochMs') < effectiveAt) {
       throw new KeyLifecycleError('rotation_backdated', 'new key must not become valid before rotation time');
@@ -203,12 +206,12 @@ export class KeyLifecycleRegistry {
     this.persist();
   }
 
-  public resolve(
+  public resolveRecord(
     keyId: string,
     purpose: KelKeyPurposeV1,
     expectedEpoch: string,
     nowEpochMs: string,
-  ): KeyObject {
+  ): { readonly record: KeyRecordV1; readonly publicKey: KeyObject } {
     const now = decimal(nowEpochMs, 'nowEpochMs');
     const record = this.records.find((item) => item.keyId === keyId);
     if (!record) throw new KeyLifecycleError('unknown_key', 'key id is not registered');
@@ -221,11 +224,23 @@ export class KeyLifecycleRegistry {
     if (now >= decimal(record.notAfterEpochMs, 'notAfterEpochMs')) {
       throw new KeyLifecycleError('key_expired', 'key has expired');
     }
-    return createPublicKey({
-      key: Buffer.from(record.publicKeySpkiBase64, 'base64'),
-      format: 'der',
-      type: 'spki',
-    });
+    return {
+      record: cloneRecord(record),
+      publicKey: createPublicKey({
+        key: Buffer.from(record.publicKeySpkiBase64, 'base64'),
+        format: 'der',
+        type: 'spki',
+      }),
+    };
+  }
+
+  public resolve(
+    keyId: string,
+    purpose: KelKeyPurposeV1,
+    expectedEpoch: string,
+    nowEpochMs: string,
+  ): KeyObject {
+    return this.resolveRecord(keyId, purpose, expectedEpoch, nowEpochMs).publicKey;
   }
 
   public keyIds(purpose: KelKeyPurposeV1, nowEpochMs: string): readonly string[] {
@@ -403,9 +418,13 @@ export class WitnessQuorumVerifier {
       }
       seen.add(signature.witnessId);
       try {
-        const key = this.registry.resolve(
+        const resolved = this.registry.resolveRecord(
           signature.keyId, 'witness', signature.keyEpoch, nowEpochMs,
         );
+        if (resolved.record.subjectId !== signature.witnessId) {
+          throw new KeyLifecycleError('witness_identity_mismatch', 'witness key is registered to a different witness identity');
+        }
+        const key = resolved.publicKey;
         const statement: WitnessStatementV1 = {
           schema: 'urn:klyn:witness-statement:v1',
           witnessId: signature.witnessId,
