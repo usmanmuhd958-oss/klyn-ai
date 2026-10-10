@@ -39,6 +39,7 @@ export interface KelUnixSocketTransportOptions {
   readonly authTokenHex: string;
   /** Public checkpoint keys only; private keys must never be given to this client. */
   readonly trustedCheckpointKeys: ReadonlyMap<string, KeyObject>;
+  readonly trustedProducerKeys: ReadonlyMap<string, KeyObject>;
   readonly timeoutMs?: number;
 }
 export interface KelProofBundleV1 {
@@ -77,6 +78,7 @@ export class KelUnixSocketTransport implements KelDaemonTransport {
   private readonly socketPath: string;
   private readonly token: string;
   private readonly trustedCheckpointKeys: ReadonlyMap<string, KeyObject>;
+  private readonly trustedProducerKeys: ReadonlyMap<string, KeyObject>;
   private readonly timeoutMs: number;
 
   public constructor(options: KelUnixSocketTransportOptions) {
