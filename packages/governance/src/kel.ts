@@ -183,7 +183,13 @@ export function sha256Hex(data: Uint8Array): string {
 }
 
 export function digestJcs(value: unknown): string {
-  return sha256Hex(Buffer.from(canonicalizeJcs(value), 'utf8'));
+  return 'sha256:' + sha256Hex(Buffer.from(canonicalizeJcs(value), 'utf8'));
+}
+
+export function validateDigest(value: string): void {
+  if (!/^sha256:[a-f0-9]{64}$/.test(value)) {
+    throw new TypeError('digest must be sha256: followed by 64 lowercase hexadecimal characters');
+  }
 }
 
 export function decodeSha256(value: string): Uint8Array {
@@ -286,7 +292,7 @@ export function validateEvidenceStatement(value: EvidenceStatementV1): void {
     value.outcome.stdoutDigest, value.outcome.stderrDigest,
     ...value.artifacts.map((artifact) => artifact.digest),
   ]) {
-    if (digest !== null) decodeSha256(digest);
+    if (digest !== null) validateDigest(digest);
   }
   for (const number of [value.sequenceInRun, value.outcome.startedAtEpochMs, value.outcome.finishedAtEpochMs]) {
     if (!/^(0|[1-9][0-9]*)$/.test(number)) throw new TypeError('sequence and timestamps must be decimal integer strings');

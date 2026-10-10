@@ -217,7 +217,7 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
 }
 
 pub fn digest_hex(data: &[u8]) -> String {
-    hex::encode(sha256(data))
+    format!("sha256:{}", hex::encode(sha256(data)))
 }
 
 pub fn digest_json<T: Serialize>(value: &T) -> KelResult<String> {
@@ -225,7 +225,8 @@ pub fn digest_json<T: Serialize>(value: &T) -> KelResult<String> {
 }
 
 fn decode_digest(value: &str) -> KelResult<[u8; 32]> {
-    let raw = value.strip_prefix("sha256:").unwrap_or(value);
+    let raw = value.strip_prefix("sha256:")
+        .ok_or_else(|| KelError::Invalid("digest must use the sha256: prefix".into()))?;
     let bytes = hex::decode(raw).map_err(|e| KelError::Invalid(format!("invalid SHA-256 digest: {e}")))?;
     bytes.try_into().map_err(|_| KelError::Invalid("SHA-256 digest must be 32 bytes".into()))
 }
@@ -540,7 +541,7 @@ pub fn verify_consistency(
 }
 
 pub fn hex_hash(hash: &[u8; 32]) -> String {
-    hex::encode(hash)
+    format!("sha256:{}", hex::encode(hash))
 }
 
 #[cfg(test)]

@@ -88,7 +88,7 @@ impl EvidenceStore {
              ) STRICT;
              CREATE TABLE IF NOT EXISTS evidence_blobs (
                 evidence_id TEXT PRIMARY KEY,
-                envelope_digest TEXT NOT NULL UNIQUE CHECK(length(envelope_digest) = 64),
+                envelope_digest TEXT NOT NULL UNIQUE CHECK(length(envelope_digest) = 71),
                 envelope_json TEXT NOT NULL,
                 payload_json TEXT NOT NULL
              ) STRICT;
@@ -109,7 +109,7 @@ impl EvidenceStore {
              CREATE TABLE IF NOT EXISTS signed_tree_heads (
                 tree_size INTEGER PRIMARY KEY CHECK(tree_size >= 0),
                 root_hash TEXT NOT NULL CHECK(length(root_hash) = 64),
-                checkpoint_digest TEXT NOT NULL UNIQUE CHECK(length(checkpoint_digest) = 64),
+                checkpoint_digest TEXT NOT NULL UNIQUE CHECK(length(checkpoint_digest) = 71),
                 envelope_json TEXT NOT NULL,
                 issued_at_epoch_ms TEXT NOT NULL
              ) STRICT;
@@ -166,8 +166,8 @@ impl EvidenceStore {
 
     fn verify_meta(&self) -> Result<()> {
         let row: (String, i64, String) = self.connection.query_row(
-            "SELECT ledger_id, tree_size, root_hash FROM ledger_meta WHERE ledger_id=?1", params![self.ledger_id],
-            [],
+            "SELECT ledger_id, tree_size, root_hash FROM ledger_meta WHERE ledger_id=?1",
+            params![self.ledger_id],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )?;
         if row.0 != self.ledger_id {
@@ -232,8 +232,8 @@ impl EvidenceStore {
             tx.commit()?;
             return Ok(AppendReceiptV1 {
                 ledger_id: self.ledger_id.clone(), sequence: sequence.to_string(),
-                evidence_id: statement.evidence_id, envelope_digest, leaf_hash: leaf_hash_value,
-                tree_size: tree_size.to_string(), root_hash, checkpoint_envelope, idempotent_replay: true,
+                evidence_id: statement.evidence_id, envelope_digest, leaf_hash: format!("sha256:{leaf_hash_value}"),
+                tree_size: tree_size.to_string(), root_hash: format!("sha256:{root_hash}"), checkpoint_envelope, idempotent_replay: true,
             });
         }
 
@@ -252,7 +252,7 @@ impl EvidenceStore {
             run_id: statement.run_id.clone(),
             kind: statement.kind.clone(),
             envelope_digest: envelope_digest.clone(),
-            previous_leaf_hash: previous_leaf_hash.clone(),
+            previous_leaf_hash: previous_leaf_hash.clone().map(|hash| format!("sha256:{hash}")),
             accepted_at_epoch_ms: accepted_at_epoch_ms.to_string(),
         };
         let leaf_bytes = canonicalize(&leaf)?;
@@ -301,7 +301,7 @@ impl EvidenceStore {
             hash_algorithm: klyn_evidence::HASH_ALGORITHM.into(),
             tree_algorithm: klyn_evidence::TREE_ALGORITHM.into(),
             tree_size: new_size.to_string(),
-            root_hash: root_hash.clone(),
+            root_hash: format!("sha256:{root_hash}"),
             previous_checkpoint_digest,
             key_epoch: self.checkpoint_key_epoch.clone(),
             issued_at_epoch_ms: now_epoch_ms.to_string(),
@@ -327,7 +327,7 @@ impl EvidenceStore {
             sequence: sequence.to_string(),
             evidence_id: statement.evidence_id,
             envelope_digest,
-            leaf_hash: leaf_hash_hex,
+            leaf_hash: format!("sha256:{leaf_hash_hex}"),
             tree_size: sequence.to_string(),
             root_hash,
             checkpoint_envelope,
