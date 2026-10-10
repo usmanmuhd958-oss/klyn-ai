@@ -1,0 +1,46 @@
+name: KEL v1 conformance
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "crates/klyn-evidence/**"
+      - "crates/klyn-daemon/**"
+      - "packages/governance/**"
+      - ".github/workflows/kel-v1.yml"
+  push:
+    branches: [main]
+    paths:
+      - "Cargo.toml"
+      - "crates/klyn-evidence/**"
+      - "crates/klyn-daemon/**"
+      - "packages/governance/**"
+      - ".github/workflows/kel-v1.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  rust-kel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test KEL protocol and daemon storage
+        run: cargo test -p klyn-evidence -p klyn-daemon
+
+  typescript-kel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Enable pnpm
+        run: corepack enable
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck governance bridge
+        run: pnpm --filter @klyn/governance typecheck
+      - name: Run governance and KEL tests
+        run: pnpm --filter @klyn/governance test
