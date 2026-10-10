@@ -277,6 +277,50 @@ mod framing_tests {
     }
 
     #[test]
+    fn rpc_authentication_happens_before_ledger_dispatch() {
+        use ed25519_dalek::SigningKey;
+        use std::collections::BTreeMap;
+
+        let directory = tempfile::tempdir().expect("tempdir");
+        let store = EvidenceStore::open(
+            directory.path().join("rpc-auth.sqlite3"),
+            "rpc-test-ledger",
+            "checkpoint-key",
+            "1",
+            SigningKey::from_bytes(&[0x42; 32]),
+            BTreeMap::from([(
+                "producer-key".to_owned(),
+                SigningKey::from_bytes(&[0x21; 32]).verifying_key(),
+            )]),
+        ).expect("open store");
+        let store = Arc::new(Mutex::new(store));
+
+        let unauthenticated = RpcRequestV1 {
+            version: PROTOCOL_VERSION,
+            id: "req-unauth".to_owned(),
+            token: "wrong".to_owned(),
+            method: "ledger.health".to_owned(),
+            params: Value::Object(Default::default()),
+        };
+        let rejected = dispatch(&unauthenticated, b"secret-token", &store);
+        assert_eq!(rejected.error.as_ref().map(|error| error.code), Some("unauthenticated"));
+        assert!(rejected.result.is_none());
+
+        let authenticated = RpcRequestV1 {
+            version: PROTOCOL_VERSION,
+            id: "req-health".to_owned(),
+            token: "secret-token".to_owned(),
+            method: "ledger.health".to_owned(),
+            params: Value::Object(Default::default()),
+        };
+        let accepted = dispatch(&authenticated, b"secret-token", &store);
+        assert!(accepted.error.is_none());
+        let result = accepted.result.expect("health result");
+        assert_eq!(result["ledgerId"], "rpc-test-ledger");
+        assert_eq!(result["treeSize"], "0");
+    }
+
+    #[test]
     fn frame_reader_rejects_zero_and_oversized_frames() {
         use std::os::unix::net::UnixStream;
         let (mut writer, mut reader) = UnixStream::pair().expect("socket pair");
