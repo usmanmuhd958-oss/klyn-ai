@@ -47,6 +47,8 @@ function statusFromAuditEvent(event: AuditEvent): KelEvidenceStatus {
       return 'pass';
     case 'containment':
       return event.action === 'CONTINUE' ? 'pass' : event.action === 'WARN' ? 'unknown' : 'blocked';
+    default:
+      throw new TypeError('unsupported legacy audit event kind');
   }
 }
 
@@ -57,6 +59,7 @@ function kindFromAuditEvent(event: AuditEvent): KelEvidenceKind {
     case 'completion-gate': return 'verification-completed';
     case 'artifact-attested': return 'mutation-committed';
     case 'containment': return 'execution-completed';
+    default: throw new TypeError('unsupported legacy audit event kind');
   }
 }
 function jsonValue(value: unknown): JsonValue {
