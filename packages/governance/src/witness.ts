@@ -1,5 +1,8 @@
+import { closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import {
   createPublicKey,
+  randomUUID,
   sign,
   verify,
   type KeyObject,
@@ -47,6 +50,87 @@ export class InMemoryKeyRegistryStorage implements KeyRegistryStorage {
   }
   public save(state: KeyRegistryStateV1): void {
     this.state = structuredClone(state);
+  }
+}
+
+/**
+ * Durable single-writer key-registry storage. Writes use a mode-0600 temporary file,
+ * fsync the file and containing directory, then atomically rename into place. For a
+ * multi-process or multi-host deployment, use a transactional database adapter instead.
+ */
+export class JsonFileKeyRegistryStorage implements KeyRegistryStorage {
+  private readonly filePath: string;
+
+  public constructor(filePath: string) {
+    if (!filePath || filePath.includes('\0')) throw new TypeError('registry file path is required');
+    this.filePath = resolve(filePath);
+  }
+
+  public load(): KeyRegistryStateV1 | undefined {
+    let metadata;
+    try {
+      metadata = lstatSync(this.filePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw error;
+    }
+    if (metadata.isSymbolicLink() || !metadata.isFile()) {
+      throw new KeyLifecycleError('registry_file_type', 'registry path must be a regular file, not a symlink');
+    }
+    if ((metadata.mode & 0o077) !== 0) {
+      throw new KeyLifecycleError('registry_file_permissions', 'registry file permissions must be 0600');
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(this.filePath, 'utf8')) as unknown;
+    } catch {
+      throw new KeyLifecycleError('registry_file_invalid', 'registry file is not valid JSON');
+    }
+    if (typeof parsed !== 'object' || parsed === null ||
+        (parsed as { schema?: unknown }).schema !== 'urn:klyn:key-registry:v1' ||
+        !Array.isArray((parsed as { records?: unknown }).records)) {
+      throw new KeyLifecycleError('registry_file_invalid', 'registry file has an invalid schema');
+    }
+    return parsed as KeyRegistryStateV1;
+  }
+
+  public save(state: KeyRegistryStateV1): void {
+    const directory = dirname(this.filePath);
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    try {
+      const metadata = lstatSync(this.filePath);
+      if (metadata.isSymbolicLink() || !metadata.isFile()) {
+        throw new KeyLifecycleError('registry_file_type', 'registry path must be a regular file, not a symlink');
+      }
+      const current = JSON.parse(readFileSync(this.filePath, 'utf8')) as KeyRegistryStateV1;
+      if (BigInt(current.revision) + 1n !== BigInt(state.revision)) {
+        throw new KeyLifecycleError('registry_revision_conflict', 'registry revision changed concurrently; reload before retry');
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      if (state.revision !== '1') {
+        throw new KeyLifecycleError('registry_revision_conflict', 'registry disappeared during update');
+      }
+    }
+
+    const temporary = this.filePath + '.' + process.pid + '.' + randomUUID() + '.tmp';
+    let fileDescriptor: number | undefined;
+    try {
+      fileDescriptor = openSync(temporary, 'wx', 0o600);
+      writeFileSync(fileDescriptor, JSON.stringify(state), { encoding: 'utf8' });
+      fsyncSync(fileDescriptor);
+      closeSync(fileDescriptor);
+      fileDescriptor = undefined;
+      renameSync(temporary, this.filePath);
+      const directoryDescriptor = openSync(directory, 'r');
+      try { fsyncSync(directoryDescriptor); } finally { closeSync(directoryDescriptor); }
+    } catch (error) {
+      if (fileDescriptor !== undefined) {
+        try { closeSync(fileDescriptor); } catch { /* preserve the original I/O error */ }
+      }
+      try { unlinkSync(temporary); } catch { /* temporary file may already have been renamed */ }
+      throw error;
+    }
   }
 }
 
