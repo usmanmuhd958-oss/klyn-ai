@@ -87,12 +87,14 @@ fn restart_preserves_root_idempotency_and_inclusion_proofs() {
     let mut store = open_store(&database);
     let mut envelopes = Vec::new();
     let mut expected_hashes = Vec::new();
+    let mut expected_receipt_roots = Vec::new();
 
     for index in 0..9u64 {
         let input = envelope(&format!("evidence-{index}"), "run-restart", index + 1);
         let receipt = store.append(&input, 2000 + index, 3000 + index).expect("append");
         assert!(!receipt.idempotent_replay);
         expected_hashes.push(decode_hash(&receipt.leaf_hash));
+        expected_receipt_roots.push(receipt.root_hash.clone());
         envelopes.push(input);
     }
     let expected_root = merkle_root(&expected_hashes);
@@ -102,10 +104,14 @@ fn restart_preserves_root_idempotency_and_inclusion_proofs() {
     assert_eq!(reopened.leaf_count().expect("count after restart"), 9);
     assert_eq!(reopened.health_snapshot().unwrap().root_hash, format!("sha256:{}", hex::encode(expected_root)));
 
+    let current_root_before_replay = reopened.health_snapshot().unwrap().root_hash;
     let replay = reopened.append(&envelopes[3], 99, 99).expect("idempotent replay");
     assert!(replay.idempotent_replay);
     assert_eq!(replay.sequence, "4");
-    assert_eq!(decode_hash(&replay.root_hash), expected_root);
+    // The receipt is historical: its checkpoint covers four leaves, not the later nine-leaf tree.
+    assert_eq!(replay.root_hash, expected_receipt_roots[3]);
+    assert_eq!(reopened.health_snapshot().unwrap().root_hash, current_root_before_replay);
+    assert_eq!(reopened.health_snapshot().unwrap().root_hash, format!("sha256:{}", hex::encode(expected_root)));
     assert!(matches!(
         reopened.append(&envelope("evidence-3", "different-run", 999), 100, 100),
         Err(klyn_daemon::LedgerError::IdempotencyConflict(_))
