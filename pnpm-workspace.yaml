@@ -1,23 +1,15 @@
-# KLYN backend/infrastructure workspace.
+# KLYN OS backend/infrastructure workspace.
 # Frontend/UI applications remain intentionally excluded from the backend control plane.
 packages:
   - "apps/backend"
-  - "packages/agent-runtime"
+  - "packages/agent-governance"
   - "packages/ai-engine"
   - "packages/autonomy"
-  - "packages/ai-gateway"
-  - "packages/ai-orchestrator"
-  - "packages/autonomous-runtime"
-  - "packages/agent-governance"
   - "packages/cognitive-engine"
-  - "packages/control-plane"
-  - "packages/core-runtime"
   - "packages/database"
-  - "packages/deploy"
   - "packages/evolution-controller"
   - "packages/execution-runtime"
   - "packages/governance"
-  - "packages/intelligence"
   - "packages/mission-engine"
   - "packages/runtime"
   - "packages/self-healing-runtime"
@@ -25,6 +17,12 @@ packages:
   - "packages/tsconfig"
   - "packages/workflow-engine"
 
+# pnpm v11: unknown dependency build scripts fail closed.
+strictDepBuilds: true
+
+# Keep package engine ranges aligned with the supported Node.js baseline.
+engineStrict: true
+
+# Explicit lifecycle approvals only. esbuild is used by tsx in workspace scripts.
 allowBuilds:
   esbuild: true
-  sharp: true
