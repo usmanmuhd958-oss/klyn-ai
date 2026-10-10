@@ -29,7 +29,7 @@ export class ZeroTrustAuthorizer {
         try {
             request = parseToolExecutionRequest(requestInput);
         }
-        catch (error) {
+        catch {
             const requestId = typeof requestInput === 'object' && requestInput !== null && 'requestId' in requestInput && typeof requestInput.requestId === 'string'
                 ? String(requestInput.requestId)
                 : 'unknown';
