@@ -1,9 +1,9 @@
-pub mod rpc;
-
 //! Durable SQLite WAL storage for KEL v1.
 //!
 //! The daemon owns persistence and key use. Private keys must be supplied by a
 //! trusted key provider/HSM in production; never load them from agent-controlled input.
+
+pub mod rpc;
 
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use klyn_evidence::{
