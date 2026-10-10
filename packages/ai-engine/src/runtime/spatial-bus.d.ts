@@ -1,6 +1,6 @@
 import { type SpatialCanvasNodeState, type SpatialExecutionBusOptions, type SpatialExecutionInput, type SpatialRuntimeStream, type SpatialTaskExecutor } from "../types/spatial-bus.types.js";
 export declare class SpatialBus {
-    #private;
+    private readonly __privateBrand: never;
     constructor(options?: SpatialExecutionBusOptions);
     register(plan: SpatialExecutionInput): SpatialRuntimeStream;
     run(plan: SpatialExecutionInput, executor: SpatialTaskExecutor): Promise<SpatialRuntimeStream>;
