@@ -19,3 +19,6 @@ thiserror = "2"
 [[bin]]
 name = "klyn-daemon"
 path = "src/main.rs"
+
+[dev-dependencies]
+tempfile = "3"
