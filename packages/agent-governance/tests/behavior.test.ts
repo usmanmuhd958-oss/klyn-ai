@@ -7,7 +7,6 @@ import {
 import {
   AgentBehaviorTrace,
   ConstraintViolationDetector,
-  behaviorEventDigest,
 } from "../src/index.js";
 import type {
   AgentBehaviorEvent,
@@ -63,7 +62,7 @@ test("behavior trace is hash chained and mirrored into governance audit", () => 
   assert.equal(trace.snapshot().length, 1);
   assert.equal(audit.records().at(-1)?.event.kind, "agent-behavior");
   assert.equal(audit.verify(), true);
-  assert.equal(record.hash, behaviorEventDigest(event()));
+  assert.equal(record.hash, "2877862dcb45ba2552fb7fff4ac5c6d1ae41897a5a3fad1d0d37924d49461c38");
 });
 
 test("detector catches policy drift, unauthorized side effects, and invalid delegation", () => {
