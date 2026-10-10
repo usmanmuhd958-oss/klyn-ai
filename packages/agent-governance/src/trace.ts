@@ -1,4 +1,4 @@
-import { canonicalize, sha256, type AuditLedger, type JsonValue } from "@klyn/governance";
+import { canonicalize, sha256, type AuditLedger } from "@klyn/governance";
 import type {
   AgentBehaviorEvent,
   AgentBehaviorSnapshot,
@@ -12,7 +12,7 @@ function hashRecord(
   previousHash: string,
   event: AgentBehaviorEvent,
 ): string {
-  const normalizedEvent: JsonValue = JSON.parse(JSON.stringify(event));
+  const normalizedEvent = JSON.parse(JSON.stringify(event)) as AgentBehaviorEvent;
   return sha256(canonicalize({
     sequence,
     previousHash,
