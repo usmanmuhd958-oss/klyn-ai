@@ -1,10 +1,8 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { generateKeyPairSync } from "node:crypto";
 import {
   AuditLedger,
   GovernanceEngine,
-  signEd25519,
 } from "@klyn/governance";
 import {
   AgentBehaviorTrace,

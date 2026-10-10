@@ -9,7 +9,7 @@ export interface UsageMetrics {
   readonly wallClockMillis: number;
 }
 
-export interface BudgetLimits extends UsageMetrics {}
+export type BudgetLimits = UsageMetrics;
 
 export interface BudgetThresholds {
   readonly tokens: number;

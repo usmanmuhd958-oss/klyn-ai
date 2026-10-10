@@ -167,7 +167,8 @@ test('P5-13: predecessor evidence must be accepted first', () => {
 test('P5-14: unsigned evidence is rejected', () => {
   const m = machine();
   const unsigned = evidence('n-action', 'action-receipt', 'e1', [], []);
-  const { signatureBase64: _signature, ...withoutSignature } = unsigned;
+  const withoutSignature = { ...unsigned };
+  Reflect.deleteProperty(withoutSignature, 'signatureBase64');
   assert.throws(() => m.transition(withoutSignature), MissionTransitionError);
 });
 
