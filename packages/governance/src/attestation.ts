@@ -1,7 +1,7 @@
 import { type KeyObject } from 'node:crypto';
 import { AuditLedger } from './audit.js';
 import { canonicalize, digestJson, signEd25519, verifyEd25519 } from './crypto.js';
-import type { ArtifactAttestation, ArtifactManifest } from './types.js';
+import type { ArtifactAttestation } from './types.js';
 import { parseArtifactManifest, ValidationError } from './validation.js';
 import { CompletionGate, EvidenceLedger } from './evidence.js';
 

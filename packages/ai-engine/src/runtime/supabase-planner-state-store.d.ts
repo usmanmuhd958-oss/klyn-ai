@@ -2,7 +2,7 @@ import { type PlannerStateCompareAndSwapInput, type PlannerStatePersistence, typ
 import type { PlannerRuntimeTaskState } from "../types/planner-bridge.types.js";
 export type PlannerFetch = (input: URL | string, init?: RequestInit) => Promise<Response>;
 export declare class SupabasePlannerStateStore implements PlannerStatePersistence {
-    #private;
+    private readonly __privateBrand: never;
     constructor(config: PlannerStatePersistenceConfig, fetchImpl?: PlannerFetch);
     compareAndSwap(input: PlannerStateCompareAndSwapInput): Promise<PlannerRuntimeTaskState>;
     private toRuntimeState;

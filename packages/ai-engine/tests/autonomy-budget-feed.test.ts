@@ -11,7 +11,6 @@ import {
 } from "@klyn/autonomy";
 import type {
   ProviderAdapter,
-  ProviderRequest,
   ProviderResponse,
   StreamChunk,
 } from "../src/providers/types.js";
@@ -58,8 +57,8 @@ function envelope() {
 function adapter(response: ProviderResponse): ProviderAdapter {
   return {
     name: response.provider,
-    generate: async (_request: ProviderRequest) => response,
-    async *stream(_request: ProviderRequest): AsyncIterable<StreamChunk> {
+    generate: async () => response,
+    async *stream(): AsyncIterable<StreamChunk> {
       yield { provider: response.provider, model: response.model, text: "streamed" };
       yield {
         provider: response.provider,
