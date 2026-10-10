@@ -3,8 +3,8 @@ use ed25519_dalek::{SigningKey, VerifyingKey};
 use klyn_daemon::EvidenceStore;
 use klyn_evidence::{
     merkle_root, sign_envelope, verify_inclusion, TreeHeadV1,
-    ArtifactReferenceV1, EvidenceContextV1, EvidenceKind, EvidenceOutcomeV1,
-    EvidenceStatementV1, EvidenceStatus, EvidenceSubjectV1, DsseEnvelopeV1,
+    EvidenceContextV1, EvidenceKind, EvidenceOutcomeV1,
+    EvidenceStatementV1, EvidenceStatus, EvidenceSubjectV1,
     EVIDENCE_PAYLOAD_TYPE, EVIDENCE_SCHEMA,
 };
 use std::{collections::BTreeMap, env, path::{Path, PathBuf}, process::Command};
