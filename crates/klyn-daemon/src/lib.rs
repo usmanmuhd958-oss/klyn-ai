@@ -1,3 +1,5 @@
+pub mod rpc;
+
 //! Durable SQLite WAL storage for KEL v1.
 //!
 //! The daemon owns persistence and key use. Private keys must be supplied by a
