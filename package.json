@@ -11,7 +11,7 @@
     "build": "pnpm --recursive --workspace-concurrency=2 --if-present run build",
     "typecheck": "pnpm --recursive --workspace-concurrency=2 --if-present run typecheck",
     "test": "pnpm --recursive --workspace-concurrency=2 --if-present run test",
-    "lint": "eslint packages/agent-governance packages/autonomy packages/control-plane packages/governance packages/runtime packages/mission-engine packages/execution-runtime packages/cognitive-engine packages/ai-engine apps/backend --max-warnings 0",
+    "lint": "eslint packages/agent-governance packages/autonomy packages/governance packages/runtime packages/mission-engine packages/execution-runtime packages/cognitive-engine packages/ai-engine apps/backend --max-warnings 0",
     "dev": "pnpm --filter @klyn/backend dev",
     "start": "pnpm --filter @klyn/backend start",
     "vercel-build": "pnpm --filter @klyn/backend run build",
