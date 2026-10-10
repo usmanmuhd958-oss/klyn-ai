@@ -423,7 +423,7 @@ export function verifyDsseEnvelope(
   if (payloadBytes.toString('base64') !== envelope.payload) throw new TypeError('payload is not canonical Base64');
   const canonical = Buffer.from(canonicalizeJcs(JSON.parse(payloadBytes.toString('utf8'))), 'utf8');
   if (!canonical.equals(payloadBytes)) throw new TypeError('DSSE payload is not canonical JCS');
-  const pae = dssePreAuthEncoding(envelope.payloadType, payloadBytes).toString('utf8');
+  const pae = Buffer.from(dssePreAuthEncoding(envelope.payloadType, payloadBytes)).toString('utf8');
   const valid = envelope.signatures.some((signature) => {
     const key = trustedKeys.get(signature.keyid);
     if (!key) return false;
