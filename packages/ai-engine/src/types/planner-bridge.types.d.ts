@@ -41,7 +41,7 @@ export declare class PlannerBridgeError extends Error {
     constructor(code: PlannerBridgeErrorCode, message: string);
 }
 export declare class ImmutableTaskStateStore {
-    #private;
+    private readonly __privateBrand: never;
     constructor(states: Iterable<readonly [string, PlannerRuntimeTaskState]>);
     get(taskId: string): PlannerRuntimeTaskState | undefined;
     has(taskId: string): boolean;
