@@ -1,4 +1,4 @@
-import { digestJson } from "@klyn/governance";
+import { digestJson, type JsonValue } from "@klyn/governance";
 import type {
   AgentBehaviorEvent,
   AgentBehaviorTraceRecord,
@@ -168,7 +168,10 @@ export class ConstraintViolationDetector {
 }
 
 export function behaviorEventDigest(event: AgentBehaviorEvent): string {
-  return digestJson({
+  // This payload is already composed exclusively from JSON-domain event fields.
+  // The assertion bridges TypeScript interfaces (which lack string index signatures)
+  // to the canonicalizer's recursive JsonValue contract without changing runtime data.
+  const payload = {
     eventType: event.eventType,
     missionId: event.missionId,
     agentId: event.agentId,
@@ -183,5 +186,6 @@ export function behaviorEventDigest(event: AgentBehaviorEvent): string {
     delegation: event.delegation,
     sideEffects: event.sideEffects,
     metadata: event.metadata,
-  });
+  };
+  return digestJson(payload as unknown as JsonValue);
 }
