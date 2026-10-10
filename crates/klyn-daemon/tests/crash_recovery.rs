@@ -1,7 +1,8 @@
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use klyn_daemon::EvidenceStore;
 use klyn_evidence::{
-    canonicalize, inclusion_proof, merkle_root, sign_envelope, verify_inclusion,
+    merkle_root, sign_envelope, verify_inclusion, TreeHeadV1,
     ArtifactReferenceV1, EvidenceContextV1, EvidenceKind, EvidenceOutcomeV1,
     EvidenceStatementV1, EvidenceStatus, EvidenceSubjectV1, DsseEnvelopeV1,
     EVIDENCE_PAYLOAD_TYPE, EVIDENCE_SCHEMA,
@@ -105,6 +106,10 @@ fn restart_preserves_root_idempotency_and_inclusion_proofs() {
     assert!(replay.idempotent_replay);
     assert_eq!(replay.sequence, "4");
     assert_eq!(decode_hash(&replay.root_hash), expected_root);
+    assert!(matches!(
+        reopened.append(&envelope("evidence-3", "different-run", 999), 100, 100),
+        Err(klyn_daemon::LedgerError::IdempotencyConflict(_))
+    ));
     assert_eq!(reopened.leaf_count().unwrap(), 9);
 
     let bundle = reopened.evidence_proof("evidence-3").expect("proof retrieval");
@@ -187,5 +192,7 @@ fn wal_recovery_preserves_committed_append_after_abrupt_process_exit() {
     assert_eq!(health.tree_size, "1");
     let proof = recovered.evidence_proof("crash-window-evidence").expect("committed evidence present");
     assert_eq!(proof.proof.tree_size, "1");
-    assert_eq!(decode_hash(&health.root_hash), decode_hash(&proof.checkpoint_envelope.payload));
+    let head_payload = BASE64.decode(&proof.checkpoint_envelope.payload).expect("checkpoint payload base64");
+    let head: TreeHeadV1 = serde_json::from_slice(&head_payload).expect("checkpoint tree head");
+    assert_eq!(decode_hash(&health.root_hash), decode_hash(&head.root_hash));
 }
