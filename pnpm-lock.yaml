@@ -42,9 +42,6 @@ importers:
       sql.js:
         specifier: ^1.13.0
         version: 1.14.2
-      turbo:
-        specifier: ^2.5.6
-        version: 2.10.12
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
