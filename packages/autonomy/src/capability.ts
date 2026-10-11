@@ -188,6 +188,8 @@ export interface CapabilityTokenSigner {
 
 export interface CapabilityKeyResolver {
   resolvePublicKey(keyId: string): KeyObject | undefined;
+  /** Principal identity bound to this key by the trusted key registry. */
+  resolvePrincipalId(keyId: string): string | undefined;
 }
 
 export interface CapabilityTokenVerifier {
@@ -490,8 +492,12 @@ export function digestCapabilityPayload(payload: unknown): string {
 }
 
 export class Ed25519CapabilitySigner implements CapabilityTokenSigner {
-  public constructor(public readonly keyId: string, private readonly privateKey: KeyObject) {
-    if (!keyId || privateKey.type !== "private" || privateKey.asymmetricKeyType !== "ed25519") {
+  public constructor(
+    public readonly keyId: string,
+    private readonly privateKey: KeyObject,
+    public readonly principalId: string,
+  ) {
+    if (!keyId || !principalId || privateKey.type !== "private" || privateKey.asymmetricKeyType !== "ed25519") {
       throw new TypeError("capability signer requires a key ID and an Ed25519 private KeyObject");
     }
   }
@@ -506,6 +512,9 @@ export class Ed25519CapabilitySigner implements CapabilityTokenSigner {
 
   public signToken(payload: CapabilityTokenV1): CapabilityToken {
     validateCapabilityPayload(payload);
+    if (payload.issuerPrincipalId !== this.principalId) {
+      throw new CapabilitySecurityError("signer_principal_mismatch", "signer key is not registered to the claimed issuer principal");
+    }
     return Object.freeze({ payload: deepFreeze(payload), signature: this.signPayload(payload) });
   }
 }
@@ -519,16 +528,17 @@ export class Ed25519CapabilityTokenVerifier implements CapabilityTokenVerifier {
       throw new CapabilitySecurityError("signature_format_invalid", "capability signature metadata is invalid");
     }
     const key = this.keys.resolvePublicKey(token.signature.keyId);
-    if (!key || key.type !== "public" || key.asymmetricKeyType !== "ed25519") {
+    const signingPrincipalId = this.keys.resolvePrincipalId(token.signature.keyId);
+    if (!key || key.type !== "public" || key.asymmetricKeyType !== "ed25519" ||
+        signingPrincipalId !== token.payload.issuerPrincipalId) {
       throw new CapabilitySecurityError("signing_key_untrusted", "capability signing key is not a trusted Ed25519 public key");
     }
-    let signature: Buffer;
-    try {
-      signature = Buffer.from(token.signature.signatureBase64, "base64");
-    } catch {
+    if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(token.signature.signatureBase64)) {
       throw new CapabilitySecurityError("signature_format_invalid", "capability signature is not valid base64");
     }
-    if (signature.length !== 64 || !verify(null, Buffer.from(canonicalize(token.payload), "utf8"), key, signature)) {
+    const signature = Buffer.from(token.signature.signatureBase64, "base64");
+    if (signature.length !== 64 || signature.toString("base64") !== token.signature.signatureBase64 ||
+        !verify(null, Buffer.from(canonicalize(token.payload), "utf8"), key, signature)) {
       throw new CapabilitySecurityError("signature_invalid", "capability token signature verification failed");
     }
     const now = expectation.nowEpochMs ?? Date.now();
@@ -776,6 +786,9 @@ export function validateCapabilityPayload(payload: CapabilityTokenV1): void {
   if (payload.parentTokenDigest !== null && !/^[a-f0-9]{64}$/.test(payload.parentTokenDigest)) {
     throw new CapabilitySecurityError("token_schema_invalid", "parent token digest must be SHA-256 hex or null");
   }
+  if ((payload.parentTokenDigest === null) !== (payload.delegationDepth === 0)) {
+    throw new CapabilitySecurityError("token_schema_invalid", "root tokens must have depth zero and delegated tokens must name a parent digest");
+  }
   if (!payload.delegation || typeof payload.delegation.enabled !== "boolean") throw new CapabilitySecurityError("delegation_invalid", "delegation policy is missing");
   assertSafeInteger(payload.delegation.maxDepth, "delegation.maxDepth");
   if (payload.delegation.maxDepth < payload.delegationDepth) throw new CapabilitySecurityError("delegation_invalid", "delegation depth exceeds policy");
@@ -873,6 +886,10 @@ export class AttenuatedCapabilityBuilderV1 implements AttenuatedCapabilityBuilde
       throw new CapabilitySecurityError("capability_revoked", "parent capability or an ancestor has been revoked");
     }
     const parent = this.parent.payload;
+    if (this.signer.keyId !== this.parent.signature.keyId ||
+        this.signer.principalId !== parent.issuerPrincipalId) {
+      throw new CapabilitySecurityError("delegation_signer_mismatch", "attenuation must use the trusted signer bound to the parent issuer");
+    }
     if (!parent.delegation.enabled || parent.delegationDepth >= parent.delegation.maxDepth) {
       throw new CapabilitySecurityError("delegation_forbidden", "parent capability cannot be delegated further");
     }
@@ -909,7 +926,7 @@ export class AttenuatedCapabilityBuilderV1 implements AttenuatedCapabilityBuilde
     const childPayload: CapabilityTokenV1 = deepFreeze({
       schema: CAPABILITY_TOKEN_SCHEMA,
       tokenId: this.makeId(),
-      issuerPrincipalId: parent.subjectPrincipalId,
+      issuerPrincipalId: parent.issuerPrincipalId,
       subjectPrincipalId: rule.subjectPrincipalId,
       audience: parent.audience,
       nonce: this.makeId(),
