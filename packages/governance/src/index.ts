@@ -43,3 +43,11 @@ export type {
   VerificationObjective,
   VerificationStatus,
 } from './types.js';
+
+export * from './kel.js';
+
+export * from './kel-rpc.js';
+export * from './witness.js';
+export * from './legacy-kel-adapter.js';
+export * from './signer-agent.js';
+export * from './witness-network.js';

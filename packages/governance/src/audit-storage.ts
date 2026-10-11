@@ -1,12 +1,25 @@
-import { appendFileSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { appendFileSync, chmodSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
 import type { AuditRecord } from "./types.js";
 
+export interface AuditOutboxItem {
+  readonly eventId: string;
+  readonly payloadJson: string;
+  readonly createdAtEpochMs: string;
+}
+export interface AuditOutboxRecord extends AuditOutboxItem {
+  readonly attempts: number;
+  readonly lastError: string | null;
+}
 export interface AuditStorageAdapter {
   load(): readonly AuditRecord[];
   append(record: AuditRecord): void;
+  appendWithOutbox?(record: AuditRecord, outbox: AuditOutboxItem): void;
+  loadPendingOutbox?(limit: number): readonly AuditOutboxRecord[];
+  markOutboxDelivered?(eventId: string, receiptJson: string): void;
+  markOutboxFailure?(eventId: string, errorMessage: string): void;
   close?(): void;
 }
 
@@ -41,6 +54,7 @@ function freezeRecords(records: readonly AuditRecord[]): readonly AuditRecord[] 
 
 export class InMemoryAuditStorageAdapter implements AuditStorageAdapter {
   private readonly recordsStore: AuditRecord[];
+  private readonly outboxStore = new Map<string, AuditOutboxRecord & { status: "pending" | "delivered"; receiptJson: string | null }>();
 
   public constructor(records: readonly AuditRecord[] = []) {
     this.recordsStore = [...records];
@@ -63,6 +77,32 @@ export class InMemoryAuditStorageAdapter implements AuditStorageAdapter {
     }
 
     this.recordsStore.push(record);
+  }
+
+  public appendWithOutbox(record: AuditRecord, outbox: AuditOutboxItem): void {
+    if (!outbox.eventId || !/^(0|[1-9][0-9]*)$/.test(outbox.createdAtEpochMs)) throw new Error("invalid outbox item");
+    JSON.parse(outbox.payloadJson);
+    if (this.outboxStore.has(outbox.eventId)) throw new Error("outbox event ID conflict");
+    this.append(record);
+    this.outboxStore.set(outbox.eventId, { ...outbox, attempts: 0, lastError: null, status: "pending", receiptJson: null });
+  }
+
+  public loadPendingOutbox(limit: number): readonly AuditOutboxRecord[] {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new RangeError("outbox limit must be 1..1000");
+    return [...this.outboxStore.values()].filter((row) => row.status === "pending").slice(0, limit)
+      .map(({ eventId, payloadJson, createdAtEpochMs, attempts, lastError }) => ({ eventId, payloadJson, createdAtEpochMs, attempts, lastError }));
+  }
+
+  public markOutboxDelivered(eventId: string, receiptJson: string): void {
+    const row = this.outboxStore.get(eventId);
+    if (!row) throw new Error("outbox item not found");
+    this.outboxStore.set(eventId, { ...row, status: "delivered", receiptJson, lastError: null });
+  }
+
+  public markOutboxFailure(eventId: string, errorMessage: string): void {
+    const row = this.outboxStore.get(eventId);
+    if (!row) throw new Error("outbox item not found");
+    this.outboxStore.set(eventId, { ...row, attempts: row.attempts + 1, lastError: errorMessage.slice(0, 2000) });
   }
 }
 
@@ -150,17 +190,34 @@ export class SqliteAuditStorageAdapter implements AuditStorageAdapter {
       );
     }
     if (!path.trim()) throw new Error("SQLite audit path is required");
-    mkdirSync(dirname(resolve(path)), { recursive: true });
+    const databasePath = resolve(path);
+    const parentPath = dirname(databasePath);
+    mkdirSync(parentPath, { recursive: true, mode: 0o700 });
+    const parentMetadata = lstatSync(parentPath);
+    if (parentMetadata.isSymbolicLink() || !parentMetadata.isDirectory() ||
+        (parentMetadata.mode & 0o077) !== 0) {
+      throw new Error("SQLite audit parent directory must be private (mode 0700 or stricter)");
+    }
+    try {
+      const existing = lstatSync(databasePath);
+      if (existing.isSymbolicLink() || !existing.isFile()) {
+        throw new Error("SQLite audit database path must be a regular file, not a symlink");
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
 
     const busyTimeoutMs = options.busyTimeoutMs ?? 5_000;
     if (!Number.isInteger(busyTimeoutMs) || busyTimeoutMs < 0) {
       throw new RangeError("busyTimeoutMs must be a non-negative integer");
     }
 
-    this.database = new DatabaseSync(resolve(path), {
+    this.database = new DatabaseSync(databasePath, {
       timeout: busyTimeoutMs,
       enableForeignKeyConstraints: true,
     });
+    // The database and derived WAL/SHM files are private to the service account.
+    chmodSync(databasePath, 0o600);
     this.database.exec("PRAGMA journal_mode=WAL;");
     this.database.exec("PRAGMA synchronous=FULL;");
     this.database.exec(`
@@ -182,6 +239,23 @@ export class SqliteAuditStorageAdapter implements AuditStorageAdapter {
       BEGIN
         SELECT RAISE(ABORT, 'audit records are append-only');
       END;
+
+      CREATE TABLE IF NOT EXISTS kel_outbox (
+        event_id TEXT PRIMARY KEY,
+        payload_json TEXT NOT NULL,
+        created_at_epoch_ms TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('pending', 'delivered')),
+        attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
+        last_error TEXT,
+        receipt_json TEXT,
+        delivered_at_epoch_ms TEXT
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS kel_outbox_pending_idx ON kel_outbox(status, created_at_epoch_ms);
+      CREATE TRIGGER IF NOT EXISTS kel_outbox_payload_immutable
+      BEFORE UPDATE OF event_id, payload_json, created_at_epoch_ms ON kel_outbox
+      BEGIN
+        SELECT RAISE(ABORT, 'KEL outbox payloads are immutable');
+      END;
     `);
   }
 
@@ -199,38 +273,74 @@ export class SqliteAuditStorageAdapter implements AuditStorageAdapter {
   }
 
   public append(record: AuditRecord): void {
+    this.persistRecord(record, undefined);
+  }
+
+  public appendWithOutbox(record: AuditRecord, outbox: AuditOutboxItem): void {
+    if (!outbox.eventId || !/^(0|[1-9][0-9]*)$/.test(outbox.createdAtEpochMs)) throw new Error("invalid outbox item");
+    JSON.parse(outbox.payloadJson);
+    this.persistRecord(record, outbox);
+  }
+
+  private persistRecord(record: AuditRecord, outbox: AuditOutboxItem | undefined): void {
     this.database.exec("BEGIN IMMEDIATE;");
     try {
       const last = this.database
         .prepare("SELECT sequence, hash FROM audit_records ORDER BY sequence DESC LIMIT 1")
         .get() as { sequence?: number | bigint; hash?: string } | undefined;
-
       const currentSequence = last?.sequence === undefined ? 0 : Number(last.sequence);
       const currentHash = last?.hash ?? "0".repeat(64);
-
       if (record.sequence !== currentSequence + 1) throw new Error("SQLite audit sequence conflict");
       if (record.previousHash !== currentHash) throw new Error("SQLite audit previous-hash conflict");
 
-      this.database
-        .prepare(
-          "INSERT INTO audit_records (sequence, previous_hash, event_json, hash) VALUES (?, ?, ?, ?)",
-        )
-        .run(
-          record.sequence,
-          record.previousHash,
-          JSON.stringify(record.event),
-          record.hash,
-        );
+      this.database.prepare(
+        "INSERT INTO audit_records (sequence, previous_hash, event_json, hash) VALUES (?, ?, ?, ?)",
+      ).run(record.sequence, record.previousHash, JSON.stringify(record.event), record.hash);
 
+      if (outbox) {
+        this.database.prepare(
+          "INSERT INTO kel_outbox (event_id, payload_json, created_at_epoch_ms, status) VALUES (?, ?, ?, 'pending')",
+        ).run(outbox.eventId, outbox.payloadJson, outbox.createdAtEpochMs);
+      }
       this.database.exec("COMMIT;");
     } catch (error) {
-      try {
-        this.database.exec("ROLLBACK;");
-      } catch {
-        // Preserve the original storage failure.
-      }
+      try { this.database.exec("ROLLBACK;"); } catch { /* preserve the original error */ }
       throw error;
     }
+  }
+
+  public loadPendingOutbox(limit: number): readonly AuditOutboxRecord[] {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new RangeError("outbox limit must be 1..1000");
+    const rows = this.database.prepare(
+      "SELECT event_id, payload_json, created_at_epoch_ms, attempts, last_error FROM kel_outbox WHERE status='pending' ORDER BY created_at_epoch_ms, event_id LIMIT ?",
+    ).all(limit) as unknown as Array<{
+      event_id: string; payload_json: string; created_at_epoch_ms: string;
+      attempts: number | bigint; last_error: string | null;
+    }>;
+    return rows.map((row) => ({
+      eventId: row.event_id,
+      payloadJson: row.payload_json,
+      createdAtEpochMs: row.created_at_epoch_ms,
+      attempts: Number(row.attempts),
+      lastError: row.last_error,
+    }));
+  }
+
+  public markOutboxDelivered(eventId: string, receiptJson: string): void {
+    const result = this.database.prepare(
+      "UPDATE kel_outbox SET status='delivered', receipt_json=?, delivered_at_epoch_ms=?, last_error=NULL WHERE event_id=? AND status='pending'",
+    ).run(receiptJson, String(Date.now()), eventId);
+    if (Number(result.changes) !== 1) {
+      const row = this.database.prepare("SELECT status FROM kel_outbox WHERE event_id=?").get(eventId) as { status?: string } | undefined;
+      if (row?.status !== "delivered") throw new Error("pending KEL outbox event was not found");
+    }
+  }
+
+  public markOutboxFailure(eventId: string, errorMessage: string): void {
+    const result = this.database.prepare(
+      "UPDATE kel_outbox SET attempts=attempts+1, last_error=? WHERE event_id=? AND status='pending'",
+    ).run(errorMessage.slice(0, 2000), eventId);
+    if (Number(result.changes) !== 1) throw new Error("pending KEL outbox event was not found");
   }
 
   public close(): void {

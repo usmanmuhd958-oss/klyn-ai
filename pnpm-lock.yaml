@@ -221,6 +221,10 @@ importers:
   packages/workflow-engine: {}
 
   packages/autonomy:
+    dependencies:
+      '@klyn/governance':
+        specifier: workspace:*
+        version: link:../governance
     devDependencies:
       '@types/node':
         specifier: ^24.0.0

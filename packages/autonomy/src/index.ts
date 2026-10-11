@@ -196,3 +196,6 @@ export class RealTimeContainmentInterceptor {
     return this.ledger.isTerminated();
   }
 }
+
+export * from "./capability.js";
+export * from "./kel-evidence-sink.js";
