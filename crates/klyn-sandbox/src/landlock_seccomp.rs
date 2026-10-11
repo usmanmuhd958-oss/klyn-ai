@@ -189,6 +189,31 @@ pub fn open_scoped_directory(root: BorrowedFd<'_>, relative_path: &str) -> Resul
     }
 }
 
+/// Open a file or directory beneath a registered root descriptor. Paths must be relative
+/// and canonical; symlinks and magic links are denied by the kernel's openat2 resolver.
+pub fn open_beneath(root: BorrowedFd<'_>, relative_path: &str, flags: i32, mode: u32) -> Result<OwnedFd> {
+    if relative_path.is_empty() || relative_path.starts_with('/') || relative_path.contains('\0') ||
+        relative_path.split('/').any(|part| part.is_empty() || part == "." || part == "..") {
+        return Err(SandboxError::Denied("resource path must be canonical relative syntax".into()));
+    }
+    let c_path = CString::new(relative_path).map_err(|_| SandboxError::Denied("resource path contains NUL".into()))?;
+    let how = OpenHow {
+        flags: (flags | libc::O_CLOEXEC) as u64,
+        mode: mode as u64,
+        resolve: RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS,
+    };
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    return Err(SandboxError::UnsupportedKernel("openat2 syscall number is not configured for this architecture".into()));
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    {
+        let fd = unsafe {
+            libc::syscall(SYS_OPENAT2_LINUX, root.as_raw_fd(), c_path.as_ptr(), &how, std::mem::size_of::<OpenHow>())
+        };
+        if fd < 0 { return Err(io::Error::last_os_error().into()); }
+        Ok(unsafe { OwnedFd::from_raw_fd(fd as RawFd) })
+    }
+}
+
 /// Enforce a deny-by-default filesystem policy. Every intended readable/writable baseline
 /// path must be an explicit LandlockPathRule; an empty rule list denies all handled FS rights.
 pub fn apply_landlock_rules(rules: &[LandlockPathRule]) -> Result<i32> {
