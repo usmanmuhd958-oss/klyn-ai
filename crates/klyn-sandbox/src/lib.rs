@@ -749,7 +749,41 @@ pub struct CgroupV2 {
     cpu_budget_ms: u64,
 }
 
+/// Derive an average CPU-rate ceiling from the signed cumulative CPU-time and
+/// wall-clock budgets. The independent cpu.stat monitor still enforces the hard
+/// cumulative CPU-time ceiling. `max_cpu_cores` limits the maximum burst concurrency.
+pub fn cpu_quota_for_budget(
+    budget: &CapabilityBudget,
+    max_cpu_cores: u32,
+    period_us: u64,
+) -> Result<u64> {
+    budget.validate()?;
+    if max_cpu_cores == 0 || max_cpu_cores > 1000 || period_us == 0 ||
+        budget.max_cpu_ms_per_invocation == 0 || budget.max_wall_clock_ms_per_invocation == 0 {
+        return Err(SandboxError::InvalidCapability("CPU-time, wall-clock and CPU-core limits must be positive and bounded".into()));
+    }
+    let period = period_us as u128;
+    let cpu_ms = budget.max_cpu_ms_per_invocation as u128;
+    let wall_ms = budget.max_wall_clock_ms_per_invocation as u128;
+    let max_quota = period.saturating_mul(max_cpu_cores as u128);
+    let requested = period.saturating_mul(cpu_ms).saturating_add(wall_ms - 1) / wall_ms;
+    let quota = requested.min(max_quota).max(1000);
+    Ok(quota as u64)
+}
+
 impl CgroupV2 {
+    pub fn create_for_budget(
+        delegated_root: &Path,
+        name: &str,
+        budget: &CapabilityBudget,
+        io_limit: Option<&CgroupIoLimit>,
+        max_cpu_cores: u32,
+    ) -> Result<Self> {
+        let period_us = 100_000;
+        let quota_us = cpu_quota_for_budget(budget, max_cpu_cores, period_us)?;
+        Self::create(delegated_root, name, budget, io_limit, quota_us, period_us)
+    }
+
     pub fn create(
         delegated_root: &Path,
         name: &str,
@@ -801,7 +835,7 @@ impl CgroupV2 {
     }
 
     pub fn enforce_cpu_budget(&self) -> Result<()> {
-        if self.cpu_usage_micros()? / 1_000 > self.cpu_budget_ms {
+        if self.cpu_usage_micros()? >= self.cpu_budget_ms.saturating_mul(1_000) {
             self.kill_all()?;
             return Err(SandboxError::BudgetExceeded("CPU-time budget exceeded; cgroup killed".into()));
         }
@@ -817,6 +851,20 @@ impl CgroupV2 {
         }
         fs::remove_dir(&self.path)?;
         Ok(())
+    }
+}
+
+impl Drop for CgroupV2 {
+    fn drop(&mut self) {
+        if !self.path.exists() { return; }
+        // Never leave an unaccounted workload running because a caller forgot cleanup.
+        let _ = write_control(&self.path, "cgroup.kill", "1");
+        if fs::read_to_string(self.path.join("cgroup.events"))
+            .ok()
+            .is_some_and(|contents| contents.lines().any(|line| line == "populated 0"))
+        {
+            let _ = fs::remove_dir(&self.path);
+        }
     }
 }
 
@@ -909,6 +957,19 @@ mod tests {
         assert_eq!(granted.attenuate(&request).unwrap().max_network_bytes, 1024);
         let denied = RequestedBudget { max_memory_bytes: Some(u64::MAX), ..Default::default() };
         assert!(granted.attenuate(&denied).is_err());
+    }
+
+    #[test]
+    fn cpu_rate_is_derived_from_signed_cpu_and_wall_clock_budgets() {
+        let budget = CapabilityBudget {
+            max_invocations: 4, max_concurrent_invocations: 1,
+            max_wall_clock_ms_per_invocation: 10_000, max_cpu_ms_per_invocation: 2_000,
+            max_memory_bytes: 64 * 1024 * 1024, max_network_bytes: 1024,
+            max_output_bytes: 1024, max_processes: 1, max_financial_spend_minor_units: 0,
+        };
+        assert_eq!(cpu_quota_for_budget(&budget, 2, 100_000).unwrap(), 20_000);
+        assert_eq!(cpu_quota_for_budget(&budget, 1, 100_000).unwrap(), 20_000);
+        assert!(cpu_quota_for_budget(&budget, 0, 100_000).is_err());
     }
 
     #[test]
