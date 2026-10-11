@@ -1081,10 +1081,16 @@ fn new_id() -> String {
 }
 
 fn valid_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= 96
-        && id.starts_with("tx-")
-        && id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
+    if id.len() > 96 {
+        return false;
+    }
+    let Some(suffix) = id.strip_prefix("tx-") else {
+        return false;
+    };
+    !suffix.is_empty()
+        && suffix
+            .split('-')
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_hexdigit()))
 }
 
 fn arg(value: impl AsRef<OsStr>) -> OsString {
