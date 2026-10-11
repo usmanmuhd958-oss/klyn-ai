@@ -25,19 +25,17 @@ use std::{
     io::{self, Read, Write},
     net::{SocketAddr, TcpStream, ToSocketAddrs},
     os::{
-        fd::{AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd, RawFd},
-        unix::{fs::OpenOptionsExt, net::{UnixListener, UnixStream}},
+        fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd, RawFd},
+        unix::{fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt}, net::{UnixListener, UnixStream}},
     },
-    path::{Path, PathBuf},
+    path::Path,
     sync::{atomic::{AtomicBool, AtomicU64, Ordering}, Arc, Mutex},
     thread::{self, JoinHandle},
     time::Duration,
 };
-use sha2::{Digest, Sha256};
 
 use crate::landlock_seccomp::{open_beneath, open_scoped_directory};
 
-const SOCK_CLOEXEC: i32 = libc::SOCK_CLOEXEC;
 const MEMFD_CLOEXEC: u32 = 0x0001;
 const MFD_ALLOW_SEALING: u32 = 0x0002;
 const F_ADD_SEALS: i32 = 1033;
@@ -45,9 +43,6 @@ const F_SEAL_SEAL: i32 = 0x0001;
 const F_SEAL_SHRINK: i32 = 0x0002;
 const F_SEAL_GROW: i32 = 0x0004;
 const F_SEAL_WRITE: i32 = 0x0008;
-const RESOLVE_BENEATH: u64 = 0x08;
-const RESOLVE_NO_SYMLINKS: u64 = 0x04;
-const RESOLVE_NO_MAGICLINKS: u64 = 0x02;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
