@@ -198,7 +198,7 @@ export interface CapabilityVerificationExpectation {
   readonly maxClockSkewMs?: number;
 }
 
-export interface CapabilityDelegation {
+export interface AuthorityDelegation {
   readonly parentTokenDigest: string;
   readonly childToken: CapabilityToken;
   readonly delegatedByPrincipalId: string;
@@ -207,6 +207,8 @@ export interface CapabilityDelegation {
   readonly kelEvidenceId: string;
   readonly kelStatementDigest: string;
 }
+
+export type CapabilityDelegation = AuthorityDelegation;
 
 export type CapabilityEvidenceKind =
   | "capability-granted"
@@ -595,7 +597,7 @@ function validateRelativePathPrefix(path: string): void {
     throw new CapabilitySecurityError("scope_invalid", "filesystem path must be a canonical relative path");
   }
   const segments = path.split("/");
-  if (segments.some((segment) => segment === "." || segment === "..")) {
+  if (segments.some((segment) => segment === "." || segment === ".." || segment === "")) {
     throw new CapabilitySecurityError("scope_invalid", "filesystem path traversal segments are forbidden");
   }
 }
@@ -645,7 +647,7 @@ export function validateCapabilityScope(scope: CapabilityScope): void {
         throw new CapabilitySecurityError("scope_invalid", "process argv prefixes must be explicit");
       }
       for (const argv of scope.argvPrefixes) {
-        if (!Array.isArray(argv) || argv.some((arg) => typeof arg !== "string" || arg.includes("\\0"))) {
+        if (!Array.isArray(argv) || argv.length === 0 || argv.some((arg) => typeof arg !== "string" || arg.includes("\\0"))) {
           throw new CapabilitySecurityError("scope_invalid", "argv prefixes must contain only strings without NUL");
         }
       }
@@ -844,8 +846,8 @@ export class AttenuatedCapabilityBuilderV1 implements AttenuatedCapabilityBuilde
       kind: "capability-attenuated",
       occurredAtEpochMs: now,
       principalId: this.callerPrincipalId,
-      missionId: "delegation",
-      runtimeInstanceId: parent.audience,
+      missionId: rule.missionId,
+      runtimeInstanceId: rule.runtimeInstanceId,
       tokenId: childPayload.tokenId,
       tokenDigest: digestCapabilityToken(childToken),
       parentTokenDigest: childPayload.parentTokenDigest,
