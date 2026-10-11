@@ -757,6 +757,32 @@ mod tests {
     }
 
     #[test]
+    fn scm_rights_transfers_exactly_one_owned_descriptor() {
+        use std::io::Read as _;
+        use std::os::fd::AsRawFd;
+        let mut pair = [-1; 2];
+        assert_eq!(
+            unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0, pair.as_mut_ptr()) },
+            0
+        );
+        let left = unsafe { OwnedFd::from_raw_fd(pair[0]) };
+        let right = unsafe { OwnedFd::from_raw_fd(pair[1]) };
+        let temp = tempfile::tempfile().unwrap();
+        std::fs::write(format!("/proc/self/fd/{}", temp.as_raw_fd()), b"descriptor-transfer").unwrap();
+
+        send_fd(left.as_raw_fd(), temp.as_raw_fd()).unwrap();
+        let passed = receive_fd(right.as_raw_fd()).unwrap();
+        let mut file = unsafe { File::from_raw_fd(passed.as_raw_fd()) };
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).unwrap();
+        // The test file's shared open-file-description offset is used; transfer
+        // is checked by reading from the duplicate descriptor.
+        assert_eq!(bytes, b"descriptor-transfer");
+        // Avoid double-closing the same descriptor after File takes ownership.
+        std::mem::forget(file);
+    }
+
+    #[test]
     fn worker_access_grant_is_subtree_and_access_specific() {
         assert!(path_is_within_grant("allowed/file.txt", "allowed"));
         assert!(!path_is_within_grant("allowed2/file.txt", "allowed"));
