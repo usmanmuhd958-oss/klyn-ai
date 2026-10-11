@@ -8,12 +8,13 @@
 
 use std::{
     ffi::{CString, OsString},
-    io::{Read, Write},
+    io::Read,
     os::fd::FromRawFd,
     os::unix::process::CommandExt,
     process::Command,
 };
 
+const BROKER_FD: i32 = 3;
 const GATE_FD: i32 = 5;
 const MANIFEST_FD: i32 = 4;
 const GATE_RELEASE: u8 = 0xA5;
@@ -96,7 +97,7 @@ fn run() -> Result<(), String> {
         return Err(format!("fork for PID namespace failed: {}", std::io::Error::last_os_error()));
     }
     if pid > 0 {
-        unsafe { libc::close(MANIFEST_FD); }
+        unsafe { libc::close(3); libc::close(MANIFEST_FD); }
         let mut status: libc::c_int = 0;
         loop {
             let result = unsafe { libc::waitpid(pid, &mut status, 0) };
@@ -155,7 +156,7 @@ fn run() -> Result<(), String> {
         // Keep FD 4 for the trusted worker bootstrap to read the sealed
         // manifest, but remove ambient descriptors from this exec boundary.
         for fd in 3..1024 {
-            if fd != MANIFEST_FD {
+            if fd != BROKER_FD && fd != MANIFEST_FD {
                 libc::close(fd);
             }
         }
