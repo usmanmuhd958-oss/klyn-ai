@@ -48,6 +48,31 @@ const acceptedVerification: VerificationReportV1 = {
 };
 
 function testEvent(): CapabilityEvidenceEvent {
+  const attestationPayload = Object.freeze({
+    schema: "urn:klyn:capability-preexecution-attestation:v1" as const,
+    invocationId: "invoke-1",
+    tokenId: "token-1",
+    tokenDigest: "a".repeat(64),
+    principalId: "agent-a",
+    missionId: "mission-1",
+    runtimeInstanceId: "runtime-a",
+    audience: "runtime-a",
+    requestDigest: "b".repeat(64),
+    scopeDigest: "c".repeat(64),
+    policyDigest: "f".repeat(64),
+    sandboxProfileDigest: "d".repeat(64),
+    reservationId: "reservation-1",
+    issuedAtEpochMs: 1500,
+    expiresAtEpochMs: 3000,
+  });
+  const preExecutionAttestation = Object.freeze({
+    payload: attestationPayload,
+    signature: Object.freeze({
+      algorithm: "Ed25519" as const,
+      keyId: producerKeyId,
+      signatureBase64: sign(null, Buffer.from(canonicalizeJcs(attestationPayload)), privateKey).toString("base64"),
+    }),
+  });
   return {
     schema: "urn:klyn:capability-evidence:v1",
     eventId: "event-capability-1",
@@ -62,6 +87,7 @@ function testEvent(): CapabilityEvidenceEvent {
     invocationId: "invoke-1",
     requestDigest: "b".repeat(64),
     policyDigest: "f".repeat(64),
+    preExecutionAttestation,
     outcome: "allowed",
     reasonCode: "pre_execution_attestation_verified",
     details: {
