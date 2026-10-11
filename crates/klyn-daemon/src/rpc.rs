@@ -13,7 +13,7 @@ use std::{
     fs,
     io::{self, Read, Write},
     os::unix::{fs::{DirBuilderExt, FileTypeExt, PermissionsExt}, net::{UnixListener, UnixStream}},
-    path::Path,
+    path::{Path, PathBuf},
     sync::{atomic::{AtomicBool, AtomicUsize, Ordering}, Arc, Mutex},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -326,6 +326,18 @@ fn handle_connection(
     }
 }
 
+/// Removes only a socket path during every exit path, including startup or accept errors.
+struct SocketPathCleanup(PathBuf);
+impl Drop for SocketPathCleanup {
+    fn drop(&mut self) {
+        if let Ok(metadata) = fs::symlink_metadata(&self.0) {
+            if metadata.file_type().is_socket() {
+                let _ = fs::remove_file(&self.0);
+            }
+        }
+    }
+}
+
 /// Serve the authenticated local RPC protocol. Shutdown is initiated by SIGTERM/SIGINT;
 /// the listener stops accepting, active sessions have bounded I/O timeouts, and the
 /// socket is removed after worker threads finish. Connections are capped before spawn.
@@ -376,6 +388,7 @@ pub fn serve(
     install_shutdown_handlers();
 
     let listener = UnixListener::bind(socket_path)?;
+    let cleanup = SocketPathCleanup(socket_path.to_path_buf());
     fs::set_permissions(socket_path, fs::Permissions::from_mode(0o600))?;
     listener.set_nonblocking(true)?;
     let token = Arc::new(auth_token_hex.into_bytes());
@@ -431,11 +444,7 @@ pub fn serve(
 
     drop(listener);
     for worker in workers { let _ = worker.join(); }
-    match fs::remove_file(socket_path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
-    }
+    drop(cleanup);
     Ok(())
 }
 
