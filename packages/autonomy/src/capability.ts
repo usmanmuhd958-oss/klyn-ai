@@ -1444,6 +1444,13 @@ export class CapabilityInvocationPipelineV1 implements CapabilityInvocationPipel
 
       await this.dependencies.sandbox.assertEnforced(lease, request);
       const dispatchAt = this.now();
+      if (await this.dependencies.revocations.isRevoked(
+        request.token.payload.tokenId,
+        tokenDigest,
+        dispatchAt,
+      )) {
+        throw new CapabilitySecurityError("capability_revoked", "capability or an ancestor was revoked before dispatch");
+      }
       const remainingMs = effectiveDeadlineEpochMs - dispatchAt;
       if (remainingMs <= 0 || lease.expiresAtEpochMs <= dispatchAt) {
         throw new CapabilitySecurityError("deadline_expired", "sandbox lease expired before dispatch");
