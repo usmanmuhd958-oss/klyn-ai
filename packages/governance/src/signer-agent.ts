@@ -1,8 +1,8 @@
 import {
+  createHash,
   createPublicKey,
-  randomUUID,
+  timingSafeEqual,
   verify,
-  type KeyObject,
 } from 'node:crypto';
 import {
   chmodSync,
@@ -11,7 +11,7 @@ import {
   rmSync,
 } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { createServer, type Server, type Socket } from 'node:net';
+import { createServer, type Server } from 'node:net';
 
 const PROTOCOL_VERSION = 1;
 const MAX_FRAME_BYTES = 64 * 1024;
@@ -78,17 +78,10 @@ function sameToken(expected: string, actual: string): boolean {
   return a.length === b.length && timingSafeEqualBuffer(a, b);
 }
 function timingSafeEqualBuffer(a: Buffer, b: Buffer): boolean {
-  // Use a fixed-width digest comparison so length differences don't reveal a prefix.
-  const { createHash, timingSafeEqual } = requireCrypto();
   const ah = createHash('sha256').update(a).digest();
   const bh = createHash('sha256').update(b).digest();
   return timingSafeEqual(ah, bh) && a.length === b.length;
 }
-function requireCrypto(): typeof import('node:crypto') {
-  // Static Node builtin import avoids runtime dependency loading.
-  return cryptoModule;
-}
-import * as cryptoModule from 'node:crypto';
 
 function requestShape(value: unknown): SignerRequest | undefined {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
