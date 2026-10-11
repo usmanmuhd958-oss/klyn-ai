@@ -14,9 +14,10 @@ use std::{
     io::{self, Read, Write},
     os::unix::{fs::{FileTypeExt, PermissionsExt}, net::{UnixListener, UnixStream}},
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{atomic::{AtomicBool, AtomicUsize, Ordering}, Arc, Mutex},
     thread,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
+    os::fd::AsRawFd,
 };
 
 const PROTOCOL_VERSION: u32 = 1;
@@ -201,7 +202,78 @@ fn dispatch(request: &RpcRequestV1, token: &[u8], store: &Arc<Mutex<EvidenceStor
     }
 }
 
-fn handle_connection(mut stream: UnixStream, token: Arc<Vec<u8>>, store: Arc<Mutex<EvidenceStore>>) {
+static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn shutdown_signal_handler(_: libc::c_int) {
+    SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
+}
+
+fn install_shutdown_handlers() {
+    // The signal handler only flips an atomic flag. Cleanup happens on the main thread.
+    unsafe {
+        libc::signal(libc::SIGTERM, shutdown_signal_handler as libc::sighandler_t);
+        libc::signal(libc::SIGINT, shutdown_signal_handler as libc::sighandler_t);
+    }
+}
+
+fn peer_uid(stream: &UnixStream) -> io::Result<u32> {
+    #[cfg(target_os = "linux")]
+    {
+        let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
+        let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+        let result = unsafe {
+            libc::getsockopt(
+                stream.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_PEERCRED,
+                (&mut credentials as *mut libc::ucred).cast(),
+                &mut length,
+            )
+        };
+        if result != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        return Ok(credentials.uid);
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = stream;
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "peer credential authentication requires Linux SO_PEERCRED",
+        ))
+    }
+}
+
+fn try_acquire_connection(active: &AtomicUsize, maximum: usize) -> bool {
+    let mut current = active.load(Ordering::Acquire);
+    loop {
+        if current >= maximum { return false; }
+        match active.compare_exchange_weak(
+            current, current + 1, Ordering::AcqRel, Ordering::Acquire,
+        ) {
+            Ok(_) => return true,
+            Err(observed) => current = observed,
+        }
+    }
+}
+
+struct ConnectionPermit(Arc<AtomicUsize>);
+impl Drop for ConnectionPermit {
+    fn drop(&mut self) { self.0.fetch_sub(1, Ordering::Release); }
+}
+
+fn handle_connection(
+    mut stream: UnixStream,
+    token: Arc<Vec<u8>>,
+    store: Arc<Mutex<EvidenceStore>>,
+    active: Arc<AtomicUsize>,
+) {
+    let _permit = ConnectionPermit(active);
+    if stream.set_read_timeout(Some(Duration::from_secs(5))).is_err()
+        || stream.set_write_timeout(Some(Duration::from_secs(5))).is_err() {
+        return;
+    }
     loop {
         let frame = match read_frame(&mut stream) {
             Ok(Some(frame)) => frame,
@@ -219,14 +291,35 @@ fn handle_connection(mut stream: UnixStream, token: Arc<Vec<u8>>, store: Arc<Mut
     }
 }
 
-/// Start the service. The caller owns lifecycle/shutdown (normally the process supervisor).
-pub fn serve(socket_path: impl AsRef<Path>, auth_token_hex: String, store: EvidenceStore) -> io::Result<()> {
+/// Serve the authenticated local RPC protocol. Shutdown is initiated by SIGTERM/SIGINT;
+/// the listener stops accepting, active sessions have bounded I/O timeouts, and the
+/// socket is removed after worker threads finish. Connections are capped before spawn.
+pub fn serve(
+    socket_path: impl AsRef<Path>,
+    auth_token_hex: String,
+    store: EvidenceStore,
+    allowed_uid: u32,
+    max_connections: usize,
+) -> io::Result<()> {
     if auth_token_hex.len() != 64 || !auth_token_hex.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "KEL RPC token must be 32 bytes of hex"));
+    }
+    if max_connections == 0 || max_connections > 1024 {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "max_connections must be in 1..=1024"));
     }
     let socket_path = socket_path.as_ref();
     if let Some(parent) = socket_path.parent() {
         fs::create_dir_all(parent)?;
+        // A private parent directory prevents another local user from replacing the
+        // socket path between startup checks and bind. It is created only if absent.
+        if let Ok(metadata) = fs::metadata(parent) {
+            if metadata.permissions().mode() & 0o077 != 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "socket parent directory must be private (mode 0700 or stricter)",
+                ));
+            }
+        }
     }
 
     match fs::symlink_metadata(socket_path) {
@@ -244,26 +337,73 @@ pub fn serve(socket_path: impl AsRef<Path>, auth_token_hex: String, store: Evide
         Err(error) => return Err(error),
     }
 
+    SHUTDOWN_REQUESTED.store(false, Ordering::SeqCst);
+    install_shutdown_handlers();
+
     let listener = UnixListener::bind(socket_path)?;
     fs::set_permissions(socket_path, fs::Permissions::from_mode(0o600))?;
+    listener.set_nonblocking(true)?;
     let token = Arc::new(auth_token_hex.into_bytes());
     let store = Arc::new(Mutex::new(store));
+    let active = Arc::new(AtomicUsize::new(0));
+    let mut workers = Vec::new();
 
-    for incoming in listener.incoming() {
-        match incoming {
-            Ok(stream) => {
-                let token = Arc::clone(&token);
-                let store = Arc::clone(&store);
-                thread::Builder::new()
+    while !SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
+        match listener.accept() {
+            Ok((stream, _address)) => {
+                // Linux peer credentials restrict local IPC to a configured process UID;
+                // the bearer token still limits accidental cross-service access.
+                match peer_uid(&stream) {
+                    Ok(uid) if uid == allowed_uid => {}
+                    _ => continue,
+                }
+                if !try_acquire_connection(&active, max_connections) {
+                    // Capacity exhaustion is fail-closed; the connection is dropped without
+                    // parsing attacker-controlled requests or spawning another thread.
+                    continue;
+                }
+                let worker_active = Arc::clone(&active);
+                let worker_token = Arc::clone(&token);
+                let worker_store = Arc::clone(&store);
+                match thread::Builder::new()
                     .name("kel-rpc-client".into())
-                    .spawn(move || handle_connection(stream, token, store))?;
+                    .spawn(move || handle_connection(stream, worker_token, worker_store, worker_active)) {
+                    Ok(handle) => workers.push(handle),
+                    Err(error) => {
+                        active.fetch_sub(1, Ordering::Release);
+                        return Err(error);
+                    }
+                }
+                // Reap completed workers so the handle list is bounded by active sessions
+                // plus recently completed connections, rather than total lifetime requests.
+                let mut index = 0;
+                while index < workers.len() {
+                    if workers[index].is_finished() {
+                        let handle = workers.swap_remove(index);
+                        let _ = handle.join();
+                    } else {
+                        index += 1;
+                    }
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(20));
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
             Err(error) => return Err(error),
         }
     }
+
+    drop(listener);
+    for worker in workers { let _ = worker.join(); }
+    match fs::remove_file(socket_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
     Ok(())
 }
+
 
 #[cfg(test)]
 mod framing_tests {
