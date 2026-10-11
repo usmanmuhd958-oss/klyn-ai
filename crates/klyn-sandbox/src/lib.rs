@@ -335,7 +335,8 @@ impl CgroupV2 {
         if pid == 0 {
             return Err(SandboxError::InvalidConfig("PID zero is invalid".into()));
         }
-        write_control(&self.path.join("cgroup.procs"), &pid.to_string())
+        write_control(&self.path.join("cgroup.procs"), &pid.to_string())?;
+        Ok(())
     }
 
     pub fn kill_all(&self) -> Result<(), SandboxError> {
@@ -345,7 +346,8 @@ impl CgroupV2 {
                 "cgroup.kill is unavailable; refusing an incomplete group kill".into(),
             ));
         }
-        write_control(&path, "1")
+        write_control(&path, "1")?;
+        Ok(())
     }
 }
 
