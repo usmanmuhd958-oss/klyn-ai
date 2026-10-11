@@ -32,9 +32,9 @@ use nix::sys::socket::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    path_is_within_grant, validate_relative_path, CapabilityClaims, FileAccess, FileGrant,
-    NetworkGrant, SandboxError, SignedCapability, CANDIDATE_ROOT_ID, MAX_BROKER_FRAME_BYTES,
-    MAX_MUTATION_BYTES,
+    candidate_root_id, is_candidate_root_id, path_is_within_grant, validate_relative_path,
+    CapabilityClaims, FileAccess, FileGrant, NetworkGrant, SandboxError, SignedCapability,
+    MAX_BROKER_FRAME_BYTES, MAX_MUTATION_BYTES,
 };
 
 pub trait CapabilityVerifier: Send + Sync + 'static {
@@ -422,7 +422,7 @@ fn execute_request(
         } => {
             validate_relative_path(&path, false)
                 .map_err(|_| "invalid relative path".to_string())?;
-            if root_id == crate::CANDIDATE_ROOT_ID && access != FileAccess::Read {
+            if is_candidate_root_id(&root_id) && access != FileAccess::Read {
                 return Err(
                     "candidate workspace writes must use klyn-fs transactional IPC".to_string(),
                 );
@@ -467,10 +467,12 @@ fn execute_request(
                     "candidate mutation capability is not bound to this transaction".into(),
                 );
             }
+            let candidate_root = candidate_root_id(&transaction_id)
+                .map_err(|_| "invalid candidate transaction ID".to_string())?;
             if !claims.file_grants.iter().any(|grant| {
-                grant.root_id == CANDIDATE_ROOT_ID
-                    && grant.prefix == transaction_id
+                grant.root_id == candidate_root
                     && grant.access == FileAccess::Read
+                    && path_is_within_grant(&path, &grant.prefix)
             }) {
                 return Err("candidate transaction is outside capability scope".into());
             }
@@ -972,8 +974,8 @@ mod tests {
             nix::unistd::getegid().as_raw(),
         );
         claims.file_grants = vec![FileGrant {
-            root_id: crate::CANDIDATE_ROOT_ID.into(),
-            prefix: "tx-a-1-1".into(),
+            root_id: candidate_root_id("tx-a-1-1").unwrap(),
+            prefix: "".into(),
             access: FileAccess::Read,
         }];
         claims.candidate_transaction_id = Some("tx-a-1-1".into());
@@ -987,7 +989,7 @@ mod tests {
         let result = execute_request(
             &claims,
             BrokerOperation::OpenFile {
-                root_id: crate::CANDIDATE_ROOT_ID.into(),
+                root_id: candidate_root_id("tx-a-1-1").unwrap(),
                 path: "README.md".into(),
                 access: FileAccess::Write,
             },

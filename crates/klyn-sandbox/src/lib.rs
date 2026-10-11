@@ -35,9 +35,19 @@ pub const OCAP_VERSION: u32 = 1;
 pub const MAX_BROKER_FRAME_BYTES: usize = 64 * 1024;
 pub const BROKER_FD: i32 = 3;
 pub const MANIFEST_FD: i32 = 4;
-/// Reserved root ID for the candidate workspace. Workers may read through the
-/// broker, but writes must go through klyn-fs preimage-checked transactions.
-pub const CANDIDATE_ROOT_ID: &str = "candidate";
+/// Candidate root IDs include the immutable transaction ID.
+pub const CANDIDATE_ROOT_PREFIX: &str = "candidate-";
+
+pub fn candidate_root_id(transaction_id: &str) -> Result<String, SandboxError> {
+    validate_cgroup_id(transaction_id)?;
+    Ok(format!("{CANDIDATE_ROOT_PREFIX}{transaction_id}"))
+}
+
+pub fn is_candidate_root_id(root_id: &str) -> bool {
+    root_id
+        .strip_prefix(CANDIDATE_ROOT_PREFIX)
+        .is_some_and(|transaction_id| validate_cgroup_id(transaction_id).is_ok())
+}
 
 #[derive(Debug, Error)]
 pub enum SandboxError {
@@ -225,25 +235,32 @@ impl CapabilityClaims {
                 ));
             }
             validate_relative_path(&grant.prefix, true)?;
-            if grant.root_id == CANDIDATE_ROOT_ID {
+            if is_candidate_root_id(&grant.root_id) {
                 if grant.access != FileAccess::Read {
                     return Err(SandboxError::InvalidConfig(
-                        "candidate workspace file grants must be read-only".into(),
+                        "candidate workspace grants must be read-only".into(),
                     ));
                 }
-                if self.candidate_transaction_id.as_deref() != Some(grant.prefix.as_str()) {
+                let transaction_id = self.candidate_transaction_id.as_deref().ok_or_else(|| {
+                    SandboxError::InvalidConfig(
+                        "candidate root grant requires an exact transaction binding".into(),
+                    )
+                })?;
+                if grant.root_id != candidate_root_id(transaction_id)? {
                     return Err(SandboxError::InvalidConfig(
-                        "candidate file grant must be bound to the exact candidate transaction"
-                            .into(),
+                        "candidate root ID does not match the bound transaction".into(),
                     ));
                 }
             }
         }
         if self.candidate_write_enabled
             && !self.file_grants.iter().any(|grant| {
-                grant.root_id == CANDIDATE_ROOT_ID
-                    && self.candidate_transaction_id.as_deref() == Some(grant.prefix.as_str())
-                    && grant.access == FileAccess::Read
+                self.candidate_transaction_id
+                    .as_deref()
+                    .and_then(|id| candidate_root_id(id).ok())
+                    .is_some_and(|root_id| {
+                        grant.root_id == root_id && grant.access == FileAccess::Read
+                    })
             })
         {
             return Err(SandboxError::InvalidConfig(
