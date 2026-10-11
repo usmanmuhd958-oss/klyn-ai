@@ -34,17 +34,17 @@ This function does not hide the extra fork requirement behind an unsafe in-proce
 
 ### Landlock
 
-open_scoped_directory uses openat2 with RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS against an already-registered root descriptor. A token's relative subtree is resolved against that root; it is not interpreted as an absolute host path. scope_landlock_rule maps only the granted filesystem operations to Landlock rights. apply_landlock_rules sets PR_SET_NO_NEW_PRIVS, creates the ruleset, adds explicit directory rules, and restricts the current worker.
+open_scoped_directory uses openat2 with RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS against an already-registered root descriptor. A token's relative subtree is resolved against that root; it is not interpreted as an absolute host path. scope_landlock_rule maps only the granted filesystem operations to Landlock rights. apply_landlock_rules first checks that the launcher is single-threaded, then sets PR_SET_NO_NEW_PRIVS, creates the ruleset, adds explicit directory rules, and restricts the worker. Landlock restrictions are per-thread and inherited by children; do not call this from a multi-threaded shared daemon.
 
-All access rights handled by the detected ABI are denied by default except rights explicitly granted to an approved directory. Write-capable scopes require ABI v3 or later because earlier ABIs cannot mediate truncation safely. Unknown/disabled Landlock is an error, not a request to run without a filter.
+All filesystem rights handled by the detected ABI are denied by default except rights explicitly granted to an approved directory. The production profile requires Landlock ABI v6+ for the configured network/IPC scoping contract; filesystem truncate rights are only mapped where ABI support is available. TCP/UDP network rights are marked as handled and no arbitrary destination rules are added for the worker, so direct network access is denied. Exact host resolution and allow-list checks live in the native broker, since a Landlock port rule alone cannot prove a hostname authorization. Unknown/disabled/too-old Landlock is a hard launch denial.
 
 Landlock cannot fully mediate metadata calls such as every stat-like operation. fs.metadata therefore remains a broker-mediated operation; the worker does not receive a general host path API. Runtime baseline directories (libraries, certificates, etc.) must be separately opened and explicitly added to the Landlock policy with only required read/execute rights. Do not add / as a general baseline root.
 
 ### seccomp-BPF
 
-seccomp_program checks the native audit architecture first and kills a mismatched architecture. The profile returns EPERM for raw open/openat/openat2, socket creation/connect/bind/listen/accept, execve/execveat, fork/clone, mount/pivot/chroot, namespace changes, ptrace, BPF/perf, userfaultfd, io_uring, and common filesystem mutation syscalls. The program returns allow only after all deny checks have failed. install_agent_seccomp sets PR_SET_NO_NEW_PRIVS before installing the filter.
+seccomp_program checks the native audit architecture first and kills a mismatched architecture. It uses an explicit architecture-specific syscall allow-list: raw open/openat/openat2, socket creation/connect/bind/listen/accept, execve/execveat, fork/clone, mount/pivot/chroot, namespace changes, ptrace, BPF/perf, userfaultfd, io_uring, and other unlisted syscalls return EPERM by default. install_agent_seccomp sets PR_SET_NO_NEW_PRIVS and uses SECCOMP_FILTER_FLAG_TSYNC so the filter is synchronized across the thread group; a synchronization failure is a hard denial.
 
-The agent is expected to use inherited stdio and a pre-opened Unix broker channel. The launcher must close all other inherited descriptors. A passed descriptor is a capability; do not pass an unrestricted daemon socket, host directory FD, raw TCP connection, or unrelated credential-bearing FD. Seccomp reduces syscall surface but is not a standalone sandbox.
+The agent is expected to use inherited stdio and a pre-opened Unix broker channel. The launcher must close all other inherited descriptors. BrokerClient operates on that pre-opened Unix stream and independently verifies the returned invocation ID, token/request/scope/policy digests, trusted collector identity/signature, deadline, and KEL receipt before returning an FD. A passed descriptor is a capability; do not pass an unrestricted daemon socket, host directory FD, raw TCP connection, or unrelated credential-bearing FD. Seccomp reduces syscall surface but is not a standalone sandbox.
 
 ### cgroup v2 and CPU/memory/I/O budgets
 
@@ -70,11 +70,18 @@ The response is a similarly framed urn:klyn:resource-broker-response:v1 JSON obj
 
 The resource registry holds broker-owned directory FDs keyed by immutable handleId and resourceId. File opens use openat2 relative to that root and deny .., symlinks, magic links, absolute paths, and unknown selectors. Read requests return a sealed memfd snapshot capped by the requested and scope byte ceilings. Directory listings are copied to a bounded snapshot. Metadata requests receive only an O_PATH descriptor. Writes/creates receive a pipe FD; a broker worker copies from the pipe to the target file up to the exact byte quota, then closes it and records any violation. Delete operations resolve the parent directory beneath the root and use unlinkat; no user path is concatenated with a privileged root.
 
-No raw target-file descriptor is passed for ordinary reads/writes, which would let a recipient ignore a user-space byte counter. The read snapshot is sealed against further writes. For fs.write/fs.create, overflow fails the background stream and records a failed operation; clients must treat a broken pipe or failed completion record as operation failure.
+No raw target-file descriptor is passed for ordinary reads/writes, which would let a recipient ignore a user-space byte counter. The read snapshot is sealed against further writes. fs.write/fs.create stage data to a sealed-bounds temporary memfd, verify the signed contentDigest, enforce the byte ceiling and deadline, then atomically rename the staged file in the same parent directory. fs.create uses renameat2 no-replace semantics; fs.write replaces only an existing regular file. Quota/digest/timeout failures occur before the target is modified. Clients must treat a broken pipe or failed completion record as operation failure.
 
 ### Network mediation
 
-The worker's seccomp profile denies raw socket creation and connect. The broker resolves the exact hostname/port once, applies NetworkAddressPolicy to each candidate resolved address, and connects to the selected SocketAddr without re-resolving. The agent receives one side of a Unix socketpair; the broker forwards to/from the TCP stream and enforces a shared byte ceiling across both directions. This prevents the worker from getting an unmetered raw TCP socket. The host must configure NetworkAddressPolicy; it has no permissive default and should explicitly decide which private, loopback, link-local, or metadata destinations can be reached.
+The worker's Landlock/seccomp profiles deny direct network socket creation and connect. The broker resolves the exact hostname/port once through the configured NetworkAddressPolicy, filters each resolved SocketAddr, and connects to the selected address without re-resolving. The policy has no permissive default and must explicitly decide which private, loopback, link-local, or metadata destinations may be reached. It must defend against DNS rebinding by using only the vetted resolved addresses for the actual connection.
+
+- net.resolve returns a bounded sealed snapshot of vetted addresses.
+- net.send collects a bounded upload through a broker-mediated Unix socketpair, checks payloadDigest and the deadline, and transmits nothing until the complete payload digest matches.
+- net.receive opens only a vetted destination, reads a bounded response snapshot before returning a sealed memfd, and enforces the deadline.
+- net.connect grants a broker-proxied Unix stream only when the capability grants connect plus both send and receive; the proxy meters a shared bidirectional byte quota and closes at the deadline.
+
+The worker never receives the TCP descriptor directly. Incomplete uploads, digest mismatches, deadline expiry, and unapproved destinations fail closed.
 
 ### Process, memory and IPC operations
 
