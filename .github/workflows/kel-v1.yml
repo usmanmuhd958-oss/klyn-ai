@@ -14,6 +14,8 @@ on:
     branches: [main]
     paths:
       - "Cargo.toml"
+      - "Cargo.lock"
+      - "docs/**"
       - "crates/klyn-evidence/**"
       - "crates/klyn-daemon/**"
       - "packages/governance/**"
@@ -29,14 +31,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Test KEL protocol and daemon storage
-        run: cargo test -p klyn-evidence -p klyn-daemon
-      - name: Capture resolved Cargo.lock for deterministic check-in
-        if: always()
-        shell: bash
-        run: |
-          echo "KEL_LOCKFILE_CAPTURE_BEGIN"
-          cat Cargo.lock
-          echo "KEL_LOCKFILE_CAPTURE_END"
+        run: cargo test --locked -p klyn-evidence -p klyn-daemon
 
   typescript-kel:
     runs-on: ubuntu-latest
