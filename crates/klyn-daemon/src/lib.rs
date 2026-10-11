@@ -570,6 +570,28 @@ impl EvidenceStore {
             return Ok(());
         }
 
+        // New key epochs must be monotonically increasing for every witness identity.
+        let existing_epochs: Vec<String> = {
+            let mut statement = self.connection.prepare(
+                "SELECT key_epoch FROM witness_keys WHERE witness_id=?1",
+            )?;
+            let rows = statement.query_map(params![config.witness_id], |row| row.get::<_, String>(0))?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        let new_epoch = config.key_epoch.parse::<u64>().map_err(|_| {
+            LedgerError::Invariant("invalid witness epoch".into())
+        })?;
+        for epoch in existing_epochs {
+            if epoch.parse::<u64>().unwrap_or(u64::MAX) >= new_epoch {
+                return Err(LedgerError::Invariant("witness key epochs must increase monotonically".into()));
+            }
+        }
+        if let Some(revoked) = &config.revoked_at_epoch_ms {
+            if revoked.parse::<u64>().unwrap() < config.not_before_epoch_ms.parse::<u64>().unwrap() {
+                return Err(LedgerError::Invariant("revocation cannot precede key validity".into()));
+            }
+        }
+
         self.connection.execute(
             "INSERT INTO witness_keys(key_id,witness_id,key_epoch,public_key_hex,not_before_epoch_ms,not_after_epoch_ms,revoked_at_epoch_ms)
              VALUES(?1,?2,?3,?4,?5,?6,?7)",
@@ -626,16 +648,20 @@ impl EvidenceStore {
             if witness.witness_id.trim().is_empty() || !seen.insert(witness.witness_id.clone()) {
                 return Err(LedgerError::Invariant("duplicate or empty witness identity".into()));
             }
-            let key_row: Option<(String, String, String, String, Option<String>)> = self.connection.query_row(
-                "SELECT witness_id, key_epoch, public_key_hex, not_before_epoch_ms, revoked_at_epoch_ms
-                 FROM witness_keys WHERE key_id=?1 AND not_after_epoch_ms > ?2",
-                params![witness.key_id, now_epoch_ms.to_string()],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            let key_row: Option<(String, String, String, String, String, Option<String>)> = self.connection.query_row(
+                "SELECT witness_id, key_epoch, public_key_hex, not_before_epoch_ms, not_after_epoch_ms, revoked_at_epoch_ms
+                 FROM witness_keys WHERE key_id=?1",
+                params![witness.key_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
             ).optional()?;
-            let (registered_witness, registered_epoch, public_hex, not_before, revoked) = key_row
-                .ok_or_else(|| LedgerError::Invariant("unknown, expired, or revoked witness key".into()))?;
+            let (registered_witness, registered_epoch, public_hex, not_before, not_after, revoked) = key_row
+                .ok_or_else(|| LedgerError::Invariant("unknown witness key".into()))?;
+            let valid_from = not_before.parse::<u64>()
+                .map_err(|_| LedgerError::Invariant("invalid registered witness not-before timestamp".into()))?;
+            let valid_until = not_after.parse::<u64>()
+                .map_err(|_| LedgerError::Invariant("invalid registered witness expiry timestamp".into()))?;
             if registered_witness != witness.witness_id || registered_epoch != witness.key_epoch ||
-                revoked.is_some() || not_before.parse::<u64>().unwrap_or(u64::MAX) > now_epoch_ms {
+                revoked.is_some() || valid_from > now_epoch_ms || valid_until <= now_epoch_ms {
                 return Err(LedgerError::Invariant("witness identity, epoch or validity check failed".into()));
             }
             let public_bytes: [u8; 32] = hex::decode(public_hex)?.try_into()
