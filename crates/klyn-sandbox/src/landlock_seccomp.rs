@@ -11,8 +11,8 @@ use std::{
 };
 
 use landlock::{
-    make_bitflags, AccessFs, ABI, CompatLevel, PathBeneath, PathFd, RestrictionStatus,
-    Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus, RestrictSelfAttr,
+    make_bitflags, Access, AccessFs, ABI, CompatLevel, Compatible, PathBeneath, PathFd,
+    RestrictionStatus, Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus, RestrictSelfAttr,
 };
 use seccompiler::{
     BpfProgram, SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition,
@@ -78,9 +78,9 @@ pub fn apply_landlock(
 
         let access = match grant.access {
             FileAccess::Read => make_bitflags!(AccessFs::{ReadFile | ReadDir}),
-            FileAccess::Write => make_bitflags!(AccessFs::{WriteFile | Truncate}),
+            FileAccess::Write => make_bitflags!(AccessFs::{WriteFile}),
             FileAccess::ReadWrite => {
-                make_bitflags!(AccessFs::{ReadFile | ReadDir | WriteFile | Truncate})
+                make_bitflags!(AccessFs::{ReadFile | ReadDir | WriteFile})
             }
         };
         ruleset = ruleset
@@ -147,7 +147,6 @@ pub fn apply_worker_seccomp(broker_fd: RawFd) -> Result<(), SandboxError> {
         libc::SYS_lseek,
         libc::SYS_pread64,
         libc::SYS_pwrite64,
-        libc::SYS_ftruncate,
         libc::SYS_mmap,
         libc::SYS_mprotect,
         libc::SYS_munmap,
@@ -176,15 +175,11 @@ pub fn apply_worker_seccomp(broker_fd: RawFd) -> Result<(), SandboxError> {
         libc::SYS_restart_syscall,
         libc::SYS_fcntl,
         libc::SYS_dup,
-        libc::SYS_dup2,
         libc::SYS_dup3,
-        libc::SYS_poll,
         libc::SYS_ppoll,
         libc::SYS_pselect6,
-        libc::SYS_select,
         libc::SYS_epoll_create1,
         libc::SYS_epoll_ctl,
-        libc::SYS_epoll_wait,
         libc::SYS_epoll_pwait,
         libc::SYS_sendto,
         libc::SYS_recvfrom,
@@ -198,12 +193,19 @@ pub fn apply_worker_seccomp(broker_fd: RawFd) -> Result<(), SandboxError> {
         libc::SYS_exit_group,
         libc::SYS_fsync,
         libc::SYS_fdatasync,
-        libc::SYS_fchmod,
-        libc::SYS_fchown,
-        libc::SYS_umask,
-        libc::SYS_getcwd,
     ];
     for syscall in allowed {
+        rules.entry(syscall).or_default();
+    }
+    // These legacy syscall numbers exist on x86_64 but not on aarch64's
+    // generic syscall ABI. They are harmless descriptor/polling primitives.
+    #[cfg(target_arch = "x86_64")]
+    for syscall in [
+        libc::SYS_dup2,
+        libc::SYS_poll,
+        libc::SYS_select,
+        libc::SYS_epoll_wait,
+    ] {
         rules.entry(syscall).or_default();
     }
 
@@ -257,7 +259,7 @@ mod tests {
         CapabilityClaims {
             version: crate::OCAP_VERSION,
             token_id: "landlock-test".into(),
-            subject_uid: unsafe { libc::geteuid() } as u32,
+            subject_uid: { let uid = unsafe { libc::geteuid() } as u32; if uid == 0 { 1000 } else { uid } },
             subject_gid: unsafe { libc::getegid() } as u32,
             expires_at_unix: u64::MAX,
             file_grants: vec![],
