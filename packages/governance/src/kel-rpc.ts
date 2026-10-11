@@ -42,6 +42,17 @@ export interface KelUnixSocketTransportOptions {
   readonly trustedProducerKeys: ReadonlyMap<string, KeyObject>;
   readonly timeoutMs?: number;
 }
+export interface KelWitnessQuorumStatusV1 {
+  readonly checkpointDigest: string;
+  readonly ledgerId: string;
+  readonly treeSize: string;
+  readonly rootHash: string;
+  readonly threshold: number;
+  readonly validWitnessCount: number;
+  readonly validWitnessIds: readonly string[];
+  readonly accepted: boolean;
+}
+
 export interface KelProofBundleV1 {
   readonly evidenceId: string;
   readonly evidenceEnvelope: DsseEnvelopeV1;
@@ -191,6 +202,22 @@ export class KelUnixSocketTransport implements KelDaemonTransport {
   public async getProof(evidenceId: string): Promise<KelProofBundleV1> {
     if (!evidenceId || evidenceId.length > 256) throw new TypeError('invalid evidenceId');
     return await this.request<KelProofBundleV1>('proof.get', { evidenceId });
+  }
+
+  public async submitWitnessReceipts(
+    checkpointEnvelope: DsseEnvelopeV1,
+    signatures: readonly WitnessSignatureV1[],
+    threshold = 2,
+  ): Promise<KelWitnessQuorumStatusV1> {
+    if (!Number.isSafeInteger(threshold) || threshold < 2 || threshold > 3) {
+      throw new RangeError('witness threshold must be 2 or 3');
+    }
+    if (signatures.length > 3) throw new RangeError('at most three witness signatures may be submitted');
+    return await this.request<KelWitnessQuorumStatusV1>('witness.receipts.submit', {
+      checkpointEnvelope,
+      signatures,
+      threshold,
+    });
   }
 
   public async health(): Promise<{ ledgerId: string; treeSize: string; rootHash: string }> {
