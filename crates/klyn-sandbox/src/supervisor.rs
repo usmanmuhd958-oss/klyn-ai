@@ -3,7 +3,7 @@
 use std::{
     ffi::OsString,
     fs,
-    os::unix::fs::PermissionsExt,
+    os::unix::fs::{MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
     time::{Duration, Instant},
@@ -12,7 +12,7 @@ use std::{
 use nix::{sys::stat::Mode, unistd::mkfifo};
 
 use crate::{
-    namespace::{is_no_reader, release_marker, set_private_fifo, write_release},
+    namespace::{is_no_reader, release_marker, set_private_fifo},
     validate_cgroup_id, validate_trusted_executable, CgroupV2, ResourceBudget, SandboxError,
 };
 
