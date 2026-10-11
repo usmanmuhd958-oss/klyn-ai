@@ -1000,3 +1000,482 @@ export class AttenuatedCapabilityBuilderV1 implements AttenuatedCapabilityBuilde
     });
   }
 }
+
+
+/* ----------------------- Fail-closed invocation coordinator ------------------ */
+
+export interface CapabilityPolicyGate {
+  /** Checks the token's policy digest against the current mission/tenant policy. */
+  assertCurrent(token: CapabilityToken, request: CapabilityInvocationRequest): Promise<void>;
+}
+
+export interface CapabilityInvocationPipelineV1Dependencies {
+  readonly verifier: CapabilityTokenVerifier;
+  readonly policyGate: CapabilityPolicyGate;
+  readonly revocations: CapabilityRevocationRegistry;
+  readonly counters: CapabilityInvocationCounter;
+  readonly sandbox: CapabilitySandboxEnforcer;
+  readonly collector: ExecutionRuntimeCollector;
+  readonly collectorKeys: CapabilityKeyResolver;
+  readonly evidence: CapabilityEvidenceSink;
+  readonly broker: CapabilityResourceBroker;
+  readonly now?: () => number;
+  readonly makeId?: () => string;
+}
+
+export function digestCapabilityRequest(
+  request: Omit<CapabilityResourceRequest, "requestDigest"> | CapabilityResourceRequest,
+): string {
+  return sha256Hex({
+    kind: request.kind,
+    handleId: request.handleId,
+    operation: request.operation,
+    resourceSelector: request.resourceSelector,
+    requestedBudgets: request.requestedBudgets,
+  });
+}
+
+function selectorString(selector: Readonly<Record<string, CapabilitySelectorValue>>, key: string): string {
+  const value = selector[key];
+  if (typeof value !== "string" || value.length === 0 || value.includes("\0")) {
+    throw new CapabilitySecurityError("resource_selector_invalid", "resource selector field " + key + " must be a non-empty string");
+  }
+  return value;
+}
+
+function selectorInteger(
+  selector: Readonly<Record<string, CapabilitySelectorValue>>,
+  key: string,
+  minimum = 0,
+): number {
+  const value = selector[key];
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum) {
+    throw new CapabilitySecurityError("resource_selector_invalid", "resource selector field " + key + " must be an integer >= " + minimum);
+  }
+  return value;
+}
+
+function selectorStringArray(
+  selector: Readonly<Record<string, CapabilitySelectorValue>>,
+  key: string,
+  allowEmpty = false,
+): readonly string[] {
+  const value = selector[key];
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || item.includes("\0")) ||
+      (!allowEmpty && value.length === 0)) {
+    throw new CapabilitySecurityError("resource_selector_invalid", "resource selector field " + key + " must be a string array");
+  }
+  const items = value as readonly string[];
+  if (new Set(items).size !== items.length || items.some((item) => item.includes("*"))) {
+    throw new CapabilitySecurityError("resource_selector_invalid", "resource selector field " + key + " contains duplicates or wildcards");
+  }
+  return items;
+}
+
+function selectorPathWithinScope(scope: FileSystemCapabilityScope, selector: Readonly<Record<string, CapabilitySelectorValue>>): boolean {
+  const path = selector["relativePath"];
+  if (typeof path !== "string") {
+    throw new CapabilitySecurityError("resource_selector_invalid", "filesystem operations require a relativePath selector");
+  }
+  validateRelativePathPrefix(path);
+  return isPathWithin(scope.relativePathPrefix, path);
+}
+
+function scopeAllowsRequest(scope: CapabilityScope, request: CapabilityResourceRequest): boolean {
+  if (scope.kind !== request.kind || scope.handleId !== request.handleId ||
+      !(scope.operations as readonly CapabilityOperation[]).includes(request.operation)) return false;
+
+  const selector = request.resourceSelector;
+  switch (scope.kind) {
+    case "filesystem":
+      return selectorPathWithinScope(scope, selector);
+    case "network": {
+      const host = selectorString(selector, "host");
+      const port = selectorInteger(selector, "port", 1);
+      if (port > 65535 || host !== host.toLowerCase() || host.includes("*") ||
+          !(isIP(host) > 0 || /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(host))) return false;
+      return scope.hosts.includes(host) && scope.ports.some((range) => port >= range.first && port <= range.last);
+    }
+    case "process": {
+      if (request.operation !== "process.spawn") {
+        const processHandleId = selectorString(selector, "processHandleId");
+        validId(processHandleId, "resourceSelector.processHandleId");
+        // The trusted broker must additionally prove this process belongs to resourceId
+        // and to this principal. Process identifiers supplied by a caller are not trusted.
+        return true;
+      }
+      const executableDigest = selectorString(selector, "executableSha256");
+      if (!/^[a-f0-9]{64}$/.test(executableDigest) || !scope.executableSha256.includes(executableDigest)) return false;
+      const argv = selectorStringArray(selector, "argv");
+      const envKeys = selectorStringArray(selector, "environmentKeys", true);
+      return argv.length > 0 &&
+        scope.argvPrefixes.some((prefix) => stringPrefix(prefix, argv)) &&
+        subsetOf(envKeys, scope.environmentKeys) &&
+        scope.maxProcesses > 0;
+    }
+    case "memory": {
+      const regionId = selectorString(selector, "regionId");
+      const offset = selectorInteger(selector, "offset");
+      const length = selectorInteger(selector, "length", 1);
+      if (!scope.regionIds.includes(regionId) || length > scope.maxBytesPerInvocation ||
+          !Number.isSafeInteger(offset + length)) return false;
+      return true;
+    }
+    case "ipc": {
+      const channelId = selectorString(selector, "channelId");
+      const peerPrincipalId = selectorString(selector, "peerPrincipalId");
+      const messageBytes = selectorInteger(selector, "messageBytes");
+      validId(channelId, "resourceSelector.channelId");
+      validId(peerPrincipalId, "resourceSelector.peerPrincipalId");
+      return scope.channelIds.includes(channelId) && scope.peerPrincipalIds.includes(peerPrincipalId) &&
+        messageBytes <= scope.maxMessageBytes;
+    }
+  }
+}
+
+function resolveUniqueScope(
+  scopes: readonly CapabilityScope[],
+  request: CapabilityResourceRequest,
+): CapabilityScope {
+  const matches = scopes.filter((scope) => scopeAllowsRequest(scope, request));
+  if (matches.length === 0) {
+    throw new CapabilitySecurityError("scope_not_granted", "no capability scope authorizes this exact resource and operation");
+  }
+  if (matches.length !== 1) {
+    throw new CapabilitySecurityError("scope_ambiguous", "more than one scope matches; duplicate/overlapping grants are denied");
+  }
+  return matches[0]!;
+}
+
+function validateRequestedBudgets(requested: Partial<CapabilityBudget>, granted: CapabilityBudget): void {
+  if (typeof requested !== "object" || requested === null || Array.isArray(requested)) {
+    throw new CapabilitySecurityError("requested_budget_invalid", "requested budgets must be a plain object");
+  }
+  const fields: readonly (keyof CapabilityBudget)[] = [
+    "maxInvocations", "maxConcurrentInvocations", "maxWallClockMsPerInvocation",
+    "maxCpuMsPerInvocation", "maxMemoryBytes", "maxNetworkBytes", "maxOutputBytes",
+    "maxProcesses", "maxFinancialSpendMinorUnits",
+  ];
+  for (const [rawField, value] of Object.entries(requested)) {
+    if (!fields.includes(rawField as keyof CapabilityBudget) ||
+        typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+      throw new CapabilitySecurityError("requested_budget_invalid", "requested budget contains an unknown or invalid field");
+    }
+    const field = rawField as keyof CapabilityBudget;
+    if (value > granted[field]) {
+      throw new CapabilitySecurityError("budget_escalation", "requested per-invocation budget exceeds the token budget: " + field);
+    }
+  }
+}
+
+function validateEvidenceReceipt(receipt: CapabilityEvidenceReceipt): void {
+  validId(receipt.ledgerId, "evidence.ledgerId");
+  validId(receipt.evidenceId, "evidence.evidenceId");
+  if (!/^[a-f0-9]{64}$/.test(receipt.statementDigest)) {
+    throw new CapabilitySecurityError("kel_receipt_invalid", "KEL evidence receipt has an invalid statement digest");
+  }
+  assertSafeInteger(receipt.committedAtEpochMs, "evidence.committedAtEpochMs");
+}
+
+function operationDetails(request: CapabilityInvocationRequest, scope: CapabilityScope | undefined): Readonly<Record<string, string | number | boolean | null>> {
+  return Object.freeze({
+    operation: request.operation.operation,
+    resourceKind: request.operation.kind,
+    scopeKind: scope?.kind ?? null,
+    requestDigest: request.operation.requestDigest,
+    sandboxProfileDigest: request.sandboxProfileDigest,
+  });
+}
+
+function makeAbortWaiter(signal: AbortSignal): { readonly promise: Promise<never>; cleanup(): void } {
+  let listener: (() => void) | undefined;
+  const promise = new Promise<never>((_resolve, reject) => {
+    listener = () => reject(signal.reason instanceof Error ? signal.reason : new Error("capability invocation aborted"));
+    if (signal.aborted) listener();
+    else signal.addEventListener("abort", listener, { once: true });
+  });
+  return {
+    promise,
+    cleanup: () => {
+      if (listener) signal.removeEventListener("abort", listener);
+    },
+  };
+}
+
+/**
+ * Concrete admission coordinator. This is the only supported call path for invoking
+ * a capability. The supplied executor must be a trusted adapter that dispatches code
+ * in an OS-isolated worker; passing agent-supplied JavaScript as an in-process executor
+ * violates this class's security contract.
+ */
+export class CapabilityInvocationPipelineV1 implements CapabilityInvocationPipeline {
+  private readonly now: () => number;
+  private readonly makeId: () => string;
+
+  public constructor(private readonly dependencies: CapabilityInvocationPipelineV1Dependencies) {
+    this.now = dependencies.now ?? Date.now;
+    this.makeId = dependencies.makeId ?? randomUUID;
+  }
+
+  public async invoke<T>(
+    request: CapabilityInvocationRequest,
+    executor: IsolatedCapabilityExecutor<T>,
+  ): Promise<T> {
+    let tokenDigest = "";
+    let requestDigest = "";
+    let reservation: CapabilityInvocationReservation | undefined;
+    let reservationFinished = false;
+    let lease: CapabilitySandboxLease | undefined;
+    let scope: CapabilityScope | undefined;
+    let dispatchStarted = false;
+    let abortController: AbortController | undefined;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let abortWaiter: { readonly promise: Promise<never>; cleanup(): void } | undefined;
+
+    try {
+      const now = this.now();
+      validId(request.invocationId, "invocationId");
+      validId(request.missionId, "missionId");
+      validId(request.principalId, "principalId");
+      validId(request.runtimeInstanceId, "runtimeInstanceId");
+      validId(request.audience, "audience");
+      if (!Number.isSafeInteger(request.deadlineEpochMs) || request.deadlineEpochMs <= now) {
+        throw new CapabilitySecurityError("deadline_expired", "invocation deadline must be in the future");
+      }
+      if (!/^[a-f0-9]{64}$/.test(request.sandboxProfileDigest)) {
+        throw new CapabilitySecurityError("sandbox_profile_invalid", "sandbox profile must be SHA-256 hex");
+      }
+
+      tokenDigest = digestCapabilityToken(request.token);
+      this.dependencies.verifier.verify(request.token, {
+        nowEpochMs: now,
+        subjectPrincipalId: request.principalId,
+        audience: request.audience,
+        missionId: request.missionId,
+      });
+      requestDigest = digestCapabilityRequest(request.operation);
+      if (!/^[a-f0-9]{64}$/.test(request.operation.requestDigest) ||
+          requestDigest !== request.operation.requestDigest) {
+        throw new CapabilitySecurityError("request_digest_mismatch", "request digest does not match canonical resource and budget arguments");
+      }
+      validId(request.operation.handleId, "operation.handleId");
+      await this.dependencies.policyGate.assertCurrent(request.token, request);
+      if (await this.dependencies.revocations.isRevoked(request.token.payload.tokenId, tokenDigest, now)) {
+        throw new CapabilitySecurityError("capability_revoked", "capability or one of its ancestors has been revoked");
+      }
+
+      reservation = await this.dependencies.counters.reserve({
+        tokenId: request.token.payload.tokenId,
+        tokenDigest,
+        invocationId: request.invocationId,
+        maxInvocations: request.token.payload.budget.maxInvocations,
+        maxConcurrentInvocations: request.token.payload.budget.maxConcurrentInvocations,
+        nowEpochMs: now,
+      });
+      validId(reservation.reservationId, "reservation.reservationId");
+      if (!Number.isSafeInteger(reservation.admittedInvocationNumber) ||
+          reservation.admittedInvocationNumber < 1 ||
+          reservation.admittedInvocationNumber > request.token.payload.budget.maxInvocations) {
+        throw new CapabilitySecurityError("quota_reservation_invalid", "quota store returned an invalid invocation reservation");
+      }
+
+      validateRequestedBudgets(request.operation.requestedBudgets, request.token.payload.budget);
+      scope = resolveUniqueScope(request.token.payload.scopes, request.operation);
+      const effectiveDeadlineEpochMs = Math.min(
+        request.deadlineEpochMs,
+        request.token.payload.expiresAtEpochMs,
+        now + request.token.payload.budget.maxWallClockMsPerInvocation,
+      );
+      if (!Number.isSafeInteger(effectiveDeadlineEpochMs) || effectiveDeadlineEpochMs <= this.now()) {
+        throw new CapabilitySecurityError("deadline_expired", "token time or wall-clock budget leaves no execution window");
+      }
+
+      lease = await this.dependencies.sandbox.prepare(request, scope, request.token.payload.budget);
+      validId(lease.leaseId, "sandbox.leaseId");
+      if (lease.profileDigest !== request.sandboxProfileDigest ||
+          !Number.isSafeInteger(lease.expiresAtEpochMs) ||
+          lease.expiresAtEpochMs <= this.now() ||
+          lease.expiresAtEpochMs > effectiveDeadlineEpochMs) {
+        throw new CapabilitySecurityError("sandbox_lease_invalid", "sandbox lease does not match the requested profile or deadline");
+      }
+
+      const attestationIssuedAt = this.now();
+      if (attestationIssuedAt >= effectiveDeadlineEpochMs) {
+        throw new CapabilitySecurityError("deadline_expired", "invocation expired before collector attestation");
+      }
+      const scopeDigest = digestCapabilityPayload(scope);
+      const attestationPayload: PreExecutionAttestationPayloadV1 = Object.freeze({
+        schema: CAPABILITY_ATTESTATION_SCHEMA,
+        invocationId: request.invocationId,
+        tokenId: request.token.payload.tokenId,
+        tokenDigest,
+        principalId: request.principalId,
+        missionId: request.missionId,
+        runtimeInstanceId: request.runtimeInstanceId,
+        audience: request.audience,
+        requestDigest,
+        scopeDigest,
+        policyDigest: request.token.payload.policyDigest,
+        sandboxProfileDigest: lease.profileDigest,
+        reservationId: reservation.reservationId,
+        issuedAtEpochMs: attestationIssuedAt,
+        expiresAtEpochMs: effectiveDeadlineEpochMs,
+      });
+      const attestation = await this.dependencies.collector.attestBeforeExecution(attestationPayload);
+      verifyPreExecutionAttestation(attestation, this.dependencies.collectorKeys, {
+        nowEpochMs: this.now(),
+        invocationId: request.invocationId,
+        tokenDigest,
+        requestDigest,
+        runtimeInstanceId: request.runtimeInstanceId,
+        missionId: request.missionId,
+        scopeDigest,
+        policyDigest: request.token.payload.policyDigest,
+        sandboxProfileDigest: lease.profileDigest,
+        reservationId: reservation.reservationId,
+      });
+
+      const authorizationEvidence = await this.dependencies.evidence.append(Object.freeze({
+        schema: CAPABILITY_EVIDENCE_SCHEMA,
+        eventId: this.makeId(),
+        kind: "capability-invocation-authorized",
+        occurredAtEpochMs: this.now(),
+        principalId: request.principalId,
+        missionId: request.missionId,
+        runtimeInstanceId: request.runtimeInstanceId,
+        tokenId: request.token.payload.tokenId,
+        tokenDigest,
+        parentTokenDigest: request.token.payload.parentTokenDigest,
+        invocationId: request.invocationId,
+        requestDigest,
+        policyDigest: request.token.payload.policyDigest,
+        outcome: "allowed",
+        reasonCode: "pre_execution_attestation_verified",
+        details: Object.freeze({
+          scopeDigest,
+          sandboxProfileDigest: lease.profileDigest,
+          attestationDigest: digestCapabilityPayload(attestation),
+          reservationId: reservation.reservationId,
+        }),
+      }));
+      validateEvidenceReceipt(authorizationEvidence);
+
+      await this.dependencies.sandbox.assertEnforced(lease, request);
+      const dispatchAt = this.now();
+      const remainingMs = effectiveDeadlineEpochMs - dispatchAt;
+      if (remainingMs <= 0 || lease.expiresAtEpochMs <= dispatchAt) {
+        throw new CapabilitySecurityError("deadline_expired", "sandbox lease expired before dispatch");
+      }
+
+      abortController = new AbortController();
+      timeout = setTimeout(() => {
+        abortController?.abort(new CapabilitySecurityError("invocation_timeout", "capability invocation exceeded its wall-clock deadline"));
+      }, Math.max(1, Math.floor(remainingMs)));
+      abortWaiter = makeAbortWaiter(abortController.signal);
+      const context: CapabilityInvocationContext = Object.freeze({
+        invocationId: request.invocationId,
+        principalId: request.principalId,
+        missionId: request.missionId,
+        runtimeInstanceId: request.runtimeInstanceId,
+        tokenDigest,
+        requestDigest,
+        scope,
+        budget: request.token.payload.budget,
+        deadlineEpochMs: effectiveDeadlineEpochMs,
+        reservation,
+        preExecutionAttestation: attestation,
+        authorizationEvidence,
+        sandboxLease: lease,
+        broker: this.dependencies.broker,
+        abortSignal: abortController.signal,
+      });
+
+      dispatchStarted = true;
+      const result = await Promise.race([executor.execute(context), abortWaiter.promise]);
+      if (this.now() >= effectiveDeadlineEpochMs || abortController.signal.aborted) {
+        throw new CapabilitySecurityError("invocation_timeout", "capability invocation exceeded its wall-clock deadline");
+      }
+      await this.dependencies.counters.finish(reservation.reservationId, "completed", this.now());
+      reservationFinished = true;
+      const completionEvidence = await this.dependencies.evidence.append(Object.freeze({
+        schema: CAPABILITY_EVIDENCE_SCHEMA,
+        eventId: this.makeId(),
+        kind: "capability-invocation-completed",
+        occurredAtEpochMs: this.now(),
+        principalId: request.principalId,
+        missionId: request.missionId,
+        runtimeInstanceId: request.runtimeInstanceId,
+        tokenId: request.token.payload.tokenId,
+        tokenDigest,
+        parentTokenDigest: request.token.payload.parentTokenDigest,
+        invocationId: request.invocationId,
+        requestDigest,
+        policyDigest: request.token.payload.policyDigest,
+        outcome: "completed",
+        reasonCode: "execution_completed",
+        details: Object.freeze({
+          authorizationEvidenceId: authorizationEvidence.evidenceId,
+          attestationDigest: digestCapabilityPayload(attestation),
+          reservationId: reservation.reservationId,
+        }),
+      }));
+      validateEvidenceReceipt(completionEvidence);
+      return result;
+    } catch (error) {
+      const cleanupErrors: unknown[] = [];
+      const isRevoked = error instanceof CapabilitySecurityError && error.code === "capability_revoked";
+      const reasonCode = error instanceof CapabilitySecurityError ? error.code : "runtime_admission_or_execution_failed";
+      if (lease) {
+        try {
+          await this.dependencies.sandbox.terminate(lease, reasonCode);
+        } catch (cleanupError) {
+          cleanupErrors.push(cleanupError);
+        }
+      }
+      if (tokenDigest && requestDigest) {
+        try {
+          const evidence = await this.dependencies.evidence.append(Object.freeze({
+            schema: CAPABILITY_EVIDENCE_SCHEMA,
+            eventId: this.makeId(),
+            kind: dispatchStarted ? "capability-invocation-failed" : "capability-invocation-rejected",
+            occurredAtEpochMs: this.now(),
+            principalId: request.principalId,
+            missionId: request.missionId,
+            runtimeInstanceId: request.runtimeInstanceId,
+            tokenId: request.token.payload.tokenId,
+            tokenDigest,
+            parentTokenDigest: request.token.payload.parentTokenDigest,
+            invocationId: request.invocationId,
+            requestDigest,
+            policyDigest: request.token.payload.policyDigest,
+            outcome: dispatchStarted ? "failed" : isRevoked ? "revoked" : "denied",
+            reasonCode,
+            details: operationDetails(request, scope),
+          }));
+          validateEvidenceReceipt(evidence);
+        } catch (evidenceError) {
+          cleanupErrors.push(evidenceError);
+        }
+      }
+      if (reservation && !reservationFinished) {
+        try {
+          await this.dependencies.counters.finish(
+            reservation.reservationId,
+            abortController?.signal.aborted ? "cancelled" : "failed",
+            this.now(),
+          );
+          reservationFinished = true;
+        } catch (quotaError) {
+          cleanupErrors.push(quotaError);
+        }
+      }
+      if (cleanupErrors.length > 0) {
+        throw new AggregateError([error, ...cleanupErrors], "capability invocation failed and one or more security cleanup steps also failed");
+      }
+      throw error;
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
+      abortWaiter?.cleanup();
+    }
+  }
+}
