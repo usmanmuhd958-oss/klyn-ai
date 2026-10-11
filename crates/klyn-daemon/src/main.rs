@@ -52,8 +52,17 @@ fn main() -> Result<(), Box<dyn Error>> {
         producer_keys.insert(key_id, VerifyingKey::from_bytes(&bytes)?);
     }
 
+    let allowed_uid = match env::var("KEL_RPC_ALLOWED_UID") {
+        Ok(value) => value.parse::<u32>().map_err(|_| "KEL_RPC_ALLOWED_UID must be a numeric UID")?,
+        Err(_) => unsafe { libc::geteuid() },
+    };
+    let max_connections = match env::var("KEL_RPC_MAX_CONNECTIONS") {
+        Ok(value) => value.parse::<usize>().map_err(|_| "KEL_RPC_MAX_CONNECTIONS must be an integer")?,
+        Err(_) => 64,
+    };
+
     let store = EvidenceStore::open_with_signer(database_path, ledger_id, signer, producer_keys)?;
     eprintln!("KEL daemon initialized; socket={}", socket_path.display());
-    rpc::serve(socket_path, auth_token, store)?;
+    rpc::serve(socket_path, auth_token, store, allowed_uid, max_connections)?;
     Ok(())
 }
