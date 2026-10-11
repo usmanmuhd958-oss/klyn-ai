@@ -22,13 +22,11 @@ use std::{
 
 use ed25519_dalek::SigningKey;
 use klyn_sandbox::{
-    broker::{
-        BrokerConfig, CapabilityIssuer, ResourceBroker, RevocationOracle,
-    },
+    broker::{BrokerConfig, Ed25519CapabilityVerifier, ResourceBroker, RevocationOracle},
     candidate_root_id,
     supervisor::{launch_gated_worker, SandboxedChild, WorkerLaunchSpec},
-    CapabilityClaims, FileAccess, FileGrant, ResourceBudget, SandboxError,
-    SignedCapability, OCAP_VERSION,
+    CapabilityClaims, CapabilityIssuer, FileAccess, FileGrant, ResourceBudget, SandboxError,
+    OCAP_VERSION,
 };
 use serde::Serialize;
 use thiserror::Error;
@@ -200,9 +198,7 @@ impl SandboxService {
         let broker = match ResourceBroker::bind(BrokerConfig {
             socket_path: socket_path.clone(),
             roots,
-            verifier: Arc::new(klyn_sandbox::broker::Ed25519CapabilityVerifier::new(
-                self.issuer.verifying_key(),
-            )),
+            verifier: Arc::new(Ed25519CapabilityVerifier::new(self.issuer.verifying_key())),
             revocations: Arc::clone(&self.revocations),
             mutation_handler: self.fs_service.clone(),
             max_workers: self.config.max_broker_workers,

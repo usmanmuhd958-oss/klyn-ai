@@ -28,6 +28,7 @@ pub struct Router {
     lifecycle: Lifecycle,
     policy: Arc<dyn PolicyEnforcer>,
     fs: Option<Arc<FsService>>,
+    sandbox: Option<Arc<sandbox_service::SandboxService>>,
 }
 
 impl Router {
@@ -36,6 +37,7 @@ impl Router {
             lifecycle,
             policy,
             fs: None,
+            sandbox: None,
         }
     }
 
@@ -48,7 +50,29 @@ impl Router {
             lifecycle,
             policy,
             fs: Some(fs),
+            sandbox: None,
         }
+    }
+
+    /// Internal runtime constructor. Sandbox worker launches are intentionally
+    /// not exposed as model-facing RPC methods; a trusted orchestrator accesses
+    /// this service and supplies an already-created candidate transaction.
+    pub fn with_services(
+        lifecycle: Lifecycle,
+        policy: Arc<dyn PolicyEnforcer>,
+        fs: Arc<FsService>,
+        sandbox: Arc<sandbox_service::SandboxService>,
+    ) -> Self {
+        Self {
+            lifecycle,
+            policy,
+            fs: Some(fs),
+            sandbox: Some(sandbox),
+        }
+    }
+
+    pub fn sandbox_service(&self) -> Option<&Arc<sandbox_service::SandboxService>> {
+        self.sandbox.as_ref()
     }
 
     pub fn lifecycle(&self) -> Lifecycle {
