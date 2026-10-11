@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
@@ -120,6 +120,7 @@ test('SQLite outbox commits atomically with legacy audit and replays after trans
 
   try {
     const firstStorage = new SqliteAuditStorageAdapter(databasePath);
+    assert.equal(statSync(databasePath).mode & 0o777, 0o600, 'SQLite audit database must be private');
     const firstAudit = new AuditLedger(firstStorage);
     const adapter = new LegacyGovernanceKelAdapter(firstAudit, {} as ArtifactAttestor, {
       ledgerId: 'legacy-ledger',
