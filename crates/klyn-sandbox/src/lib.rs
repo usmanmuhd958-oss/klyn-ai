@@ -522,23 +522,31 @@ impl CapabilityIssuer {
     }
 }
 
-/// Trusted bootstrap entry point. The executable must call this before parsing
-/// task instructions, loading plugins, starting threads, or executing model
-/// output. The manifest is read only after the supervisor releases the gate.
-/// Any unsupported primitive returns an error and the caller must exit nonzero.
+/// Trusted bootstrap entry point for the child that has been re-executed as
+/// PID 1 in a private PID namespace. Namespace creation happens in stage zero;
+/// this function refuses to continue unless the stage contract is satisfied.
 pub fn bootstrap_worker_from_env(
     capability_manifest: impl AsRef<Path>,
     broker_socket: impl AsRef<Path>,
     verifier: &dyn broker::CapabilityVerifier,
     roots: &BTreeMap<String, PathBuf>,
 ) -> Result<(broker::BrokerClient, SignedCapability), SandboxError> {
-    let gate_path = env::var_os("KLYN_START_GATE_PATH").ok_or_else(|| {
-        SandboxError::InvalidConfig("required start-gate environment is missing".into())
-    })?;
-
-    namespace::await_start_gate(Path::new(&gate_path))?;
-    namespace::enter_worker_namespaces()?;
+    if env::var("KLYN_PID_NAMESPACE_STAGE").as_deref() != Ok("child") {
+        return Err(SandboxError::Enforcement(
+            "worker bootstrap was not entered through the PID-namespace launcher".into(),
+        ));
+    }
+    namespace::require_pid_namespace_init()?;
     namespace::close_inherited_descriptors()?;
+
+    let expected_host_uid = env::var("KLYN_HOST_UID")
+        .map_err(|_| SandboxError::InvalidConfig("KLYN_HOST_UID is missing".into()))?
+        .parse::<u32>()
+        .map_err(|_| SandboxError::InvalidConfig("KLYN_HOST_UID is invalid".into()))?;
+    let expected_host_gid = env::var("KLYN_HOST_GID")
+        .map_err(|_| SandboxError::InvalidConfig("KLYN_HOST_GID is missing".into()))?
+        .parse::<u32>()
+        .map_err(|_| SandboxError::InvalidConfig("KLYN_HOST_GID is invalid".into()))?;
 
     let manifest_path = capability_manifest.as_ref();
     let before = fs::symlink_metadata(manifest_path)?;
@@ -584,6 +592,13 @@ pub fn bootstrap_worker_from_env(
     verifier
         .verify(&token)
         .map_err(|_| SandboxError::Enforcement("worker capability signature is invalid".into()))?;
+    if token.claims.subject_uid != expected_host_uid
+        || token.claims.subject_gid != expected_host_gid
+    {
+        return Err(SandboxError::Enforcement(
+            "signed capability UID/GID binding does not match the daemon-launched worker".into(),
+        ));
+    }
 
     // Establish the only permitted socket before Landlock and seccomp make
     // pathname socket creation and connect unavailable.
