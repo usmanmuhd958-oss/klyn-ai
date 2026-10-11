@@ -90,14 +90,14 @@ pub struct ResourceBroker {
     queue_capacity: usize,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BrokerRequest {
     capability: SignedCapability,
     operation: BrokerOperation,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 enum BrokerOperation {
     OpenFile {
@@ -348,7 +348,7 @@ fn execute_request(
             let root = inner.roots.get(&root_id).ok_or_else(|| "unknown filesystem root".to_string())?;
             let fd = open_beneath(root.file.as_raw_fd(), &path, access)
                 .map_err(|_| "kernel rejected secure file open".to_string())?;
-            let _ = grant;
+                    let _ = grant;
             Ok(Some(fd))
         }
         BrokerOperation::ConnectTcp { address } => {
@@ -607,16 +607,21 @@ fn receive_fd(socket: RawFd) -> io::Result<OwnedFd> {
         Some(&mut cmsgspace),
         MsgFlags::MSG_CMSG_CLOEXEC,
     ).map_err(io::Error::from)?;
-    if msg.flags.contains(MsgFlags::MSG_CTRUNC) || msg.bytes != 1 || marker[0] != b'F' {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid SCM_RIGHTS marker or truncated control data"));
-    }
     let mut received = Vec::new();
+    let bytes = msg.bytes;
+    let flags = msg.flags;
     for cmsg in msg.cmsgs().map_err(io::Error::from)? {
         if let ControlMessageOwned::ScmRights(fds) = cmsg {
             for raw in fds {
+                // Take ownership immediately so every unexpected descriptor is
+                // closed when this vector drops on any validation error.
                 received.push(unsafe { OwnedFd::from_raw_fd(raw) });
             }
         }
+    }
+    drop(msg);
+    if flags.contains(MsgFlags::MSG_CTRUNC) || bytes != 1 || marker[0] != b'F' {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid or truncated SCM_RIGHTS frame"));
     }
     if received.len() != 1 {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "broker must transfer exactly one descriptor"));
