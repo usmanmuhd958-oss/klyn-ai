@@ -413,6 +413,22 @@ fn open_beneath(root_fd: RawFd, path: &str, access: FileAccess) -> io::Result<Ow
     if fd < 0 {
         return Err(io::Error::last_os_error());
     }
+    // Do not broker device nodes, FIFOs, sockets, or other special files even
+    // when they happen to live below an authorized directory.
+    let mut stat = std::mem::MaybeUninit::<libc::stat>::zeroed();
+    if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } != 0 {
+        let error = io::Error::last_os_error();
+        unsafe { libc::close(fd); }
+        return Err(error);
+    }
+    let file_type = unsafe { stat.assume_init() }.st_mode & libc::S_IFMT;
+    if file_type != libc::S_IFREG && file_type != libc::S_IFDIR {
+        unsafe { libc::close(fd); }
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "only regular files and directories may be brokered",
+        ));
+    }
     Ok(unsafe { OwnedFd::from_raw_fd(fd) })
 }
 
@@ -728,7 +744,7 @@ mod tests {
         let key = SigningKey::from_bytes(&[11u8; 32]);
         let claims = test_claims(unsafe { libc::geteuid() } as u32, unsafe { libc::getegid() } as u32);
         let signed = SignedCapability {
-            signature: key.sign(&serde_json::to_vec(&claims).unwrap()).to_bytes().to_vec(),
+            signature: key.sign(&canonical_capability_bytes(&claims).unwrap()).to_bytes().to_vec(),
             claims,
         };
         let inner = BrokerInner {
