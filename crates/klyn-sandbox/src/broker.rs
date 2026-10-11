@@ -764,7 +764,7 @@ fn scope_matches_selector(scope: &CapabilityScope, operation: &CapabilityResourc
             reject_selector_keys(selector, allowed)?;
             let path = selector.get("relativePath").and_then(Value::as_str)
                 .ok_or_else(|| SandboxError::Denied("filesystem selector requires relativePath".into()))?;
-            if path.starts_with('/') || path.contains('\0') ||
+            if path.starts_with('/') || path.contains('\0') || path.contains('\\') ||
                 path.split('/').any(|part| part.is_empty() || part == "." || part == "..") {
                 return Err(SandboxError::Denied("filesystem selector path is not canonical".into()));
             }
@@ -776,8 +776,11 @@ fn scope_matches_selector(scope: &CapabilityScope, operation: &CapabilityResourc
             }
             Ok(true)
         }
-        CapabilityScope::Network { hosts, ports, max_bytes_per_invocation, .. } => {
-            reject_selector_keys(selector, &["host", "port", "maxBytes", "payloadDigest"])?;
+        CapabilityScope::Network { hosts, ports, max_bytes_per_invocation, operations, .. } => {
+            if matches!(operation.operation.as_str(), "net.send" | "net.receive") {
+                return Err(SandboxError::Denied("standalone net.send/net.receive are not supported by this stream broker; use net.connect with explicit send and receive grants".into()));
+            }
+            reject_selector_keys(selector, &["host", "port", "maxBytes"])?;
             let host = selector.get("host").and_then(Value::as_str)
                 .ok_or_else(|| SandboxError::Denied("network selector requires host".into()))?;
             let port = selector.get("port").and_then(Value::as_u64).and_then(|n| u16::try_from(n).ok()).unwrap_or(0);
@@ -787,12 +790,27 @@ fn scope_matches_selector(scope: &CapabilityScope, operation: &CapabilityResourc
                 max == 0 || max > *max_bytes_per_invocation {
                 return Ok(false);
             }
+            if operation.operation == "net.connect" &&
+                !(operations.iter().any(|op| op == "net.send") && operations.iter().any(|op| op == "net.receive")) {
+                return Ok(false);
+            }
             Ok(true)
         }
         CapabilityScope::Process { executable_sha256, argv_prefixes, environment_keys, max_processes, .. } => {
             reject_selector_keys(selector, &["processHandleId", "executableSha256", "argv", "environmentKeys", "processCount", "signal"])?;
             if operation.operation != "process.spawn" {
-                return Ok(selector.get("processHandleId").and_then(Value::as_str).is_some());
+                let handle = selector.get("processHandleId").and_then(Value::as_str)
+                    .ok_or_else(|| SandboxError::Denied("process operation requires a broker process handle".into()))?;
+                if handle.is_empty() || handle.len() > 128 || handle.contains('\0') { return Ok(false); }
+                if operation.operation == "process.signal" {
+                    let signal = selector.get("signal").and_then(Value::as_str).unwrap_or("");
+                    if !["SIGTERM", "SIGINT", "SIGHUP"].contains(&signal) { return Ok(false); }
+                } else if selector.contains_key("signal") {
+                    return Ok(false);
+                }
+                return Ok(selector.get("executableSha256").is_none() &&
+                    selector.get("argv").is_none() && selector.get("environmentKeys").is_none() &&
+                    selector.get("processCount").is_none());
             }
             let executable = selector.get("executableSha256").and_then(Value::as_str)
                 .ok_or_else(|| SandboxError::Denied("process spawn requires executable SHA-256".into()))?;
@@ -806,22 +824,31 @@ fn scope_matches_selector(scope: &CapabilityScope, operation: &CapabilityResourc
                     .ok_or_else(|| SandboxError::Denied("environment keys must contain strings".into())))
                 .collect::<Result<Vec<_>>>()?;
             let processes = selector.get("processCount").and_then(Value::as_u64).unwrap_or(1);
+            let request_limit = operation.requested_budgets.max_processes.unwrap_or(*max_processes);
             Ok(executable_sha256.iter().any(|allowed| allowed == executable) &&
                 argv_prefixes.iter().any(|prefix| argv.starts_with(prefix)) &&
                 env.iter().all(|key| environment_keys.contains(key)) &&
-                processes > 0 && processes <= *max_processes)
+                processes > 0 && processes <= *max_processes && processes <= request_limit)
         }
         CapabilityScope::Memory { region_ids, max_bytes_per_invocation, .. } => {
             reject_selector_keys(selector, &["regionId", "offset", "length"])?;
             let region = selector.get("regionId").and_then(Value::as_str).unwrap_or("");
+            let offset = selector.get("offset").and_then(Value::as_u64).unwrap_or(u64::MAX);
             let length = selector.get("length").and_then(Value::as_u64).unwrap_or(u64::MAX);
-            Ok(region_ids.iter().any(|id| id == region) && length > 0 && length <= *max_bytes_per_invocation)
+            Ok(region_ids.iter().any(|id| id == region) && length > 0 &&
+                length <= *max_bytes_per_invocation && offset.checked_add(length).is_some() &&
+                offset <= 9_007_199_254_740_991 && length <= 9_007_199_254_740_991)
         }
         CapabilityScope::Ipc { channel_ids, peer_principal_ids, max_message_bytes, .. } => {
             reject_selector_keys(selector, &["channelId", "peerPrincipalId", "messageBytes", "payloadDigest"])?;
             let channel = selector.get("channelId").and_then(Value::as_str).unwrap_or("");
             let peer = selector.get("peerPrincipalId").and_then(Value::as_str).unwrap_or("");
             let size = selector.get("messageBytes").and_then(Value::as_u64).unwrap_or(u64::MAX);
+            let payload_digest = selector.get("payloadDigest").and_then(Value::as_str);
+            if operation.operation == "ipc.send" && payload_digest.is_none_or(|digest| !is_digest(digest)) {
+                return Ok(false);
+            }
+            if operation.operation != "ipc.send" && payload_digest.is_some() { return Ok(false); }
             Ok(channel_ids.iter().any(|id| id == channel) && peer_principal_ids.iter().any(|id| id == peer) && size <= *max_message_bytes)
         }
     }
