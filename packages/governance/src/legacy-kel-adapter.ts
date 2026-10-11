@@ -217,8 +217,10 @@ export class LegacyGovernanceKelAdapter {
     const failures: Array<{ eventId: string; message: string }> = [];
     const receiptsByEventId = new Map<string, readonly KelAppendReceiptV1[]>();
     let delivered = 0;
+    let processed = 0;
 
     for (const item of pending) {
+      processed += 1;
       try {
         const payload = JSON.parse(item.payloadJson) as LegacyOutboxPayloadV1;
         if (payload.schema !== 'urn:klyn:legacy-kel-outbox:v1' ||
@@ -244,7 +246,7 @@ export class LegacyGovernanceKelAdapter {
       }
     }
     const stillPending = this.audit.pendingOutbox(1000).length;
-    return { processed: pending.length, delivered, stillPending, failures, receiptsByEventId };
+    return { processed, delivered, stillPending, failures, receiptsByEventId };
   }
 
   private outboxId(record: AuditRecord): string {
