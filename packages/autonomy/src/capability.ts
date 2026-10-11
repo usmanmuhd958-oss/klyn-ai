@@ -545,6 +545,41 @@ export class Ed25519CapabilitySigner implements CapabilityTokenSigner {
   }
 }
 
+/**
+ * External-key adapter for HSM/KMS-backed signing. The caller supplies only a
+ * signing operation over canonical payload bytes; no private key enters this process.
+ */
+export class ExternalCapabilityTokenSigner implements CapabilityTokenSigner {
+  public constructor(
+    public readonly keyId: string,
+    public readonly principalId: string,
+    private readonly signCanonicalPayload: (payloadBytes: Uint8Array) => Promise<string>,
+  ) {
+    if (!keyId || !principalId) throw new TypeError("external signer requires keyId and principalId");
+  }
+
+  public async signPayload(payload: unknown): Promise<CapabilitySignatureV1> {
+    const signatureBase64 = await this.signCanonicalPayload(Buffer.from(canonicalize(payload), "utf8"));
+    if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(signatureBase64)) {
+      throw new CapabilitySecurityError("signature_format_invalid", "external signer returned malformed Base64");
+    }
+    const bytes = Buffer.from(signatureBase64, "base64");
+    if (bytes.length !== 64 || bytes.toString("base64") !== signatureBase64) {
+      throw new CapabilitySecurityError("signature_format_invalid", "external signer must return a canonical 64-byte Ed25519 signature");
+    }
+    return Object.freeze({ algorithm: "Ed25519", keyId: this.keyId, signatureBase64 });
+  }
+
+  public async signToken(payload: CapabilityTokenV1): Promise<CapabilityToken> {
+    validateCapabilityPayload(payload);
+    if (payload.issuerPrincipalId !== this.principalId) {
+      throw new CapabilitySecurityError("signer_principal_mismatch", "external signer key is not registered to the claimed issuer principal");
+    }
+    const signature = await this.signPayload(payload);
+    return Object.freeze({ payload: deepFreeze(payload), signature });
+  }
+}
+
 export class Ed25519CapabilityTokenVerifier implements CapabilityTokenVerifier {
   public constructor(private readonly keys: CapabilityKeyResolver) {}
 
