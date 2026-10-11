@@ -35,6 +35,8 @@ jobs:
           components: rustfmt, clippy
       - name: Verify formatting
         run: cargo fmt --all -- --check
+      - name: Validate Termux sync script syntax
+        run: bash -n scripts/klyn-step3-sync.sh
       - name: Unit and integration tests
         run: cargo test --package klyn-fs --package klyn-protocol --package klyn-daemon --package klyn-sandbox
       - name: Clippy
