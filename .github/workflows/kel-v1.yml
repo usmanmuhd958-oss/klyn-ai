@@ -9,6 +9,7 @@ on:
       - "crates/klyn-evidence/**"
       - "crates/klyn-daemon/**"
       - "packages/governance/**"
+      - "packages/autonomy/**"
       - ".github/workflows/kel-v1.yml"
   push:
     branches: [main]
@@ -48,3 +49,7 @@ jobs:
         run: pnpm --filter @klyn/governance typecheck
       - name: Run governance and KEL tests
         run: pnpm --filter @klyn/governance test
+      - name: Typecheck autonomy capability protocol
+        run: pnpm --filter @klyn/autonomy typecheck
+      - name: Run autonomy conformance tests
+        run: pnpm --filter @klyn/autonomy test
