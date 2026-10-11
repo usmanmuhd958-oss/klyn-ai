@@ -69,6 +69,11 @@ pub struct CapabilityClaims {
     pub subject_gid: u32,
     pub expires_at_unix: u64,
     pub file_grants: Vec<FileGrant>,
+    /// Exact klyn-fs transaction the worker may mutate, if any.
+    pub candidate_transaction_id: Option<String>,
+    /// Separate authority for asking the daemon to apply a preimage-checked
+    /// candidate mutation. This never authorizes a direct write FD.
+    pub candidate_write_enabled: bool,
     /// Network grants use literal socket addresses, never hostnames. This avoids
     /// DNS rebinding and makes the destination authorized by the signature exact.
     pub network_grants: Vec<NetworkGrant>,
@@ -204,6 +209,17 @@ impl CapabilityClaims {
         }
         self.budget.validate()?;
 
+        if let Some(transaction_id) = &self.candidate_transaction_id {
+            validate_cgroup_id(transaction_id).map_err(|_| {
+                SandboxError::InvalidConfig("invalid candidate transaction binding".into())
+            })?;
+        }
+        if self.candidate_write_enabled && self.candidate_transaction_id.is_none() {
+            return Err(SandboxError::InvalidConfig(
+                "candidate write authority requires an exact transaction ID".into(),
+            ));
+        }
+
         for grant in &self.file_grants {
             if grant.root_id.is_empty() || grant.root_id.len() > 128 {
                 return Err(SandboxError::InvalidConfig(
@@ -211,11 +227,29 @@ impl CapabilityClaims {
                 ));
             }
             validate_relative_path(&grant.prefix, true)?;
-            if grant.root_id == CANDIDATE_ROOT_ID && grant.access != FileAccess::Read {
-                return Err(SandboxError::InvalidConfig(
-                    "candidate workspace grants must be read-only; mutations must use klyn-fs transactions".into(),
-                ));
+            if grant.root_id == CANDIDATE_ROOT_ID {
+                if grant.access != FileAccess::Read {
+                    return Err(SandboxError::InvalidConfig(
+                        "candidate workspace file grants must be read-only".into(),
+                    ));
+                }
+                if self.candidate_transaction_id.as_deref() != Some(grant.prefix.as_str()) {
+                    return Err(SandboxError::InvalidConfig(
+                        "candidate file grant must be bound to the exact candidate transaction".into(),
+                    ));
+                }
             }
+        }
+        if self.candidate_write_enabled
+            && !self.file_grants.iter().any(|grant| {
+                grant.root_id == CANDIDATE_ROOT_ID
+                    && self.candidate_transaction_id.as_deref() == Some(grant.prefix.as_str())
+                    && grant.access == FileAccess::Read
+            })
+        {
+            return Err(SandboxError::InvalidConfig(
+                "candidate write authority requires a matching read-scoped candidate root".into(),
+            ));
         }
         for grant in &self.network_grants {
             grant.address.parse::<std::net::SocketAddr>().map_err(|_| {
