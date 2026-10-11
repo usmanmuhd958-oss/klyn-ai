@@ -13,7 +13,7 @@ use std::{
     net::{SocketAddr, TcpStream},
     os::{
         fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
-        unix::{fs::{FileTypeExt, MetadataExt, OpenOptionsExt}, net::{UnixListener, UnixStream}},
+        unix::{fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt}, net::{UnixListener, UnixStream}},
     },
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -90,14 +90,14 @@ pub struct ResourceBroker {
     queue_capacity: usize,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BrokerRequest {
     capability: SignedCapability,
     operation: BrokerOperation,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 enum BrokerOperation {
     OpenFile {
@@ -516,30 +516,48 @@ impl BrokerClient {
 }
 
 fn receive_fd(socket: RawFd) -> io::Result<OwnedFd> {
-    let mut marker = [0u8; 1];
-    let mut iov = [io::IoSliceMut::new(&mut marker)];
-    let mut cmsgspace = nix::cmsg_space!([RawFd; 8]);
-    let msg = recvmsg::<()>(
-        socket,
-        &mut iov,
-        Some(&mut cmsgspace),
-        MsgFlags::MSG_CMSG_CLOEXEC,
-    ).map_err(io::Error::from)?;
-    if msg.flags.contains(MsgFlags::MSG_CTRUNC) || msg.bytes != 1 || marker[0] != b'F' {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid SCM_RIGHTS marker or truncated control data"));
-    }
-    let mut received = Vec::new();
-    for cmsg in msg.cmsgs().map_err(io::Error::from)? {
-        if let ControlMessageOwned::ScmRights(fds) = cmsg {
-            for raw in fds {
-                received.push(unsafe { OwnedFd::from_raw_fd(raw) });
+    let (bytes, flags, marker_byte, received) = {
+        let mut marker = [0u8; 1];
+        let mut iov = [io::IoSliceMut::new(&mut marker)];
+        let mut cmsgspace = nix::cmsg_space!([RawFd; 8]);
+        let msg = recvmsg::<()>(
+            socket,
+            &mut iov,
+            Some(&mut cmsgspace),
+            MsgFlags::MSG_CMSG_CLOEXEC,
+        )
+        .map_err(io::Error::from)?;
+
+        let bytes = msg.bytes;
+        let flags = msg.flags;
+        let mut received = Vec::new();
+        for cmsg in msg.cmsgs().map_err(io::Error::from)? {
+            if let ControlMessageOwned::ScmRights(fds) = cmsg {
+                for fd in fds {
+                    received.push(unsafe { OwnedFd::from_raw_fd(fd) });
+                }
             }
         }
+
+        // Release the receive message and iovec borrows before reading marker.
+        drop(msg);
+        drop(iov);
+        (bytes, flags, marker[0], received)
+    };
+
+    if flags.contains(MsgFlags::MSG_CTRUNC) || bytes != 1 || marker_byte != b'F' {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid SCM_RIGHTS marker or truncated control data",
+        ));
     }
     if received.len() != 1 {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "broker must transfer exactly one descriptor"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "broker must transfer exactly one descriptor",
+        ));
     }
-    Ok(received.pop().expect("length checked"))
+    Ok(received.into_iter().next().expect("length checked"))
 }
 
 #[cfg(test)]
