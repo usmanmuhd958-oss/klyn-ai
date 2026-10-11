@@ -13,11 +13,19 @@ die() {
 command -v git >/dev/null 2>&1 || die "git is required. In Termux run: pkg install git"
 command -v cargo >/dev/null 2>&1 || printf 'NOTE: Rust/Cargo are not installed; source sync will still proceed.\n' >&2
 
-if [[ -e "$DESTINATION" && ! -d "$DESTINATION/.git" ]]; then
-  die "$DESTINATION exists but is not a Git checkout. Move it aside yourself; this script will not overwrite it."
+is_git_checkout() {
+  git -C "$1" rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
+if [[ -e "$DESTINATION" ]] && ! is_git_checkout "$DESTINATION"; then
+  if [[ -d "$DESTINATION" ]] && [[ -z "$(find "$DESTINATION" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+    rmdir "$DESTINATION"
+  else
+    die "$DESTINATION exists but is not a Git checkout or is not empty. Move/back up its contents yourself; this script will not overwrite them."
+  fi
 fi
 
-if [[ ! -d "$DESTINATION/.git" ]]; then
+if ! is_git_checkout "$DESTINATION"; then
   git clone --single-branch --branch "$BRANCH" "$REPOSITORY" "$DESTINATION"
 else
   remote_url="$(git -C "$DESTINATION" remote get-url origin 2>/dev/null || true)"
