@@ -101,7 +101,6 @@ unsafe fn run_kernel_probe() -> i32 {
     }
 
     // The only permitted recvmsg target is the pre-established broker FD 3.
-    let mut byte = 0u8;
     let recv_rc = libc::recvmsg(peer_fd, std::ptr::null_mut(), libc::MSG_DONTWAIT);
     if recv_rc != -1 || *libc::__errno_location() != libc::EPERM {
         return 32;
@@ -154,7 +153,6 @@ unsafe fn run_kernel_probe() -> i32 {
 
     libc::close(net_fd);
     libc::close(peer_fd);
-    let _ = &mut byte;
     0
 }
 
