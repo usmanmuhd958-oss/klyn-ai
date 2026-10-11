@@ -247,6 +247,7 @@ pub fn enforce_worker(
 mod tests {
     use super::*;
     use crate::{ResourceBudget, SignedCapability};
+    use std::{fs::File, os::fd::AsRawFd, process::Command};
 
     fn claims() -> CapabilityClaims {
         CapabilityClaims {
@@ -313,4 +314,65 @@ mod tests {
     fn worker_seccomp_requires_the_pinned_broker_descriptor() {
         assert!(apply_worker_seccomp(BROKER_FD + 1).is_err());
     }
+
+    #[test]
+    fn seccomp_denies_network_sockets_and_exec_in_an_isolated_child() {
+        const CHILD_ENV: &str = "KLYN_SECCOMP_ADVERSARIAL_CHILD";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            let status = Command::new(std::env::current_exe().unwrap())
+                .arg("--exact")
+                .arg("landlock_seccomp::tests::seccomp_denies_network_sockets_and_exec_in_an_isolated_child")
+                .arg("--nocapture")
+                .env(CHILD_ENV, "1")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
+        }
+
+        // Pin a harmless open descriptor at FD 3 so the production policy's
+        // broker-FD precondition is exercised exactly.
+        let harmless_fd = File::open("/dev/null").unwrap();
+        let raw_fd = harmless_fd.as_raw_fd();
+        if raw_fd != BROKER_FD {
+            // SAFETY: dup2 duplicates a currently open /dev/null descriptor to
+            // the documented broker slot in this disposable child process.
+            let duplicated = unsafe { libc::dup2(raw_fd, BROKER_FD) };
+            assert_eq!(duplicated, BROKER_FD);
+        }
+        drop(harmless_fd);
+
+        apply_worker_seccomp(BROKER_FD).expect("seccomp must install or fail the child test");
+
+        for domain in [libc::AF_INET, libc::AF_UNIX] {
+            // SAFETY: the syscall only attempts to create a socket. The
+            // installed filter must deny it before the kernel creates one.
+            let created = unsafe {
+                libc::syscall(libc::SYS_socket, domain, libc::SOCK_STREAM, 0)
+            };
+            assert_eq!(created, -1);
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::EPERM)
+            );
+        }
+
+        let executable = std::ffi::CString::new("/bin/true").unwrap();
+        // SAFETY: execve is intentionally probed with null argv/envp. The
+        // seccomp policy must reject the syscall with EPERM before execution.
+        let executed = unsafe {
+            libc::syscall(
+                libc::SYS_execve,
+                executable.as_ptr(),
+                std::ptr::null::<*const libc::c_char>(),
+                std::ptr::null::<*const libc::c_char>(),
+            )
+        };
+        assert_eq!(executed, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::EPERM)
+        );
+    }
+
 }

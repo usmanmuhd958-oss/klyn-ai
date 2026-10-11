@@ -715,3 +715,27 @@ mod tests {
         assert!(!FileAccess::Write.permits(FileAccess::Read));
     }
 }
+
+
+#[cfg(test)]
+mod cgroup_fail_closed_tests {
+    use super::*;
+
+    #[test]
+    fn ordinary_directory_is_not_accepted_as_a_cgroup_v2_root() {
+        let directory = tempfile::tempdir().unwrap();
+        let budget = ResourceBudget {
+            memory_max_bytes: 64 * 1024 * 1024,
+            cpu_quota_micros: 100_000,
+            cpu_period_micros: 100_000,
+            pids_max: 8,
+            io_limits: vec![],
+        };
+
+        assert!(matches!(
+            CgroupV2::create(directory.path(), "worker-test", &budget),
+            Err(SandboxError::InvalidConfig(_))
+        ));
+        assert!(!directory.path().join("worker-test").exists());
+    }
+}
