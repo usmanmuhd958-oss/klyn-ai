@@ -18,13 +18,15 @@ pub mod namespace;
 pub mod supervisor;
 
 use std::{
-    collections::BTreeSet,
-    fs::{self, OpenOptions},
-    io::{self, Write},
-    os::unix::fs::MetadataExt,
+    collections::{BTreeMap, BTreeSet},
+    env,
+    fs::{self, File, OpenOptions},
+    io::{self, Read, Write},
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
 };
 
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use nix::sys::statfs::{statfs, CGROUP2_SUPER_MAGIC};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -430,6 +432,102 @@ pub fn validate_trusted_executable(path: impl AsRef<Path>) -> Result<PathBuf, Sa
     }
 
     Ok(canonical)
+}
+
+
+
+/// Daemon-owned capability signer. Keep the signing key in the daemon's
+/// protected secret store; workers receive only the signed claims.
+pub struct CapabilityIssuer {
+    signing_key: SigningKey,
+}
+
+impl CapabilityIssuer {
+    pub fn new(signing_key: SigningKey) -> Self {
+        Self { signing_key }
+    }
+
+    pub fn verifying_key(&self) -> VerifyingKey {
+        self.signing_key.verifying_key()
+    }
+
+    pub fn issue(&self, claims: CapabilityClaims) -> Result<SignedCapability, SandboxError> {
+        claims.validate()?;
+        let canonical = serde_json::to_vec(&claims)?;
+        let signature = self.signing_key.sign(&canonical).to_bytes().to_vec();
+        Ok(SignedCapability { claims, signature })
+    }
+}
+
+/// Trusted bootstrap entry point. The executable must call this before parsing
+/// task instructions, loading plugins, starting threads, or executing model
+/// output. The manifest is read only after the supervisor releases the gate.
+/// Any unsupported primitive returns an error and the caller must exit nonzero.
+pub fn bootstrap_worker_from_env(
+    capability_manifest: impl AsRef<Path>,
+    broker_socket: impl AsRef<Path>,
+    verifier: &dyn broker::CapabilityVerifier,
+    roots: &BTreeMap<String, PathBuf>,
+) -> Result<(broker::BrokerClient, SignedCapability), SandboxError> {
+    let gate_path = env::var_os("KLYN_START_GATE_PATH").ok_or_else(|| {
+        SandboxError::InvalidConfig("required start-gate environment is missing".into())
+    })?;
+
+    namespace::await_start_gate(Path::new(&gate_path))?;
+    namespace::enter_worker_namespaces()?;
+    namespace::close_inherited_descriptors()?;
+
+    let manifest_path = capability_manifest.as_ref();
+    let before = fs::symlink_metadata(manifest_path)?;
+    let uid = nix::unistd::Uid::current().as_raw();
+    if before.file_type().is_symlink()
+        || !before.is_file()
+        || before.uid() != uid
+        || before.mode() & 0o077 != 0
+        || before.len() as usize > MAX_BROKER_FRAME_BYTES
+    {
+        return Err(SandboxError::InvalidConfig(
+            "capability manifest must be a private, bounded regular file".into(),
+        ));
+    }
+
+    let mut manifest = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(manifest_path)?;
+    let after = manifest.metadata()?;
+    if !after.is_file()
+        || after.uid() != uid
+        || after.ino() != before.ino()
+        || after.dev() != before.dev()
+    {
+        return Err(SandboxError::Enforcement(
+            "capability manifest identity changed while opening".into(),
+        ));
+    }
+
+    let mut bytes = Vec::with_capacity(after.len() as usize);
+    manifest
+        .take((MAX_BROKER_FRAME_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)?;
+    if bytes.is_empty() || bytes.len() > MAX_BROKER_FRAME_BYTES {
+        return Err(SandboxError::InvalidConfig(
+            "capability manifest is empty or exceeds the size limit".into(),
+        ));
+    }
+    drop(manifest);
+
+    let token: SignedCapability = serde_json::from_slice(&bytes)?;
+    verifier
+        .verify(&token)
+        .map_err(|_| SandboxError::Enforcement("worker capability signature is invalid".into()))?;
+
+    // Establish the only permitted socket before Landlock and seccomp make
+    // pathname socket creation and connect unavailable.
+    let broker = broker::BrokerClient::connect_reserved(broker_socket)
+        .map_err(SandboxError::Io)?;
+    landlock_seccomp::enforce_worker(&token.claims, roots, BROKER_FD)?;
+    Ok((broker, token))
 }
 
 #[cfg(test)]

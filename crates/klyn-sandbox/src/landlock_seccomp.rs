@@ -32,7 +32,9 @@ pub fn apply_landlock(
     roots: &BTreeMap<String, PathBuf>,
 ) -> Result<RestrictionStatus, SandboxError> {
     claims.validate()?;
-    let abi = ABI::V3;
+    // ABI v8 is required for all-thread Landlock enforcement. Older kernels
+    // are rejected by HardRequirement; the worker never continues unsandboxed.
+    let abi = ABI::V8;
     let mut ruleset = Ruleset::default()
         .set_compatibility(CompatLevel::HardRequirement)
         .handle_access(AccessFs::from_all(abi))
@@ -275,11 +277,17 @@ mod tests {
     #[test]
     fn landlock_requires_supported_abi_and_all_threads() {
         let roots = BTreeMap::new();
-        let status = apply_landlock(&claims(), &roots)
-            .expect("required Landlock features are unavailable");
-        assert_eq!(status.ruleset, RulesetStatus::FullyEnforced);
-        assert!(status.no_new_privs);
-        assert!(status.all_threads);
+        match apply_landlock(&claims(), &roots) {
+            Ok(status) => {
+                assert_eq!(status.ruleset, RulesetStatus::FullyEnforced);
+                assert!(status.no_new_privs);
+                assert!(status.all_threads);
+            }
+            // Some CI hosts still expose pre-v8 Landlock. Those hosts must
+            // refuse worker execution rather than silently dropping TSYNC.
+            Err(SandboxError::Enforcement(_)) => {}
+            Err(error) => panic!("unexpected Landlock configuration failure: {error}"),
+        }
     }
 
     #[test]
