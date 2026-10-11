@@ -1152,12 +1152,18 @@ function scopeAllowsRequest(scope: CapabilityScope, request: CapabilityResourceR
       return scope.hosts.includes(host) && scope.ports.some((range) => port >= range.first && port <= range.last);
     }
     case "process": {
-      assertOnlySelectorKeys(selector, ["processHandleId", "executableSha256", "argv", "environmentKeys", "processCount"], scope.kind);
+      assertOnlySelectorKeys(selector, ["processHandleId", "executableSha256", "argv", "environmentKeys", "processCount", "signal"], scope.kind);
       if (request.operation !== "process.spawn") {
         const processHandleId = selectorString(selector, "processHandleId");
         validId(processHandleId, "resourceSelector.processHandleId");
         // The native broker must bind the process handle to resourceId and the caller.
         // A caller-supplied PID/handle is never trusted without broker ownership lookup.
+        if (request.operation === "process.signal") {
+          const signal = selectorString(selector, "signal");
+          if (!["SIGTERM", "SIGINT", "SIGHUP"].includes(signal)) return false;
+        } else if (selector.signal !== undefined) {
+          return false;
+        }
         return selector.executableSha256 === undefined && selector.argv === undefined &&
           selector.environmentKeys === undefined && selector.processCount === undefined;
       }
