@@ -269,10 +269,7 @@ pub fn serve_connection(stream: UnixStream, router: &Router) -> Result<(), Daemo
 fn peer_identity(stream: &UnixStream) -> Result<PeerIdentity, DaemonError> {
     let credentials =
         getsockopt(stream, PeerCredentials).map_err(|_| DaemonError::PeerCredentials)?;
-    let pid = credentials
-        .pid()
-        .ok_or(DaemonError::PeerCredentials)
-        .and_then(|value| u32::try_from(value).map_err(|_| DaemonError::PeerCredentials))?;
+    let pid = u32::try_from(credentials.pid()).map_err(|_| DaemonError::PeerCredentials)?;
 
     Ok(PeerIdentity {
         pid,
