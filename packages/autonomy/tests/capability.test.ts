@@ -12,14 +12,19 @@ import {
   type CapabilityBudget,
   type CapabilityEvidenceEvent,
   type CapabilityEvidenceSink,
+  type CapabilityRevocationRegistry,
+  type CapabilityRevocation,
   type FileSystemCapabilityScope,
   type CapabilityTokenV1,
+  type PreExecutionAttestationPayloadV1,
+  verifyPreExecutionAttestation,
 } from "../src/capability.js";
 
 const { privateKey, publicKey } = generateKeyPairSync("ed25519");
-const signer = new Ed25519CapabilitySigner("test-key-v1", privateKey);
+const signer = new Ed25519CapabilitySigner("test-key-v1", privateKey, "root-authority");
 const verifier = new Ed25519CapabilityTokenVerifier({
   resolvePublicKey: (keyId) => keyId === "test-key-v1" ? publicKey : undefined,
+  resolvePrincipalId: (keyId) => keyId === "test-key-v1" ? "root-authority" : undefined,
 });
 
 const budget: CapabilityBudget = {
@@ -104,6 +109,14 @@ class TestEvidenceSink implements CapabilityEvidenceSink {
   }
 }
 
+class TestRevocationRegistry implements CapabilityRevocationRegistry {
+  public constructor(private readonly revoked = false) {}
+  public async isRevoked(_tokenId: string, _tokenDigest: string, _nowEpochMs: number): Promise<boolean> {
+    return this.revoked;
+  }
+  public async revoke(_revocation: CapabilityRevocation): Promise<void> {}
+}
+
 test("Ed25519 token signatures bind the complete capability payload", () => {
   const token = makeParentToken();
   verifier.verify(token, { nowEpochMs: 2000, subjectPrincipalId: "agent-a", audience: "runtime-a" });
@@ -111,6 +124,39 @@ test("Ed25519 token signatures bind the complete capability payload", () => {
   const forged = structuredClone(token);
   (forged.payload as { subjectPrincipalId: string }).subjectPrincipalId = "agent-attacker";
   assert.throws(() => verifier.verify(forged, { nowEpochMs: 2000 }), /signature verification failed/);
+});
+
+
+test("pre-execution attestation is signed and bound to a specific invocation", () => {
+  const payload: PreExecutionAttestationPayloadV1 = {
+    schema: "urn:klyn:capability-preexecution-attestation:v1",
+    invocationId: "invoke-1",
+    tokenId: "token-1",
+    tokenDigest: "a".repeat(64),
+    principalId: "agent-a",
+    missionId: "mission-1",
+    runtimeInstanceId: "runtime-a",
+    audience: "runtime-a",
+    requestDigest: "b".repeat(64),
+    scopeDigest: "c".repeat(64),
+    policyDigest: "d".repeat(64),
+    sandboxProfileDigest: "e".repeat(64),
+    reservationId: "reservation-1",
+    issuedAtEpochMs: 1000,
+    expiresAtEpochMs: 3000,
+  };
+  const attestation = { payload, signature: signer.signPayload(payload) };
+  verifyPreExecutionAttestation(attestation, {
+    resolvePublicKey: (keyId) => keyId === "test-key-v1" ? publicKey : undefined,
+    resolvePrincipalId: (keyId) => keyId === "test-key-v1" ? "root-authority" : undefined,
+  }, { nowEpochMs: 2000, invocationId: "invoke-1", tokenDigest: "a".repeat(64), requestDigest: "b".repeat(64), runtimeInstanceId: "runtime-a" });
+  assert.throws(() => verifyPreExecutionAttestation({
+    payload: { ...payload, requestDigest: "f".repeat(64) },
+    signature: attestation.signature,
+  }, {
+    resolvePublicKey: (keyId) => keyId === "test-key-v1" ? publicKey : undefined,
+    resolvePrincipalId: (keyId) => keyId === "test-key-v1" ? "root-authority" : undefined,
+  }, { nowEpochMs: 2000 }), /runtime attestation signature is not trusted/);
 });
 
 test("scope and budget comparisons only accept attenuation", () => {
@@ -136,6 +182,7 @@ test("attenuation signs the child, binds its parent digest and appends KEL evide
     verifier,
     signer,
     sink,
+    new TestRevocationRegistry(),
     () => 2000,
     (() => {
       let sequence = 0;
@@ -169,7 +216,7 @@ test("attenuation signs the child, binds its parent digest and appends KEL evide
 test("attenuation fails closed on scope escalation and unauthorized delegate", async () => {
   const parent = makeParentToken();
   const sink = new TestEvidenceSink();
-  const builder = new AttenuatedCapabilityBuilderV1(parent, "agent-a", verifier, signer, sink, () => 2000);
+  const builder = new AttenuatedCapabilityBuilderV1(parent, "agent-a", verifier, signer, sink, new TestRevocationRegistry(), () => 2000);
   await assert.rejects(builder.build({
     subjectPrincipalId: "agent-b",
     scopes: [{ ...childScope(), relativePathPrefix: "other-tree" }],
@@ -182,7 +229,7 @@ test("attenuation fails closed on scope escalation and unauthorized delegate", a
     runtimeInstanceId: "runtime-a",
   }), /child scopes must be strict subsets/);
   await assert.rejects(new AttenuatedCapabilityBuilderV1(
-    parent, "agent-a", verifier, signer, sink, () => 2000,
+    parent, "agent-a", verifier, signer, sink, new TestRevocationRegistry(), () => 2000,
   ).build({
     subjectPrincipalId: "agent-c",
     scopes: [childScope()],
