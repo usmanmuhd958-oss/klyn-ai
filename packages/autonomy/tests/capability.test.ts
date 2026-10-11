@@ -54,6 +54,7 @@ function makeParentToken() {
     tokenId: "root-token-1",
     issuerPrincipalId: "root-authority",
     subjectPrincipalId: "agent-a",
+    missionId: "mission-1",
     audience: "runtime-a",
     nonce: "root-nonce-1",
     issuedAtEpochMs: 1000,
