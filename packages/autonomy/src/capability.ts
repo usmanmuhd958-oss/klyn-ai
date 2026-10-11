@@ -1,4 +1,4 @@
-import { createHash, sign, verify, type KeyObject } from "node:crypto";
+import { createHash, randomUUID, sign, verify, type KeyObject } from "node:crypto";
 import { isIP } from "node:net";
 
 /**
@@ -177,6 +177,8 @@ export interface AttenuationRule {
   readonly delegation: CapabilityDelegationPolicy;
   readonly reason: string;
   readonly policyDigest: string;
+  readonly missionId: string;
+  readonly runtimeInstanceId: string;
 }
 
 export interface CapabilityTokenSigner {
