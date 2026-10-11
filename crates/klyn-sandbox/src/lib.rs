@@ -6,6 +6,9 @@
 
 #![cfg(target_os = "linux")]
 
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+compile_error!("klyn-sandbox currently supports Linux x86_64 and aarch64; other Linux architectures must not silently use an unreviewed syscall table");
+
 pub mod broker;
 pub mod landlock_seccomp;
 
