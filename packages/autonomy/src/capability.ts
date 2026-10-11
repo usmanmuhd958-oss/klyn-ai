@@ -187,7 +187,13 @@ export interface AttenuationRule {
 
 export interface CapabilityTokenSigner {
   readonly keyId: string;
-  signPayload(payload: unknown): CapabilitySignatureV1;
+  readonly principalId: string;
+  /**
+   * HSM/KMS adapters may return promises. Implementations must sign canonical payload
+   * bytes with the key registered to principalId and reject payloads claiming another issuer.
+   */
+  signPayload(payload: unknown): CapabilitySignatureV1 | Promise<CapabilitySignatureV1>;
+  signToken(payload: CapabilityTokenV1): CapabilityToken | Promise<CapabilityToken>;
 }
 
 export interface CapabilityKeyResolver {
@@ -911,7 +917,7 @@ export class AttenuatedCapabilityBuilderV1 implements AttenuatedCapabilityBuilde
     private readonly parent: CapabilityToken,
     private readonly callerPrincipalId: string,
     private readonly verifier: CapabilityTokenVerifier,
-    private readonly signer: Ed25519CapabilitySigner,
+    private readonly signer: CapabilityTokenSigner,
     private readonly evidence: CapabilityEvidenceSink,
     private readonly revocations: CapabilityRevocationRegistry,
     private readonly now: () => number = Date.now,
@@ -934,8 +940,7 @@ export class AttenuatedCapabilityBuilderV1 implements AttenuatedCapabilityBuilde
     if (rule.missionId !== parent.missionId) {
       throw new CapabilitySecurityError("mission_mismatch", "delegated capability cannot change mission");
     }
-    if (this.signer.keyId !== this.parent.signature.keyId ||
-        this.signer.principalId !== parent.issuerPrincipalId) {
+    if (this.signer.principalId !== parent.issuerPrincipalId) {
       throw new CapabilitySecurityError("delegation_signer_mismatch", "attenuation must use the trusted signer bound to the parent issuer");
     }
     if (!parent.delegation.enabled || parent.delegationDepth >= parent.delegation.maxDepth) {
@@ -989,7 +994,7 @@ export class AttenuatedCapabilityBuilderV1 implements AttenuatedCapabilityBuilde
       budget: rule.budget,
       policyDigest: rule.policyDigest,
     });
-    const childToken = this.signer.signToken(childPayload);
+    const childToken = await this.signer.signToken(childPayload);
     const evidenceReceipt = await this.evidence.append(Object.freeze({
       schema: CAPABILITY_EVIDENCE_SCHEMA,
       eventId: this.makeId(),
