@@ -1505,7 +1505,8 @@ fn pump_bounded_file_write(
     if basename.is_empty() || basename == "." || basename == ".." || basename.contains('/') {
         return Err(SandboxError::Denied("write target basename is not canonical".into()));
     }
-    let parent_fd = open_scoped_directory(root, parent_path)?;
+    // Use a real readable directory FD here: O_PATH descriptors cannot be fsync'd.
+    let parent_fd = open_beneath(root, parent_path, libc::O_RDONLY | libc::O_DIRECTORY, 0)?;
     let target_name = CString::new(basename)
         .map_err(|_| SandboxError::Denied("write target contains NUL".into()))?;
 
