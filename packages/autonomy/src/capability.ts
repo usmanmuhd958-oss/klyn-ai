@@ -278,8 +278,10 @@ export interface CapabilityRevocationRegistry {
 
 export interface CapabilityInvocationCounter {
   /**
-   * Atomic reservation across workers. Must check revocation and quotas in the same
-   * transaction or through an equivalent linearizable reservation protocol.
+   * Atomic quota reservation across workers. Reuse of an invocation ID with a
+   * different request digest must be rejected; duplicate concurrent dispatch must
+   * not be admitted. The pipeline checks revocation before reservation and again
+   * immediately before dispatch.
    */
   reserve(input: {
     readonly tokenId: string;
