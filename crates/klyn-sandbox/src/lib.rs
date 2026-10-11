@@ -482,6 +482,7 @@ use std::{
     fs::File,
     io::{Read, Seek, SeekFrom},
     os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
+    os::unix::fs::FileTypeExt,
     os::unix::process::CommandExt,
     process::{Child, Command, ExitStatus},
     sync::Arc,
