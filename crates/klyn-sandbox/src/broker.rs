@@ -8,7 +8,7 @@
 
 use crate::{
     digest_jcs, jcs_bytes, path_is_within, CapabilityBudget, CapabilityEvidenceEvent,
-    CapabilityInvocationRequest, CapabilityKeyResolver, CapabilityScope, EvidenceReceipt,
+    CapabilityInvocationRequest, CapabilityKeyResolver, CapabilityResourceRequest, CapabilityScope, EvidenceReceipt,
     PreExecutionAttestationPayloadV1, PreExecutionAttestationV1, SandboxError,
     TokenExpectation, Result,
     BROKER_PROTOCOL_SCHEMA, BROKER_RESPONSE_SCHEMA, CAPABILITY_ATTESTATION_SCHEMA,
@@ -26,9 +26,9 @@ use std::{
     net::{SocketAddr, TcpStream, ToSocketAddrs},
     os::{
         fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd, RawFd},
-        unix::{fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt}, net::{UnixListener, UnixStream}},
+        unix::{fs::{FileTypeExt, MetadataExt, PermissionsExt}, net::{UnixListener, UnixStream}},
     },
-    path::Path,
+    path::{Path, PathBuf},
     sync::{atomic::{AtomicBool, AtomicU64, Ordering}, Arc, Mutex},
     thread::{self, JoinHandle},
     time::Duration,
@@ -542,7 +542,7 @@ impl CapabilityBroker {
                     reject_selector_keys(selector, &["relativePath", "maxBytes"])?;
                     if max_bytes == 0 { return Err(SandboxError::Denied("read byte budget must be positive".into())); }
                     let fd = open_beneath(root, relative, libc::O_RDONLY, 0)?;
-                    let mut file = File::from(fd);
+                    let file = File::from(fd);
                     let mut bytes = Vec::with_capacity(max_bytes.min(64 * 1024) as usize);
                     file.take(max_bytes).read_to_end(&mut bytes)?;
                     Ok(PreparedResource { fd: Some(memfd_snapshot(&bytes)?), completion: None })
@@ -959,7 +959,7 @@ pub fn receive_frame_with_fd(stream: &mut UnixStream) -> Result<(Vec<u8>, Option
         return Err(SandboxError::Protocol("SCM_RIGHTS control message was truncated".into()));
     }
     let mut received_fd: Option<OwnedFd> = None;
-    let mut header = message.msg_control.cast::<libc::cmsghdr>();
+    let header = message.msg_control.cast::<libc::cmsghdr>();
     if !header.is_null() && message.msg_controllen >= header_size {
         unsafe {
             if (*header).cmsg_level == libc::SOL_SOCKET && (*header).cmsg_type == libc::SCM_RIGHTS {
@@ -1068,7 +1068,7 @@ fn list_directory_snapshot(fd: RawFd, maximum: u64) -> Result<Vec<u8>> {
     serde_json::to_vec(&names).map_err(|e| SandboxError::Serialization(e.to_string()))
 }
 
-fn pump_bounded_network(mut proxy: UnixStream, mut remote: TcpStream, maximum: u64) -> Result<()> {
+fn pump_bounded_network(proxy: UnixStream, remote: TcpStream, maximum: u64) -> Result<()> {
     proxy.set_read_timeout(Some(Duration::from_millis(250)))?;
     remote.set_read_timeout(Some(Duration::from_millis(250)))?;
     proxy.set_write_timeout(Some(Duration::from_millis(250)))?;
