@@ -20,6 +20,7 @@ on:
       - "crates/klyn-evidence/**"
       - "crates/klyn-daemon/**"
       - "packages/governance/**"
+      - "packages/autonomy/**"
       - ".github/workflows/kel-v1.yml"
 
 permissions:
