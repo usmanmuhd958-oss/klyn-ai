@@ -24,7 +24,7 @@ use std::{
     ffi::CString,
     fs::{self, File},
     io::{self, Read, Write},
-    net::{SocketAddr, TcpStream, ToSocketAddrs},
+    net::{IpAddr, SocketAddr, TcpStream},
     os::{
         fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd, RawFd},
         unix::{fs::{FileTypeExt, MetadataExt, PermissionsExt}, net::{UnixListener, UnixStream}},
@@ -32,7 +32,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering}, Arc, Mutex},
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crate::landlock_seccomp::{open_beneath, open_scoped_directory};
@@ -133,8 +133,20 @@ pub trait PeerPrincipalResolver: Send + Sync {
 }
 
 pub trait NetworkAddressPolicy: Send + Sync {
-    /// Deny by default. Deployment policy must explicitly allow resolved destinations,
-    /// including any permitted loopback/private-network exceptions.
+    /// The secure default supports only IP literals. Deployments that allow DNS names must
+    /// override this with a resolver that enforces the supplied monotonic deadline and returns
+    /// pinned SocketAddr values (never resolve again in the connect path).
+    fn resolve_addresses(&self, hostname: &str, port: u16, deadline: Instant) -> Result<Vec<SocketAddr>> {
+        if Instant::now() >= deadline {
+            return Err(SandboxError::BudgetExceeded("network resolution deadline elapsed".into()));
+        }
+        let ip = hostname.parse::<IpAddr>()
+            .map_err(|_| SandboxError::Denied("DNS names require an explicitly configured bounded resolver".into()))?;
+        Ok(vec![SocketAddr::new(ip, port)])
+    }
+
+    /// Must deny by default and explicitly account for loopback/private/link-local/metadata
+    /// destinations. Returned addresses are pinned; the broker never re-resolves at connect.
     fn allow_destination(&self, hostname: &str, address: SocketAddr) -> bool;
 }
 
@@ -142,7 +154,13 @@ pub trait NativeOperationProvider: Send + Sync {
     /// Called only after token/policy/revocation/quota verification and KEL authorization.
     /// Implementations must launch their own child inside namespaces, Landlock, seccomp,
     /// and a per-invocation cgroup; raw Command::new in the authority process is forbidden.
-    fn prepare(&self, request: &CapabilityInvocationRequest, scope: &CapabilityScope, effective_budget: &CapabilityBudget) -> Result<PreparedResource>;
+    fn prepare(
+        &self,
+        request: &CapabilityInvocationRequest,
+        scope: &CapabilityScope,
+        effective_budget: &CapabilityBudget,
+        deadline: Instant,
+    ) -> Result<PreparedResource>;
 }
 
 pub struct RegisteredDirectory {
@@ -548,7 +566,16 @@ impl CapabilityBroker {
             let _ = self.finish(&state, "failed", "capability_revoked", Some(error.to_string()));
             return Err(error);
         }
-        let prepared = match self.execute_resource(request, &scope, &effective_budget) {
+        let dispatch_now = (self.deps.now_epoch_ms)();
+        if dispatch_now >= effective_deadline {
+            let error = SandboxError::BudgetExceeded("invocation deadline elapsed before resource dispatch".into());
+            let _ = self.finish(&state, "failed", "deadline_elapsed", Some(error.to_string()));
+            return Err(error);
+        }
+        let remaining = Duration::from_millis(effective_deadline - dispatch_now);
+        let monotonic_deadline = Instant::now().checked_add(remaining)
+            .ok_or_else(|| SandboxError::BudgetExceeded("invocation deadline is outside monotonic clock range".into()))?;
+        let prepared = match self.execute_resource(request, &scope, &effective_budget, monotonic_deadline) {
             Ok(value) => value,
             Err(error) => {
                 let _ = self.finish(&state, "failed", error_code(&error), Some(error.to_string()));
@@ -594,6 +621,7 @@ impl CapabilityBroker {
         request: &CapabilityInvocationRequest,
         scope: &CapabilityScope,
         budget: &CapabilityBudget,
+        deadline: Instant,
     ) -> Result<PreparedResource> {
         let operation = &request.operation;
         match (scope, operation.operation.as_str()) {
@@ -602,16 +630,16 @@ impl CapabilityBroker {
                 if handle_id != &operation.handle_id {
                     return Err(SandboxError::Denied("filesystem handle mismatch".into()));
                 }
-                self.execute_filesystem(request, resource_id, max_bytes_per_invocation, budget)
+                self.execute_filesystem(request, resource_id, max_bytes_per_invocation, budget, deadline)
             }
             (CapabilityScope::Network { hosts, ports, max_bytes_per_invocation, .. }, op)
                 if matches!(op, "net.resolve" | "net.connect" | "net.send" | "net.receive") => {
-                self.execute_network(request, hosts, ports, *max_bytes_per_invocation, budget)
+                self.execute_network(request, hosts, ports, *max_bytes_per_invocation, budget, deadline)
             }
             _ => {
                 let provider = self.deps.native_provider.as_ref()
                     .ok_or_else(|| SandboxError::Denied("operation requires a separately configured native isolated-resource provider".into()))?;
-                provider.prepare(request, scope, budget)
+                provider.prepare(request, scope, budget, deadline)
             }
         }
     }
@@ -622,6 +650,7 @@ impl CapabilityBroker {
         resource_id: &str,
         scope_max_bytes: &u64,
         budget: &CapabilityBudget,
+        deadline: Instant,
     ) -> Result<PreparedResource> {
         let operation = &request.operation;
         let selector = &operation.resource_selector;
@@ -681,7 +710,7 @@ impl CapabilityBroker {
                     let relative_path = relative.to_owned();
                     let worker = thread::Builder::new().name("klyn-fs-write-guard".into()).spawn(move || {
                         pump_bounded_file_write(
-                            read_end, root_copy, relative_path, operation_name, max, expected_digest,
+                            read_end, root_copy, relative_path, operation_name, max, expected_digest, deadline,
                         )
                     }).map_err(SandboxError::Io)?;
                     Ok(PreparedResource { fd: Some(write_end), completion: Some(worker) })
@@ -708,6 +737,7 @@ impl CapabilityBroker {
         ports: &[crate::PortRange],
         scope_max_bytes: u64,
         budget: &CapabilityBudget,
+        deadline: Instant,
     ) -> Result<PreparedResource> {
         let selector = &request.operation.resource_selector;
         reject_selector_keys(selector, &["host", "port", "maxBytes", "payloadDigest"])?;
