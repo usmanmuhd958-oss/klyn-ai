@@ -181,8 +181,6 @@ pub fn apply_worker_seccomp(broker_fd: RawFd) -> Result<(), SandboxError> {
         libc::SYS_epoll_create1,
         libc::SYS_epoll_ctl,
         libc::SYS_epoll_pwait,
-        libc::SYS_sendto,
-        libc::SYS_recvfrom,
         libc::SYS_shutdown,
         libc::SYS_getsockopt,
         libc::SYS_setsockopt,
