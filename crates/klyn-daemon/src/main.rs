@@ -3,7 +3,7 @@
 //! The daemon never loads the checkpoint private seed. A separate signer agent owns
 //! HSM/PKCS#11 or cloud KMS credentials and exposes the authenticated signer protocol.
 use ed25519_dalek::VerifyingKey;
-use klyn_daemon::{key_custody::ExternalSignerClient, rpc, EvidenceStore};
+use klyn_daemon::{key_custody::ExternalSignerClient, rpc, EvidenceStore, WitnessKeyConfigV1};
 use std::{collections::BTreeMap, env, error::Error, path::PathBuf, sync::Arc, time::Duration};
 
 fn required(name: &str) -> Result<String, Box<dyn Error>> {
@@ -61,7 +61,18 @@ fn main() -> Result<(), Box<dyn Error>> {
         Err(_) => 64,
     };
 
-    let store = EvidenceStore::open_with_signer(database_path, ledger_id, signer, producer_keys)?;
+    let mut store = EvidenceStore::open_with_signer(database_path, ledger_id, signer, producer_keys)?;
+    // Witness records contain public verification keys only. Private witness keys remain
+    // in independently operated worker nodes and never enter the KEL daemon.
+    if let Ok(witness_config) = env::var("KEL_WITNESS_KEYS_JSON") {
+        let witnesses: Vec<WitnessKeyConfigV1> = serde_json::from_str(&witness_config)?;
+        if witnesses.len() > 1024 {
+            return Err("KEL_WITNESS_KEYS_JSON cannot contain more than 1024 key records".into());
+        }
+        for witness in &witnesses {
+            store.configure_witness_key(witness)?;
+        }
+    }
     eprintln!("KEL daemon initialized; socket={}", socket_path.display());
     rpc::serve(socket_path, auth_token, store, allowed_uid, max_connections)?;
     Ok(())
