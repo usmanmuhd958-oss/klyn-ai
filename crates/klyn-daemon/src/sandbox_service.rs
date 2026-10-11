@@ -7,7 +7,8 @@
 use std::{ffi::OsString, path::PathBuf, time::Duration};
 
 use klyn_sandbox::{
-    launch_gated_worker, ResourceBudget, SandboxError, SandboxedChild, WorkerLaunchSpec,
+    supervisor::{launch_gated_worker, SandboxedChild, WorkerLaunchSpec},
+    ResourceBudget, SandboxError,
 };
 
 pub struct SandboxServiceConfig {
