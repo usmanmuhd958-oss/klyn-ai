@@ -910,22 +910,43 @@ fn scope_matches_selector(scope: &CapabilityScope, operation: &CapabilityResourc
             Ok(true)
         }
         CapabilityScope::Network { hosts, ports, max_bytes_per_invocation, operations, .. } => {
-            if matches!(operation.operation.as_str(), "net.send" | "net.receive") {
-                return Err(SandboxError::Denied("standalone net.send/net.receive are not supported by this stream broker; use net.connect with explicit send and receive grants".into()));
-            }
-            reject_selector_keys(selector, &["host", "port", "maxBytes"])?;
+            reject_selector_keys(selector, &["host", "port", "maxBytes", "payloadDigest"])?;
             let host = selector.get("host").and_then(Value::as_str)
                 .ok_or_else(|| SandboxError::Denied("network selector requires host".into()))?;
             let port = selector.get("port").and_then(Value::as_u64).and_then(|n| u16::try_from(n).ok()).unwrap_or(0);
             let max = selector.get("maxBytes").and_then(Value::as_u64)
                 .ok_or_else(|| SandboxError::Denied("network selector requires maxBytes".into()))?;
             if !hosts.iter().any(|h| h == host) || !ports.iter().any(|r| port >= r.first && port <= r.last) ||
-                max == 0 || max > *max_bytes_per_invocation {
+                max == 0 || max > *max_bytes_per_invocation || max > MAX_FD_PAYLOAD_BYTES {
                 return Ok(false);
             }
-            if operation.operation == "net.connect" &&
-                !(operations.iter().any(|op| op == "net.send") && operations.iter().any(|op| op == "net.receive")) {
-                return Ok(false);
+            match operation.operation.as_str() {
+                "net.send" => {
+                    let digest = selector.get("payloadDigest").and_then(Value::as_str)
+                        .ok_or_else(|| SandboxError::Denied("net.send requires payloadDigest".into()))?;
+                    if !is_digest(digest) || !operations.iter().any(|op| op == "net.send") {
+                        return Ok(false);
+                    }
+                }
+                "net.receive" => {
+                    if selector.contains_key("payloadDigest") || !operations.iter().any(|op| op == "net.receive") {
+                        return Ok(false);
+                    }
+                }
+                "net.resolve" => {
+                    if selector.contains_key("payloadDigest") || !operations.iter().any(|op| op == "net.resolve") {
+                        return Ok(false);
+                    }
+                }
+                "net.connect" => {
+                    if selector.contains_key("payloadDigest") ||
+                        !operations.iter().any(|op| op == "net.connect") ||
+                        !operations.iter().any(|op| op == "net.send") ||
+                        !operations.iter().any(|op| op == "net.receive") {
+                        return Ok(false);
+                    }
+                }
+                _ => return Ok(false),
             }
             Ok(true)
         }
