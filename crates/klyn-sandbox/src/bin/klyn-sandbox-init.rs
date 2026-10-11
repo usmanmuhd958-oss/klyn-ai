@@ -14,7 +14,6 @@ use std::{
     process::Command,
 };
 
-const BROKER_FD: i32 = 3;
 const GATE_FD: i32 = 5;
 const MANIFEST_FD: i32 = 4;
 const GATE_RELEASE: u8 = 0xA5;
