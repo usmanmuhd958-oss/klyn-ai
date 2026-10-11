@@ -264,6 +264,8 @@ fn peer_credentials(stream: &UnixStream) -> io::Result<PeerCredentials> {
 }
 
 fn handle_connection(mut stream: UnixStream, inner: &BrokerInner) -> io::Result<()> {
+    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(5)))?;
     let peer = peer_credentials(&stream)?;
     loop {
         let payload = match read_frame(&mut stream) {
@@ -506,7 +508,17 @@ impl BrokerClient {
     }
 
     pub fn connect_reserved(path: impl AsRef<Path>) -> io::Result<Self> {
+        Self::normalize_reserved(UnixStream::connect(path)?)
+    }
+
+    /// Connect and verify SO_PEERCRED before moving the socket to descriptor 3.
+    pub fn connect_verified_reserved(path: impl AsRef<Path>, expected_peer_uid: u32) -> io::Result<Self> {
         let stream = UnixStream::connect(path)?;
+        verify_peer_uid(stream.as_raw_fd(), expected_peer_uid)?;
+        Self::normalize_reserved(stream)
+    }
+
+    fn normalize_reserved(stream: UnixStream) -> io::Result<Self> {
         let raw = stream.as_raw_fd();
         if raw != 3 {
             let rc = unsafe { libc::dup3(raw, 3, libc::O_CLOEXEC) };
@@ -559,6 +571,30 @@ impl BrokerClient {
         }
         receive_fd(stream.as_raw_fd()).map_err(|e| e.to_string())
     }
+}
+
+fn verify_peer_uid(fd: RawFd, expected_uid: u32) -> io::Result<()> {
+    let mut cred = std::mem::MaybeUninit::<libc::ucred>::zeroed();
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let rc = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            cred.as_mut_ptr().cast(),
+            &mut len,
+        )
+    };
+    if rc != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if len as usize != std::mem::size_of::<libc::ucred>() {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid broker peer credentials"));
+    }
+    if unsafe { cred.assume_init() }.uid != expected_uid {
+        return Err(io::Error::new(io::ErrorKind::PermissionDenied, "broker peer UID mismatch"));
+    }
+    Ok(())
 }
 
 fn receive_fd(socket: RawFd) -> io::Result<OwnedFd> {
