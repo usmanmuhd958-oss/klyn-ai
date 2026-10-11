@@ -23,7 +23,8 @@ use std::{
 use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
 use ed25519_dalek::{Signature, VerifyingKey};
 use nix::sys::socket::{
-    recvmsg, sendmsg, ControlMessage, ControlMessageOwned, MsgFlags,
+    getsockopt, recvmsg, sendmsg, sockopt::PeerCredentials as SocketPeerCredentials,
+    ControlMessage, ControlMessageOwned, MsgFlags,
 };
 use serde::{Deserialize, Serialize};
 
@@ -85,6 +86,8 @@ struct BrokerInner {
 pub struct ResourceBroker {
     listener: UnixListener,
     socket_path: PathBuf,
+    socket_device: u64,
+    socket_inode: u64,
     inner: Arc<BrokerInner>,
     max_workers: usize,
     queue_capacity: usize,
@@ -156,17 +159,31 @@ impl ResourceBroker {
         })?;
         let socket_path = parent.join(file_name);
 
-        if let Ok(metadata) = fs::symlink_metadata(&socket_path) {
-            if !metadata.file_type().is_socket() || (metadata.uid() != euid && euid != 0) {
+        match fs::symlink_metadata(&socket_path) {
+            Ok(_) => {
+                // Never unlink a path which may belong to a live broker. An
+                // operator must explicitly remove a confirmed stale socket.
                 return Err(SandboxError::InvalidConfig(
-                    "refusing to remove a non-socket or foreign-owned broker path".into(),
+                    "broker socket path already exists; refusing to replace it".into(),
                 ));
             }
-            fs::remove_file(&socket_path)?;
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(SandboxError::Io(error)),
         }
 
         let listener = UnixListener::bind(&socket_path)?;
-        fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
+        let metadata = fs::symlink_metadata(&socket_path)?;
+        if !metadata.file_type().is_socket() {
+            return Err(SandboxError::InvalidConfig(
+                "bound broker endpoint is not a Unix socket".into(),
+            ));
+        }
+        let socket_device = metadata.dev();
+        let socket_inode = metadata.ino();
+        if let Err(error) = fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600)) {
+            remove_socket_if_owned(&socket_path, socket_device, socket_inode);
+            return Err(SandboxError::Io(error));
+        }
 
         let mut roots = BTreeMap::new();
         for (id, path) in config.roots {
@@ -186,6 +203,8 @@ impl ResourceBroker {
         Ok(Self {
             listener,
             socket_path,
+            socket_device,
+            socket_inode,
             inner: Arc::new(BrokerInner {
                 roots,
                 verifier: config.verifier,
@@ -231,7 +250,18 @@ impl ResourceBroker {
 
 impl Drop for ResourceBroker {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.socket_path);
+        remove_socket_if_owned(&self.socket_path, self.socket_device, self.socket_inode);
+    }
+}
+
+fn remove_socket_if_owned(path: &Path, device: u64, inode: u64) {
+    if let Ok(metadata) = fs::symlink_metadata(path) {
+        if metadata.file_type().is_socket()
+            && metadata.dev() == device
+            && metadata.ino() == inode
+        {
+            let _ = fs::remove_file(path);
+        }
     }
 }
 
@@ -242,25 +272,11 @@ struct PeerCredentials {
 }
 
 fn peer_credentials(stream: &UnixStream) -> io::Result<PeerCredentials> {
-    let mut cred = std::mem::MaybeUninit::<libc::ucred>::zeroed();
-    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
-    let rc = unsafe {
-        libc::getsockopt(
-            stream.as_raw_fd(),
-            libc::SOL_SOCKET,
-            libc::SO_PEERCRED,
-            cred.as_mut_ptr().cast(),
-            &mut len,
-        )
-    };
-    if rc != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    if len as usize != std::mem::size_of::<libc::ucred>() {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "unexpected SO_PEERCRED size"));
-    }
-    let cred = unsafe { cred.assume_init() };
-    Ok(PeerCredentials { uid: cred.uid, gid: cred.gid })
+    let credentials = getsockopt(stream, SocketPeerCredentials).map_err(io::Error::from)?;
+    Ok(PeerCredentials {
+        uid: credentials.uid(),
+        gid: credentials.gid(),
+    })
 }
 
 fn handle_connection(mut stream: UnixStream, inner: &BrokerInner) -> io::Result<()> {
@@ -574,6 +590,27 @@ mod tests {
                 io_limits: vec![],
             },
         }
+    }
+
+    #[test]
+    fn broker_bind_refuses_to_unlink_an_existing_socket() {
+        let temp = tempfile::tempdir().unwrap();
+        let socket_path = temp.path().join("broker.sock");
+        let existing = UnixListener::bind(&socket_path).unwrap();
+        let key = SigningKey::from_bytes(&[17u8; 32]);
+        let config = BrokerConfig {
+            socket_path: socket_path.clone(),
+            roots: BTreeMap::new(),
+            verifier: Arc::new(Ed25519CapabilityVerifier::new(key.verifying_key())),
+            revocations: Arc::new(NeverRevoked),
+            max_workers: 1,
+            queue_capacity: 1,
+        };
+
+        assert!(ResourceBroker::bind(config).is_err());
+        assert!(fs::symlink_metadata(&socket_path).unwrap().file_type().is_socket());
+        drop(existing);
+        assert!(fs::symlink_metadata(&socket_path).unwrap().file_type().is_socket());
     }
 
     #[test]
