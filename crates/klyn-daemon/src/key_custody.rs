@@ -48,7 +48,7 @@ pub struct ExternalSignerClient {
     auth_token: String,
     key_id: String,
     key_epoch: String,
-    verifying_key: VerifyingKey,
+    verifying_key: Option<VerifyingKey>,
     timeout: Duration,
 }
 
@@ -113,8 +113,7 @@ impl ExternalSignerClient {
             auth_token,
             key_id: String::new(),
             key_epoch: String::new(),
-            verifying_key: VerifyingKey::from_bytes(&[0; 32])
-                .map_err(|error| SigningProviderError::Protocol(error.to_string()))?,
+            verifying_key: None,
             timeout,
         };
         let info: SignerInfo = client.request("signer.info", serde_json::json!({}))?;
@@ -128,8 +127,8 @@ impl ExternalSignerClient {
             .map_err(|error| SigningProviderError::Protocol(error.to_string()))?
             .try_into()
             .map_err(|_| SigningProviderError::Protocol("signer public key must be 32 bytes".into()))?;
-        client.verifying_key = VerifyingKey::from_bytes(&public_bytes)
-            .map_err(|error| SigningProviderError::Protocol(error.to_string()))?;
+        client.verifying_key = Some(VerifyingKey::from_bytes(&public_bytes)
+            .map_err(|error| SigningProviderError::Protocol(error.to_string()))?);
         client.key_id = info.key_id;
         client.key_epoch = info.key_epoch;
         Ok(client)
@@ -198,7 +197,7 @@ impl ExternalSignerClient {
 impl CheckpointSigner for ExternalSignerClient {
     fn key_id(&self) -> &str { &self.key_id }
     fn key_epoch(&self) -> &str { &self.key_epoch }
-    fn verifying_key(&self) -> &VerifyingKey { &self.verifying_key }
+    fn verifying_key(&self) -> &VerifyingKey { self.verifying_key.as_ref().expect("signer public key initialized") }
 
     fn sign_pae(&self, pre_auth_encoding: &[u8]) -> SigningResult<[u8; 64]> {
         let result: SignResult = self.request(
@@ -215,7 +214,7 @@ impl CheckpointSigner for ExternalSignerClient {
         }
         let signature: [u8; 64] = raw.try_into()
             .map_err(|_| SigningProviderError::Protocol("invalid signature length".into()))?;
-        self.verifying_key.verify(pre_auth_encoding, &Signature::from_bytes(&signature))
+        self.verifying_key().verify(pre_auth_encoding, &Signature::from_bytes(&signature))
             .map_err(|_| SigningProviderError::InvalidSignature)?;
         Ok(signature)
     }
