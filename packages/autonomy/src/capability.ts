@@ -1,4 +1,5 @@
 import { createHash, sign, verify, type KeyObject } from "node:crypto";
+import { isIP } from "node:net";
 
 /**
  * KLYN OS Object-Capability protocol v1.
@@ -576,7 +577,7 @@ function assertUniqueStrings(values: readonly string[], field: string, validateI
   if (!Array.isArray(values) || values.length === 0) throw new CapabilitySecurityError("scope_invalid", field + " must not be empty");
   const seen = new Set<string>();
   for (const value of values) {
-    if (typeof value !== "string" || value.length === 0 || value.includes("*") || value.includes("\\0")) {
+    if (typeof value !== "string" || value.length === 0 || value.includes("*") || value.includes("\0")) {
       throw new CapabilitySecurityError("scope_invalid", field + " contains an empty or wildcard value");
     }
     if (validateId) validId(value, field);
@@ -593,7 +594,7 @@ function assertOperations(operations: readonly string[], allowed: readonly strin
 }
 
 function validateRelativePathPrefix(path: string): void {
-  if (typeof path !== "string" || path.startsWith("/") || path.includes("\\") || path.includes("\\0")) {
+  if (typeof path !== "string" || path.startsWith("/") || path.includes("\\") || path.includes("\0")) {
     throw new CapabilitySecurityError("scope_invalid", "filesystem path must be a canonical relative path");
   }
   const segments = path.split("/");
@@ -626,8 +627,12 @@ export function validateCapabilityScope(scope: CapabilityScope): void {
     case "network":
       assertUniqueStrings(scope.hosts, "scope.hosts", false);
       for (const host of scope.hosts) {
-        if (host !== host.toLowerCase() || host.includes("/") || host.includes("@") || host.includes("?") || host.includes("#")) {
-          throw new CapabilitySecurityError("scope_invalid", "network hosts must be normalized exact hostnames or IP literals");
+        const labels = host.split(".");
+        const validDnsName = host.length <= 253 && labels.every((label) =>
+          label.length >= 1 && label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label));
+        if (host !== host.toLowerCase() || host.endsWith(".") ||
+            (isIP(host) === 0 && !validDnsName)) {
+          throw new CapabilitySecurityError("scope_invalid", "network hosts must be normalized exact DNS names or IP literals");
         }
       }
       if (!Array.isArray(scope.ports) || scope.ports.length === 0) throw new CapabilitySecurityError("scope_invalid", "network ports must be explicit");
@@ -647,7 +652,7 @@ export function validateCapabilityScope(scope: CapabilityScope): void {
         throw new CapabilitySecurityError("scope_invalid", "process argv prefixes must be explicit");
       }
       for (const argv of scope.argvPrefixes) {
-        if (!Array.isArray(argv) || argv.length === 0 || argv.some((arg) => typeof arg !== "string" || arg.includes("\\0"))) {
+        if (!Array.isArray(argv) || argv.length === 0 || argv.some((arg) => typeof arg !== "string" || arg.includes("\0"))) {
           throw new CapabilitySecurityError("scope_invalid", "argv prefixes must contain only strings without NUL");
         }
       }
@@ -787,6 +792,9 @@ export class AttenuatedCapabilityBuilderV1 implements AttenuatedCapabilityBuilde
 
   public async build(rule: AttenuationRule): Promise<CapabilityDelegation> {
     const now = this.now();
+    validId(rule.missionId, "missionId");
+    validId(rule.runtimeInstanceId, "runtimeInstanceId");
+    validId(rule.policyDigest, "policyDigest");
     this.verifier.verify(this.parent, { nowEpochMs: now, subjectPrincipalId: this.callerPrincipalId });
     const parent = this.parent.payload;
     if (!parent.delegation.enabled || parent.delegationDepth >= parent.delegation.maxDepth) {
