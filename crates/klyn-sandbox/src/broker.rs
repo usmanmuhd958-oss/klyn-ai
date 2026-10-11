@@ -13,23 +13,31 @@ use std::{
     net::{SocketAddr, TcpStream},
     os::{
         fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
-        unix::{fs::{FileTypeExt, MetadataExt, OpenOptionsExt}, net::{UnixListener, UnixStream}},
+        unix::{
+            fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
+            net::{UnixListener, UnixStream},
+        },
     },
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
 use ed25519_dalek::{Signature, VerifyingKey};
 use nix::sys::socket::{
-    recvmsg, sendmsg, ControlMessage, ControlMessageOwned, MsgFlags,
+    getsockopt, recvmsg, sendmsg, sockopt::PeerCredentials as SocketPeerCredentials,
+    ControlMessage, ControlMessageOwned, MsgFlags,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    path_is_within_grant, validate_relative_path, CapabilityClaims, FileAccess, FileGrant,
-    NetworkGrant, SandboxError, SignedCapability, MAX_BROKER_FRAME_BYTES,
+    candidate_root_id, is_candidate_root_id, path_is_within_grant, validate_relative_path,
+    CapabilityClaims, FileAccess, FileGrant, NetworkGrant, SandboxError, SignedCapability,
+    MAX_BROKER_FRAME_BYTES, MAX_MUTATION_BYTES,
 };
 
 pub trait CapabilityVerifier: Send + Sync + 'static {
@@ -40,6 +48,19 @@ pub trait CapabilityVerifier: Send + Sync + 'static {
 pub trait RevocationOracle: Send + Sync + 'static {
     /// Return true only when the token is revoked. Errors are fail-closed.
     fn is_revoked(&self, token_id: &str) -> Result<bool, String>;
+}
+
+/// The broker can never write candidate paths itself. The daemon implements
+/// this callback by forwarding to klyn-fs, which checks transaction state and
+/// exact old-content preconditions before writing.
+pub trait CandidateMutationHandler: Send + Sync + 'static {
+    fn write_candidate_file(
+        &self,
+        transaction_id: &str,
+        relative_path: &str,
+        expected_old_content: Option<&str>,
+        content: &str,
+    ) -> Result<(), String>;
 }
 
 pub struct Ed25519CapabilityVerifier {
@@ -56,7 +77,9 @@ impl CapabilityVerifier for Ed25519CapabilityVerifier {
     fn verify(&self, token: &SignedCapability) -> Result<(), String> {
         let bytes = serde_json::to_vec(&token.claims).map_err(|e| e.to_string())?;
         let signature = Signature::from_slice(&token.signature).map_err(|e| e.to_string())?;
-        self.key.verify_strict(&bytes, &signature).map_err(|e| e.to_string())?;
+        self.key
+            .verify_strict(&bytes, &signature)
+            .map_err(|e| e.to_string())?;
         token.claims.validate().map_err(|e| e.to_string())
     }
 }
@@ -67,6 +90,7 @@ pub struct BrokerConfig {
     pub roots: BTreeMap<String, PathBuf>,
     pub verifier: Arc<dyn CapabilityVerifier>,
     pub revocations: Arc<dyn RevocationOracle>,
+    pub mutation_handler: Arc<dyn CandidateMutationHandler>,
     pub max_workers: usize,
     pub queue_capacity: usize,
 }
@@ -80,24 +104,27 @@ struct BrokerInner {
     roots: BTreeMap<String, RootHandle>,
     verifier: Arc<dyn CapabilityVerifier>,
     revocations: Arc<dyn RevocationOracle>,
+    mutation_handler: Arc<dyn CandidateMutationHandler>,
 }
 
 pub struct ResourceBroker {
     listener: UnixListener,
     socket_path: PathBuf,
+    socket_device: u64,
+    socket_inode: u64,
     inner: Arc<BrokerInner>,
     max_workers: usize,
     queue_capacity: usize,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BrokerRequest {
     capability: SignedCapability,
     operation: BrokerOperation,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 enum BrokerOperation {
     OpenFile {
@@ -108,10 +135,25 @@ enum BrokerOperation {
     ConnectTcp {
         address: String,
     },
+    WriteCandidateFile {
+        transaction_id: String,
+        path: String,
+        #[serde(deserialize_with = "deserialize_required_option")]
+        expected_old_content: Option<String>,
+        content: String,
+    },
     /// Process execution is intentionally unavailable through the broker.
     Exec {
         program: String,
     },
+}
+
+fn deserialize_required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -123,11 +165,17 @@ struct BrokerResponse {
 
 impl BrokerResponse {
     fn success() -> Self {
-        Self { ok: true, error: None }
+        Self {
+            ok: true,
+            error: None,
+        }
     }
 
     fn denied(message: impl Into<String>) -> Self {
-        Self { ok: false, error: Some(message.into()) }
+        Self {
+            ok: false,
+            error: Some(message.into()),
+        }
     }
 }
 
@@ -145,7 +193,8 @@ impl ResourceBroker {
         let parent = fs::canonicalize(parent)?;
         let parent_meta = fs::metadata(&parent)?;
         let euid = unsafe { libc::geteuid() };
-        if parent_meta.mode() & 0o022 != 0 || (parent_meta.uid() != 0 && parent_meta.uid() != euid) {
+        if parent_meta.mode() & 0o022 != 0 || (parent_meta.uid() != 0 && parent_meta.uid() != euid)
+        {
             return Err(SandboxError::InvalidConfig(format!(
                 "broker socket parent is not trusted: {}",
                 parent.display()
@@ -156,22 +205,38 @@ impl ResourceBroker {
         })?;
         let socket_path = parent.join(file_name);
 
-        if let Ok(metadata) = fs::symlink_metadata(&socket_path) {
-            if !metadata.file_type().is_socket() || (metadata.uid() != euid && euid != 0) {
+        match fs::symlink_metadata(&socket_path) {
+            Ok(_) => {
+                // Never unlink a path which may belong to a live broker. An
+                // operator must explicitly remove a confirmed stale socket.
                 return Err(SandboxError::InvalidConfig(
-                    "refusing to remove a non-socket or foreign-owned broker path".into(),
+                    "broker socket path already exists; refusing to replace it".into(),
                 ));
             }
-            fs::remove_file(&socket_path)?;
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(SandboxError::Io(error)),
         }
 
         let listener = UnixListener::bind(&socket_path)?;
-        fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
+        let metadata = fs::symlink_metadata(&socket_path)?;
+        if !metadata.file_type().is_socket() {
+            return Err(SandboxError::InvalidConfig(
+                "bound broker endpoint is not a Unix socket".into(),
+            ));
+        }
+        let socket_device = metadata.dev();
+        let socket_inode = metadata.ino();
+        if let Err(error) = fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600)) {
+            remove_socket_if_owned(&socket_path, socket_device, socket_inode);
+            return Err(SandboxError::Io(error));
+        }
 
         let mut roots = BTreeMap::new();
         for (id, path) in config.roots {
             if id.is_empty() || id.len() > 128 || roots.contains_key(&id) {
-                return Err(SandboxError::InvalidConfig("invalid or duplicate root id".into()));
+                return Err(SandboxError::InvalidConfig(
+                    "invalid or duplicate root id".into(),
+                ));
             }
             let canonical = fs::canonicalize(path)?;
             if !fs::metadata(&canonical)?.is_dir() {
@@ -180,16 +245,28 @@ impl ResourceBroker {
                     canonical.display()
                 )));
             }
-            let file = OpenOptions::new().read(true).custom_flags(libc::O_CLOEXEC | libc::O_DIRECTORY).open(&canonical)?;
-            roots.insert(id, RootHandle { _path: canonical, file });
+            let file = OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_CLOEXEC | libc::O_DIRECTORY)
+                .open(&canonical)?;
+            roots.insert(
+                id,
+                RootHandle {
+                    _path: canonical,
+                    file,
+                },
+            );
         }
         Ok(Self {
             listener,
             socket_path,
+            socket_device,
+            socket_inode,
             inner: Arc::new(BrokerInner {
                 roots,
                 verifier: config.verifier,
                 revocations: config.revocations,
+                mutation_handler: config.mutation_handler,
             }),
             max_workers: config.max_workers,
             queue_capacity: config.queue_capacity,
@@ -202,7 +279,10 @@ impl ResourceBroker {
 
     /// Bounded worker pool: overload drops new connections instead of growing
     /// memory/thread usage without bound.
-    pub fn serve(self) -> Result<(), SandboxError> {
+    /// Serve until stop is set. Broker connections have bounded I/O timeouts,
+    /// so shutdown cannot wait forever for a peer that never finishes a frame.
+    pub fn serve_until(self, stop: Arc<AtomicBool>) -> Result<(), SandboxError> {
+        self.listener.set_nonblocking(true)?;
         let (tx, rx): (Sender<UnixStream>, Receiver<UnixStream>) = bounded(self.queue_capacity);
         let mut workers = Vec::with_capacity(self.max_workers);
         for _ in 0..self.max_workers {
@@ -210,11 +290,15 @@ impl ResourceBroker {
             let inner = Arc::clone(&self.inner);
             workers.push(std::thread::spawn(move || {
                 while let Ok(stream) = rx.recv() {
+                    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+                    let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
                     let _ = handle_connection(stream, &inner);
                 }
             }));
         }
-        loop {
+
+        let mut serve_error = None;
+        while !stop.load(Ordering::Acquire) {
             match self.listener.accept() {
                 Ok((stream, _)) => match tx.try_send(stream) {
                     Ok(()) => {}
@@ -222,16 +306,49 @@ impl ResourceBroker {
                         drop(stream);
                     }
                 },
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                Err(e) => return Err(SandboxError::Io(e)),
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => {
+                    serve_error = Some(SandboxError::Io(error));
+                    break;
+                }
             }
         }
+
+        drop(tx);
+        drop(rx);
+        for worker in workers {
+            if worker.join().is_err() && serve_error.is_none() {
+                serve_error = Some(SandboxError::Enforcement(
+                    "broker request worker panicked".into(),
+                ));
+            }
+        }
+        if let Some(error) = serve_error {
+            Err(error)
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn serve(self) -> Result<(), SandboxError> {
+        self.serve_until(Arc::new(AtomicBool::new(false)))
     }
 }
 
 impl Drop for ResourceBroker {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.socket_path);
+        remove_socket_if_owned(&self.socket_path, self.socket_device, self.socket_inode);
+    }
+}
+
+fn remove_socket_if_owned(path: &Path, device: u64, inode: u64) {
+    if let Ok(metadata) = fs::symlink_metadata(path) {
+        if metadata.file_type().is_socket() && metadata.dev() == device && metadata.ino() == inode {
+            let _ = fs::remove_file(path);
+        }
     }
 }
 
@@ -242,25 +359,11 @@ struct PeerCredentials {
 }
 
 fn peer_credentials(stream: &UnixStream) -> io::Result<PeerCredentials> {
-    let mut cred = std::mem::MaybeUninit::<libc::ucred>::zeroed();
-    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
-    let rc = unsafe {
-        libc::getsockopt(
-            stream.as_raw_fd(),
-            libc::SOL_SOCKET,
-            libc::SO_PEERCRED,
-            cred.as_mut_ptr().cast(),
-            &mut len,
-        )
-    };
-    if rc != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    if len as usize != std::mem::size_of::<libc::ucred>() {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "unexpected SO_PEERCRED size"));
-    }
-    let cred = unsafe { cred.assume_init() };
-    Ok(PeerCredentials { uid: cred.uid, gid: cred.gid })
+    let credentials = getsockopt(stream, SocketPeerCredentials).map_err(io::Error::from)?;
+    Ok(PeerCredentials {
+        uid: credentials.uid(),
+        gid: credentials.gid(),
+    })
 }
 
 fn handle_connection(mut stream: UnixStream, inner: &BrokerInner) -> io::Result<()> {
@@ -278,7 +381,10 @@ fn handle_connection(mut stream: UnixStream, inner: &BrokerInner) -> io::Result<
         let request: BrokerRequest = match serde_json::from_slice(&payload) {
             Ok(request) => request,
             Err(e) => {
-                write_frame(&mut stream, &BrokerResponse::denied(format!("invalid request: {e}")))?;
+                write_frame(
+                    &mut stream,
+                    &BrokerResponse::denied(format!("invalid request: {e}")),
+                )?;
                 continue;
             }
         };
@@ -310,8 +416,14 @@ fn authorize(
     peer: PeerCredentials,
     inner: &BrokerInner,
 ) -> Result<CapabilityClaims, String> {
-    inner.verifier.verify(token).map_err(|_| "capability signature invalid".to_string())?;
-    token.claims.validate().map_err(|_| "capability claims invalid".to_string())?;
+    inner
+        .verifier
+        .verify(token)
+        .map_err(|_| "capability signature invalid".to_string())?;
+    token
+        .claims
+        .validate()
+        .map_err(|_| "capability claims invalid".to_string())?;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| "system clock is before UNIX epoch".to_string())?
@@ -322,7 +434,9 @@ fn authorize(
     if token.claims.subject_uid != peer.uid || token.claims.subject_gid != peer.gid {
         return Err("peer credentials do not match capability subject".into());
     }
-    if inner.revocations.is_revoked(&token.claims.token_id)
+    if inner
+        .revocations
+        .is_revoked(&token.claims.token_id)
         .map_err(|_| "KEL revocation oracle unavailable; request denied".to_string())?
     {
         return Err("capability revoked by KEL".into());
@@ -336,33 +450,102 @@ fn execute_request(
     inner: &BrokerInner,
 ) -> Result<Option<OwnedFd>, String> {
     match operation {
-        BrokerOperation::OpenFile { root_id, path, access } => {
-            validate_relative_path(&path, false).map_err(|_| "invalid relative path".to_string())?;
-            let grant: &FileGrant = claims.file_grants.iter().find(|grant| {
-                grant.root_id == root_id
-                    && grant.access.permits(access)
-                    && path_is_within_grant(&path, &grant.prefix)
-            }).ok_or_else(|| "file operation is outside capability scope".to_string())?;
-            let root = inner.roots.get(&root_id).ok_or_else(|| "unknown filesystem root".to_string())?;
+        BrokerOperation::OpenFile {
+            root_id,
+            path,
+            access,
+        } => {
+            validate_relative_path(&path, false)
+                .map_err(|_| "invalid relative path".to_string())?;
+            if is_candidate_root_id(&root_id) && access != FileAccess::Read {
+                return Err(
+                    "candidate workspace writes must use klyn-fs transactional IPC".to_string(),
+                );
+            }
+            let grant: &FileGrant = claims
+                .file_grants
+                .iter()
+                .find(|grant| {
+                    grant.root_id == root_id
+                        && grant.access.permits(access)
+                        && path_is_within_grant(&path, &grant.prefix)
+                })
+                .ok_or_else(|| "file operation is outside capability scope".to_string())?;
+            let root = inner
+                .roots
+                .get(&root_id)
+                .ok_or_else(|| "unknown filesystem root".to_string())?;
             let fd = open_beneath(root.file.as_raw_fd(), &path, access)
                 .map_err(|_| "kernel rejected secure file open".to_string())?;
             let _ = grant;
             Ok(Some(fd))
         }
+        BrokerOperation::WriteCandidateFile {
+            transaction_id,
+            path,
+            expected_old_content,
+            content,
+        } => {
+            validate_relative_path(&path, false)
+                .map_err(|_| "invalid relative mutation path".to_string())?;
+            if content.len() > MAX_MUTATION_BYTES
+                || expected_old_content
+                    .as_ref()
+                    .is_some_and(|old| old.len() > MAX_MUTATION_BYTES)
+            {
+                return Err("candidate mutation exceeds the size limit".into());
+            }
+            if !claims.candidate_write_enabled
+                || claims.candidate_transaction_id.as_deref() != Some(transaction_id.as_str())
+            {
+                return Err(
+                    "candidate mutation capability is not bound to this transaction".into(),
+                );
+            }
+            let candidate_root = candidate_root_id(&transaction_id)
+                .map_err(|_| "invalid candidate transaction ID".to_string())?;
+            if !claims.file_grants.iter().any(|grant| {
+                grant.root_id == candidate_root
+                    && grant.access == FileAccess::Read
+                    && path_is_within_grant(&path, &grant.prefix)
+            }) {
+                return Err("candidate transaction is outside capability scope".into());
+            }
+            inner
+                .mutation_handler
+                .write_candidate_file(
+                    &transaction_id,
+                    &path,
+                    expected_old_content.as_deref(),
+                    &content,
+                )
+                .map_err(|_| "klyn-fs rejected the candidate mutation".to_string())?;
+            Ok(None)
+        }
         BrokerOperation::ConnectTcp { address } => {
-            let requested: SocketAddr = address.parse().map_err(|_| "address must be a literal socket address".to_string())?;
+            let requested: SocketAddr = address
+                .parse()
+                .map_err(|_| "address must be a literal socket address".to_string())?;
             let allowed = claims.network_grants.iter().any(|grant: &NetworkGrant| {
-                grant.address.parse::<SocketAddr>().map(|addr| addr == requested).unwrap_or(false)
+                grant
+                    .address
+                    .parse::<SocketAddr>()
+                    .map(|addr| addr == requested)
+                    .unwrap_or(false)
             });
             if !allowed {
                 return Err("network destination is outside capability scope".into());
             }
             let stream = TcpStream::connect_timeout(&requested, Duration::from_secs(3))
                 .map_err(|_| "authorized TCP connection failed".to_string())?;
-            stream.set_nodelay(true).map_err(|_| "failed to configure authorized TCP socket".to_string())?;
+            stream
+                .set_nodelay(true)
+                .map_err(|_| "failed to configure authorized TCP socket".to_string())?;
             Ok(Some(OwnedFd::from(stream)))
         }
-        BrokerOperation::Exec { program: _ } => Err("process execution is not a broker operation".into()),
+        BrokerOperation::Exec { program: _ } => {
+            Err("process execution is not a broker operation".into())
+        }
     }
 }
 
@@ -385,7 +568,9 @@ fn open_beneath(root_fd: RawFd, path: &str, access: FileAccess) -> io::Result<Ow
         FileAccess::Read => libc::O_RDONLY,
         FileAccess::Write => libc::O_WRONLY,
         FileAccess::ReadWrite => libc::O_RDWR,
-    } | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK;
+    } | libc::O_CLOEXEC
+        | libc::O_NOFOLLOW
+        | libc::O_NONBLOCK;
     let how = OpenHow {
         flags: flags as u64,
         mode: 0,
@@ -412,7 +597,12 @@ fn read_frame(stream: &mut UnixStream) -> io::Result<Option<Vec<u8>>> {
     while read < header.len() {
         match stream.read(&mut header[read..]) {
             Ok(0) if read == 0 => return Ok(None),
-            Ok(0) => return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "truncated frame header")),
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "truncated frame header",
+                ))
+            }
             Ok(n) => read += n,
             Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
             Err(e) => return Err(e),
@@ -420,7 +610,10 @@ fn read_frame(stream: &mut UnixStream) -> io::Result<Option<Vec<u8>>> {
     }
     let length = u32::from_be_bytes(header) as usize;
     if length == 0 || length > MAX_BROKER_FRAME_BYTES {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "frame length out of bounds"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "frame length out of bounds",
+        ));
     }
     let mut payload = vec![0; length];
     stream.read_exact(&mut payload)?;
@@ -428,10 +621,13 @@ fn read_frame(stream: &mut UnixStream) -> io::Result<Option<Vec<u8>>> {
 }
 
 fn write_frame<T: Serialize>(stream: &mut UnixStream, value: &T) -> io::Result<()> {
-    let payload = serde_json::to_vec(value)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let payload =
+        serde_json::to_vec(value).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     if payload.is_empty() || payload.len() > MAX_BROKER_FRAME_BYTES {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "response frame length out of bounds"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "response frame length out of bounds",
+        ));
     }
     stream.write_all(&(payload.len() as u32).to_be_bytes())?;
     stream.write_all(&payload)?;
@@ -439,14 +635,17 @@ fn write_frame<T: Serialize>(stream: &mut UnixStream, value: &T) -> io::Result<(
 }
 
 fn send_fd(socket: RawFd, fd: RawFd) -> io::Result<()> {
-    let byte = [b'F'];
+    let byte = *b"F";
     let iov = [IoSlice::new(&byte)];
     let fds = [fd];
     let cmsg = ControlMessage::ScmRights(&fds);
     let sent = sendmsg::<()>(socket, &iov, &[cmsg], MsgFlags::MSG_NOSIGNAL, None)
         .map_err(io::Error::from)?;
     if sent != 1 {
-        return Err(io::Error::new(io::ErrorKind::WriteZero, "SCM_RIGHTS marker was not sent"));
+        return Err(io::Error::new(
+            io::ErrorKind::WriteZero,
+            "SCM_RIGHTS marker was not sent",
+        ));
     }
     Ok(())
 }
@@ -469,9 +668,13 @@ impl BrokerClient {
             }
             drop(stream);
             let stream = unsafe { UnixStream::from_raw_fd(3) };
-            return Ok(Self { stream: Mutex::new(stream) });
+            return Ok(Self {
+                stream: Mutex::new(stream),
+            });
         }
-        Ok(Self { stream: Mutex::new(stream) })
+        Ok(Self {
+            stream: Mutex::new(stream),
+        })
     }
 
     pub fn open_file(
@@ -481,11 +684,14 @@ impl BrokerClient {
         path: impl Into<String>,
         access: FileAccess,
     ) -> Result<OwnedFd, String> {
-        self.request_fd(capability, BrokerOperation::OpenFile {
-            root_id: root_id.into(),
-            path: path.into(),
-            access,
-        })
+        self.request_fd(
+            capability,
+            BrokerOperation::OpenFile {
+                root_id: root_id.into(),
+                path: path.into(),
+                access,
+            },
+        )
     }
 
     pub fn connect_tcp(
@@ -493,7 +699,60 @@ impl BrokerClient {
         capability: &SignedCapability,
         address: impl Into<String>,
     ) -> Result<OwnedFd, String> {
-        self.request_fd(capability, BrokerOperation::ConnectTcp { address: address.into() })
+        self.request_fd(
+            capability,
+            BrokerOperation::ConnectTcp {
+                address: address.into(),
+            },
+        )
+    }
+
+    /// Submit a candidate mutation through the daemon's transactional filesystem
+    /// engine. A missing preimage field is rejected during deserialization.
+    pub fn write_candidate_file(
+        &self,
+        capability: &SignedCapability,
+        transaction_id: impl Into<String>,
+        relative_path: impl Into<String>,
+        expected_old_content: Option<String>,
+        content: impl Into<String>,
+    ) -> Result<(), String> {
+        self.request_ack(
+            capability,
+            BrokerOperation::WriteCandidateFile {
+                transaction_id: transaction_id.into(),
+                path: relative_path.into(),
+                expected_old_content,
+                content: content.into(),
+            },
+        )
+    }
+
+    fn request_ack(
+        &self,
+        capability: &SignedCapability,
+        operation: BrokerOperation,
+    ) -> Result<(), String> {
+        let mut stream = self
+            .stream
+            .lock()
+            .map_err(|_| "broker client mutex poisoned".to_string())?;
+        let request = BrokerRequest {
+            capability: capability.clone(),
+            operation,
+        };
+        write_frame(&mut stream, &request).map_err(|e| e.to_string())?;
+        let bytes = read_frame(&mut stream)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "broker closed the channel".to_string())?;
+        let response: BrokerResponse = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+        if response.ok {
+            Ok(())
+        } else {
+            Err(response
+                .error
+                .unwrap_or_else(|| "broker denied request".into()))
+        }
     }
 
     fn request_fd(
@@ -501,15 +760,23 @@ impl BrokerClient {
         capability: &SignedCapability,
         operation: BrokerOperation,
     ) -> Result<OwnedFd, String> {
-        let mut stream = self.stream.lock().map_err(|_| "broker client mutex poisoned".to_string())?;
-        let request = BrokerRequest { capability: capability.clone(), operation };
+        let mut stream = self
+            .stream
+            .lock()
+            .map_err(|_| "broker client mutex poisoned".to_string())?;
+        let request = BrokerRequest {
+            capability: capability.clone(),
+            operation,
+        };
         write_frame(&mut stream, &request).map_err(|e| e.to_string())?;
         let bytes = read_frame(&mut stream)
             .map_err(|e| e.to_string())?
             .ok_or_else(|| "broker closed the channel".to_string())?;
         let response: BrokerResponse = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
         if !response.ok {
-            return Err(response.error.unwrap_or_else(|| "broker denied request".into()));
+            return Err(response
+                .error
+                .unwrap_or_else(|| "broker denied request".into()));
         }
         receive_fd(stream.as_raw_fd()).map_err(|e| e.to_string())
     }
@@ -519,25 +786,44 @@ fn receive_fd(socket: RawFd) -> io::Result<OwnedFd> {
     let mut marker = [0u8; 1];
     let mut iov = [io::IoSliceMut::new(&mut marker)];
     let mut cmsgspace = nix::cmsg_space!([RawFd; 8]);
-    let msg = recvmsg::<()>(
-        socket,
-        &mut iov,
-        Some(&mut cmsgspace),
-        MsgFlags::MSG_CMSG_CLOEXEC,
-    ).map_err(io::Error::from)?;
-    if msg.flags.contains(MsgFlags::MSG_CTRUNC) || msg.bytes != 1 || marker[0] != b'F' {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid SCM_RIGHTS marker or truncated control data"));
-    }
-    let mut received = Vec::new();
-    for cmsg in msg.cmsgs().map_err(io::Error::from)? {
-        if let ControlMessageOwned::ScmRights(fds) = cmsg {
-            for raw in fds {
-                received.push(unsafe { OwnedFd::from_raw_fd(raw) });
+
+    let (flags, bytes, mut received) = {
+        let msg = recvmsg::<()>(
+            socket,
+            &mut iov,
+            Some(&mut cmsgspace),
+            MsgFlags::MSG_CMSG_CLOEXEC,
+        )
+        .map_err(io::Error::from)?;
+        let flags = msg.flags;
+        let bytes = msg.bytes;
+        let mut received = Vec::new();
+        for cmsg in msg.cmsgs().map_err(io::Error::from)? {
+            if let ControlMessageOwned::ScmRights(fds) = cmsg {
+                for raw in fds {
+                    // SAFETY: each descriptor is delivered by the kernel in
+                    // SCM_RIGHTS and ownership is transferred to this process.
+                    // OwnedFd ensures every received descriptor closes once.
+                    received.push(unsafe { OwnedFd::from_raw_fd(raw) });
+                }
             }
         }
+        (flags, bytes, received)
+    };
+
+    // recvmsg's IoSliceMut borrow ends with the message scope above, so marker
+    // can now be inspected without aliasing its mutable borrow.
+    if flags.contains(MsgFlags::MSG_CTRUNC) || bytes != 1 || marker[0] != b'F' {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid SCM_RIGHTS marker or truncated control data",
+        ));
     }
     if received.len() != 1 {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "broker must transfer exactly one descriptor"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "broker must transfer exactly one descriptor",
+        ));
     }
     Ok(received.pop().expect("length checked"))
 }
@@ -550,7 +836,22 @@ mod tests {
 
     struct NeverRevoked;
     impl RevocationOracle for NeverRevoked {
-        fn is_revoked(&self, _: &str) -> Result<bool, String> { Ok(false) }
+        fn is_revoked(&self, _: &str) -> Result<bool, String> {
+            Ok(false)
+        }
+    }
+
+    struct DenyMutations;
+    impl CandidateMutationHandler for DenyMutations {
+        fn write_candidate_file(
+            &self,
+            _transaction_id: &str,
+            _relative_path: &str,
+            _expected_old_content: Option<&str>,
+            _content: &str,
+        ) -> Result<(), String> {
+            Err("test handler denies all writes".into())
+        }
     }
 
     fn test_claims(uid: u32, gid: u32) -> CapabilityClaims {
@@ -559,12 +860,18 @@ mod tests {
             token_id: "broker-test-token".into(),
             subject_uid: if uid == 0 { 1000 } else { uid },
             subject_gid: gid,
-            expires_at_unix: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + 60,
+            expires_at_unix: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + 60,
             file_grants: vec![FileGrant {
                 root_id: "workspace".into(),
                 prefix: "allowed".into(),
                 access: FileAccess::Read,
             }],
+            candidate_transaction_id: None,
+            candidate_write_enabled: false,
             network_grants: vec![],
             budget: crate::ResourceBudget {
                 memory_max_bytes: 1024 * 1024,
@@ -577,16 +884,54 @@ mod tests {
     }
 
     #[test]
+    fn broker_bind_refuses_to_unlink_an_existing_socket() {
+        let temp = tempfile::tempdir().unwrap();
+        let socket_path = temp.path().join("broker.sock");
+        let existing = UnixListener::bind(&socket_path).unwrap();
+        let key = SigningKey::from_bytes(&[17u8; 32]);
+        let config = BrokerConfig {
+            socket_path: socket_path.clone(),
+            roots: BTreeMap::new(),
+            verifier: Arc::new(Ed25519CapabilityVerifier::new(key.verifying_key())),
+            revocations: Arc::new(NeverRevoked),
+            mutation_handler: Arc::new(DenyMutations),
+            max_workers: 1,
+            queue_capacity: 1,
+        };
+
+        assert!(ResourceBroker::bind(config).is_err());
+        assert!(fs::symlink_metadata(&socket_path)
+            .unwrap()
+            .file_type()
+            .is_socket());
+        drop(existing);
+        assert!(fs::symlink_metadata(&socket_path)
+            .unwrap()
+            .file_type()
+            .is_socket());
+    }
+
+    #[test]
     fn ed25519_capability_signature_verifies_strictly() {
         let key = SigningKey::from_bytes(&[7u8; 32]);
-        let claims = test_claims(unsafe { libc::geteuid() } as u32, unsafe { libc::getegid() } as u32);
-        let signature = key.sign(&serde_json::to_vec(&claims).unwrap()).to_bytes().to_vec();
+        let claims = test_claims(
+            unsafe { libc::geteuid() } as u32,
+            unsafe { libc::getegid() } as u32,
+        );
+        let signature = key
+            .sign(&serde_json::to_vec(&claims).unwrap())
+            .to_bytes()
+            .to_vec();
         let token = SignedCapability { claims, signature };
-        Ed25519CapabilityVerifier::new(key.verifying_key()).verify(&token).unwrap();
+        Ed25519CapabilityVerifier::new(key.verifying_key())
+            .verify(&token)
+            .unwrap();
 
         let mut forged = token.clone();
         forged.claims.token_id = "forged".into();
-        assert!(Ed25519CapabilityVerifier::new(key.verifying_key()).verify(&forged).is_err());
+        assert!(Ed25519CapabilityVerifier::new(key.verifying_key())
+            .verify(&forged)
+            .is_err());
     }
 
     #[test]
@@ -606,20 +951,32 @@ mod tests {
     fn revocation_oracle_errors_are_not_authorization() {
         struct Failing;
         impl RevocationOracle for Failing {
-            fn is_revoked(&self, _: &str) -> Result<bool, String> { Err("KEL down".into()) }
+            fn is_revoked(&self, _: &str) -> Result<bool, String> {
+                Err("KEL down".into())
+            }
         }
         let key = SigningKey::from_bytes(&[9u8; 32]);
-        let claims = test_claims(unsafe { libc::geteuid() } as u32, unsafe { libc::getegid() } as u32);
+        let claims = test_claims(
+            unsafe { libc::geteuid() } as u32,
+            unsafe { libc::getegid() } as u32,
+        );
         let signed = SignedCapability {
-            signature: key.sign(&serde_json::to_vec(&claims).unwrap()).to_bytes().to_vec(),
+            signature: key
+                .sign(&serde_json::to_vec(&claims).unwrap())
+                .to_bytes()
+                .to_vec(),
             claims,
         };
         let inner = BrokerInner {
             roots: BTreeMap::new(),
             verifier: Arc::new(Ed25519CapabilityVerifier::new(key.verifying_key())),
             revocations: Arc::new(Failing),
+            mutation_handler: Arc::new(DenyMutations),
         };
-        let peer = PeerCredentials { uid: signed.claims.subject_uid, gid: signed.claims.subject_gid };
+        let peer = PeerCredentials {
+            uid: signed.claims.subject_uid,
+            gid: signed.claims.subject_gid,
+        };
         assert!(authorize(&signed, peer, &inner).is_err());
     }
 
@@ -627,21 +984,65 @@ mod tests {
     fn revocation_prevents_any_grant() {
         struct Revoked;
         impl RevocationOracle for Revoked {
-            fn is_revoked(&self, _: &str) -> Result<bool, String> { Ok(true) }
+            fn is_revoked(&self, _: &str) -> Result<bool, String> {
+                Ok(true)
+            }
         }
         let key = SigningKey::from_bytes(&[11u8; 32]);
-        let claims = test_claims(unsafe { libc::geteuid() } as u32, unsafe { libc::getegid() } as u32);
+        let claims = test_claims(
+            unsafe { libc::geteuid() } as u32,
+            unsafe { libc::getegid() } as u32,
+        );
         let signed = SignedCapability {
-            signature: key.sign(&serde_json::to_vec(&claims).unwrap()).to_bytes().to_vec(),
+            signature: key
+                .sign(&serde_json::to_vec(&claims).unwrap())
+                .to_bytes()
+                .to_vec(),
             claims,
         };
         let inner = BrokerInner {
             roots: BTreeMap::new(),
             verifier: Arc::new(Ed25519CapabilityVerifier::new(key.verifying_key())),
             revocations: Arc::new(Revoked),
+            mutation_handler: Arc::new(DenyMutations),
         };
-        let peer = PeerCredentials { uid: signed.claims.subject_uid, gid: signed.claims.subject_gid };
+        let peer = PeerCredentials {
+            uid: signed.claims.subject_uid,
+            gid: signed.claims.subject_gid,
+        };
         assert!(authorize(&signed, peer, &inner).is_err());
+    }
+
+    #[test]
+    fn candidate_workspace_writes_are_denied_by_the_broker() {
+        let key = SigningKey::from_bytes(&[23u8; 32]);
+        let mut claims = test_claims(
+            nix::unistd::geteuid().as_raw(),
+            nix::unistd::getegid().as_raw(),
+        );
+        claims.file_grants = vec![FileGrant {
+            root_id: candidate_root_id("tx-a-1-1").unwrap(),
+            prefix: "".into(),
+            access: FileAccess::Read,
+        }];
+        claims.candidate_transaction_id = Some("tx-a-1-1".into());
+        claims.candidate_write_enabled = true;
+        let inner = BrokerInner {
+            roots: BTreeMap::new(),
+            verifier: Arc::new(Ed25519CapabilityVerifier::new(key.verifying_key())),
+            revocations: Arc::new(NeverRevoked),
+            mutation_handler: Arc::new(DenyMutations),
+        };
+        let result = execute_request(
+            &claims,
+            BrokerOperation::OpenFile {
+                root_id: candidate_root_id("tx-a-1-1").unwrap(),
+                path: "README.md".into(),
+                access: FileAccess::Write,
+            },
+            &inner,
+        );
+        assert!(result.is_err());
     }
 
     #[test]

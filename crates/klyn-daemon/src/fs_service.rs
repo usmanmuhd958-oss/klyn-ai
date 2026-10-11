@@ -32,6 +32,23 @@ impl FsService {
         }
     }
 
+    /// Resolve an active transaction to its private candidate workspace.
+    /// The returned path is only used by trusted broker setup; workers never
+    /// receive host filesystem paths or canonical-workspace descriptors.
+    pub fn candidate_path_for_transaction(
+        &self,
+        transaction_id: &str,
+    ) -> Result<std::path::PathBuf, FsServiceError> {
+        let registry = self
+            .transactions
+            .lock()
+            .map_err(|_| FsServiceError::RegistryUnavailable)?;
+        registry
+            .get(transaction_id)
+            .map(|transaction| transaction.candidate_path().to_path_buf())
+            .ok_or(FsServiceError::NotFound)
+    }
+
     pub fn execute(&self, method: Method, params: &Value) -> Result<Value, FsServiceError> {
         match method {
             Method::FsBegin => {
@@ -162,5 +179,25 @@ impl FsService {
             }
             _ => Err(FsServiceError::InvalidParameters),
         }
+    }
+}
+
+impl klyn_sandbox::broker::CandidateMutationHandler for FsService {
+    fn write_candidate_file(
+        &self,
+        transaction_id: &str,
+        relative_path: &str,
+        expected_old_content: Option<&str>,
+        content: &str,
+    ) -> Result<(), String> {
+        let params = json!({
+            "transaction_id": transaction_id,
+            "path": relative_path,
+            "expected_old_content": expected_old_content,
+            "content": content,
+        });
+        self.execute(Method::FsWriteFile, &params)
+            .map(|_| ())
+            .map_err(|_| "klyn-fs rejected the candidate mutation".to_string())
     }
 }

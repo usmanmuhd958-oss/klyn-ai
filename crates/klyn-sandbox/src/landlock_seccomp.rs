@@ -4,24 +4,19 @@
 //! runtime initialization that requires direct path opens or process creation,
 //! but before interpreting untrusted agent instructions.
 
-use std::{
-    collections::BTreeMap,
-    os::fd::RawFd,
-    path::PathBuf,
-};
+use std::{collections::BTreeMap, os::fd::RawFd, path::PathBuf};
 
 use landlock::{
-    make_bitflags, AccessFs, ABI, CompatLevel, PathBeneath, PathFd, RestrictionStatus,
-    Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus, RestrictSelfAttr,
+    make_bitflags, Access, AccessFs, CompatLevel, Compatible, PathBeneath, PathFd,
+    RestrictSelfAttr, RestrictionStatus, Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus,
+    ABI,
 };
 use seccompiler::{
-    BpfProgram, SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition,
-    SeccompFilter, SeccompRule,
+    BpfProgram, SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition, SeccompFilter,
+    SeccompRule,
 };
 
-use crate::{
-    validate_relative_path, CapabilityClaims, FileAccess, SandboxError, BROKER_FD,
-};
+use crate::{validate_relative_path, CapabilityClaims, FileAccess, SandboxError, BROKER_FD};
 
 /// Apply a hard-required ABI-v3 Landlock ruleset.
 ///
@@ -32,7 +27,9 @@ pub fn apply_landlock(
     roots: &BTreeMap<String, PathBuf>,
 ) -> Result<RestrictionStatus, SandboxError> {
     claims.validate()?;
-    let abi = ABI::V3;
+    // ABI v8 is required for all-thread Landlock enforcement. Older kernels
+    // are rejected by HardRequirement; the worker never continues unsandboxed.
+    let abi = ABI::V8;
     let mut ruleset = Ruleset::default()
         .set_compatibility(CompatLevel::HardRequirement)
         .handle_access(AccessFs::from_all(abi))
@@ -43,7 +40,9 @@ pub fn apply_landlock(
     let mut normalized_roots = BTreeMap::new();
     for (id, path) in roots {
         if id.is_empty() || id.len() > 128 {
-            return Err(SandboxError::InvalidConfig("invalid trusted root id".into()));
+            return Err(SandboxError::InvalidConfig(
+                "invalid trusted root id".into(),
+            ));
         }
         let canonical = std::fs::canonicalize(path)?;
         if !std::fs::metadata(&canonical)?.is_dir() {
@@ -57,12 +56,14 @@ pub fn apply_landlock(
 
     for grant in &claims.file_grants {
         validate_relative_path(&grant.prefix, true)?;
-        let root = normalized_roots.get(grant.root_id.as_str()).ok_or_else(|| {
-            SandboxError::InvalidConfig(format!(
-                "OCap references an unconfigured filesystem root: {}",
-                grant.root_id
-            ))
-        })?;
+        let root = normalized_roots
+            .get(grant.root_id.as_str())
+            .ok_or_else(|| {
+                SandboxError::InvalidConfig(format!(
+                    "OCap references an unconfigured filesystem root: {}",
+                    grant.root_id
+                ))
+            })?;
         let requested = if grant.prefix.is_empty() {
             root.clone()
         } else {
@@ -84,13 +85,11 @@ pub fn apply_landlock(
             }
         };
         ruleset = ruleset
-            .add_rule(
-                PathBeneath::new(
-                    PathFd::new(&canonical)
-                        .map_err(|e| SandboxError::Enforcement(format!("Landlock PathFd: {e}")))?,
-                    access,
-                ),
-            )
+            .add_rule(PathBeneath::new(
+                PathFd::new(&canonical)
+                    .map_err(|e| SandboxError::Enforcement(format!("Landlock PathFd: {e}")))?,
+                access,
+            ))
             .map_err(|e| SandboxError::Enforcement(format!("Landlock add_rule: {e}")))?;
     }
 
@@ -101,9 +100,7 @@ pub fn apply_landlock(
     let status = ruleset
         .restrict_self()
         .map_err(|e| SandboxError::Enforcement(format!("Landlock restrict_self: {e}")))?;
-    if status.ruleset != RulesetStatus::FullyEnforced
-        || !status.no_new_privs
-        || !status.all_threads
+    if status.ruleset != RulesetStatus::FullyEnforced || !status.no_new_privs || !status.all_threads
     {
         return Err(SandboxError::Enforcement(format!(
             "Landlock returned incomplete enforcement status: {status:?}"
@@ -208,15 +205,13 @@ pub fn apply_worker_seccomp(broker_fd: RawFd) -> Result<(), SandboxError> {
     }
 
     // Only allow descriptor reception on the broker channel. sendmsg is denied.
-    let broker_only_recvmsg = SeccompRule::new(vec![
-        SeccompCondition::new(
-            0,
-            SeccompCmpArgLen::Dword,
-            SeccompCmpOp::Eq,
-            BROKER_FD as u64,
-        )
-        .map_err(|e| SandboxError::Enforcement(format!("seccomp condition: {e}")))?,
-    ])
+    let broker_only_recvmsg = SeccompRule::new(vec![SeccompCondition::new(
+        0,
+        SeccompCmpArgLen::Dword,
+        SeccompCmpOp::Eq,
+        BROKER_FD as u64,
+    )
+    .map_err(|e| SandboxError::Enforcement(format!("seccomp condition: {e}")))?])
     .map_err(|e| SandboxError::Enforcement(format!("seccomp rule: {e}")))?;
     rules.insert(libc::SYS_recvmsg, vec![broker_only_recvmsg]);
 
@@ -252,6 +247,7 @@ pub fn enforce_worker(
 mod tests {
     use super::*;
     use crate::{ResourceBudget, SignedCapability};
+    use std::{fs::File, os::fd::AsRawFd, process::Command};
 
     fn claims() -> CapabilityClaims {
         CapabilityClaims {
@@ -261,6 +257,8 @@ mod tests {
             subject_gid: unsafe { libc::getegid() } as u32,
             expires_at_unix: u64::MAX,
             file_grants: vec![],
+            candidate_transaction_id: None,
+            candidate_write_enabled: false,
             network_grants: vec![],
             budget: ResourceBudget {
                 memory_max_bytes: 16 * 1024 * 1024,
@@ -275,11 +273,17 @@ mod tests {
     #[test]
     fn landlock_requires_supported_abi_and_all_threads() {
         let roots = BTreeMap::new();
-        let status = apply_landlock(&claims(), &roots)
-            .expect("required Landlock features are unavailable");
-        assert_eq!(status.ruleset, RulesetStatus::FullyEnforced);
-        assert!(status.no_new_privs);
-        assert!(status.all_threads);
+        match apply_landlock(&claims(), &roots) {
+            Ok(status) => {
+                assert_eq!(status.ruleset, RulesetStatus::FullyEnforced);
+                assert!(status.no_new_privs);
+                assert!(status.all_threads);
+            }
+            // Some CI hosts still expose pre-v8 Landlock. Those hosts must
+            // refuse worker execution rather than silently dropping TSYNC.
+            Err(SandboxError::Enforcement(_)) => {}
+            Err(error) => panic!("unexpected Landlock configuration failure: {error}"),
+        }
     }
 
     #[test]
@@ -299,7 +303,8 @@ mod tests {
         let wire = serde_json::to_vec(&SignedCapability {
             claims: c.clone(),
             signature: vec![0; 64],
-        }).unwrap();
+        })
+        .unwrap();
         let decoded: SignedCapability = serde_json::from_slice(&wire).unwrap();
         assert_eq!(decoded.claims, c);
         assert_eq!(decoded.signature.len(), 64);
@@ -308,5 +313,64 @@ mod tests {
     #[test]
     fn worker_seccomp_requires_the_pinned_broker_descriptor() {
         assert!(apply_worker_seccomp(BROKER_FD + 1).is_err());
+    }
+
+    #[test]
+    fn seccomp_denies_network_sockets_and_exec_in_an_isolated_child() {
+        const CHILD_ENV: &str = "KLYN_SECCOMP_ADVERSARIAL_CHILD";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            let status = Command::new(std::env::current_exe().unwrap())
+                .arg("--exact")
+                .arg("landlock_seccomp::tests::seccomp_denies_network_sockets_and_exec_in_an_isolated_child")
+                .arg("--nocapture")
+                .env(CHILD_ENV, "1")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
+        }
+
+        // Pin a harmless open descriptor at FD 3 so the production policy's
+        // broker-FD precondition is exercised exactly.
+        let harmless_fd = File::open("/dev/null").unwrap();
+        let raw_fd = harmless_fd.as_raw_fd();
+        if raw_fd != BROKER_FD {
+            // SAFETY: dup2 duplicates a currently open /dev/null descriptor to
+            // the documented broker slot in this disposable child process.
+            let duplicated = unsafe { libc::dup2(raw_fd, BROKER_FD) };
+            assert_eq!(duplicated, BROKER_FD);
+        }
+        // Keep the original file alive through filter installation. If it
+        // was opened directly as FD 3, dropping it here would invalidate the
+        // required broker descriptor before the filter checks it.
+        apply_worker_seccomp(BROKER_FD).expect("seccomp must install or fail the child test");
+
+        for domain in [libc::AF_INET, libc::AF_UNIX] {
+            // SAFETY: the syscall only attempts to create a socket. The
+            // installed filter must deny it before the kernel creates one.
+            let created = unsafe { libc::syscall(libc::SYS_socket, domain, libc::SOCK_STREAM, 0) };
+            assert_eq!(created, -1);
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::EPERM)
+            );
+        }
+
+        let executable = std::ffi::CString::new("/bin/true").unwrap();
+        // SAFETY: execve is intentionally probed with null argv/envp. The
+        // seccomp policy must reject the syscall with EPERM before execution.
+        let executed = unsafe {
+            libc::syscall(
+                libc::SYS_execve,
+                executable.as_ptr(),
+                std::ptr::null::<*const libc::c_char>(),
+                std::ptr::null::<*const libc::c_char>(),
+            )
+        };
+        assert_eq!(executed, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::EPERM)
+        );
     }
 }

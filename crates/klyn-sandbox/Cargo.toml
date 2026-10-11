@@ -11,7 +11,7 @@ crossbeam-channel = "0.5"
 ed25519-dalek = "2.2"
 landlock = "0.4.7"
 libc = "0.2"
-nix = { version = "0.30", features = ["socket", "uio"] }
+nix = { version = "0.30", features = ["socket", "uio", "fs", "mount", "sched"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 seccompiler = "0.5"

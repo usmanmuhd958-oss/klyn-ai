@@ -1,0 +1,43 @@
+name: KLYN Rust OS Sandbox Enforcement
+
+on:
+  push:
+    branches:
+      - feat/klyn-step3-os-sandbox
+  pull_request:
+    branches:
+      - main
+      - master
+      - feat/klyn-step2-transactional-fs
+    paths:
+      - Cargo.toml
+      - crates/klyn-sandbox/**
+      - crates/klyn-daemon/**
+      - crates/klyn-fs/**
+      - crates/klyn-protocol/**
+      - .github/workflows/klyn-rust-step3.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: klyn-rust-step3-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Verify formatting
+        run: cargo fmt --all -- --check
+      - name: Validate Termux sync script syntax
+        run: bash -n scripts/klyn-step3-sync.sh
+      - name: Unit and integration tests
+        run: cargo test --package klyn-fs --package klyn-protocol --package klyn-daemon --package klyn-sandbox
+      - name: Clippy
+        run: cargo clippy --package klyn-fs --package klyn-protocol --package klyn-daemon --package klyn-sandbox --all-targets -- -D warnings
