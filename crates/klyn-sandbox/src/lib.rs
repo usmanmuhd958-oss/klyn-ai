@@ -393,6 +393,21 @@ pub fn validate_trusted_executable(path: impl AsRef<Path>) -> Result<PathBuf, Sa
             canonical.display()
         )));
     }
+    // Check every ancestor to prevent replacement between validation and exec.
+    let mut ancestor = canonical.parent();
+    while let Some(directory) = ancestor {
+        let meta = fs::metadata(directory)?;
+        if !meta.is_dir()
+            || meta.mode() & 0o022 != 0
+            || (meta.uid() != 0 && meta.uid() != euid)
+        {
+            return Err(SandboxError::InvalidConfig(format!(
+                "trusted executable has an unsafe ancestor directory: {}",
+                directory.display()
+            )));
+        }
+        ancestor = directory.parent();
+    }
     Ok(canonical)
 }
 
@@ -459,4 +474,319 @@ mod tests {
         assert!(!FileAccess::Read.permits(FileAccess::Write));
         assert!(!FileAccess::Write.permits(FileAccess::Read));
     }
+}
+
+
+use std::{
+    ffi::CString,
+    fs::File,
+    io::{Read, Seek, SeekFrom},
+    os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
+    os::unix::process::CommandExt,
+    process::{Child, Command, ExitStatus},
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+/// Immutable manifest transferred to a worker over a sealed memfd. Root paths
+/// are canonical daemon-configured directories, not caller-selected paths.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SandboxManifest {
+    pub capability: SignedCapability,
+    pub roots: std::collections::BTreeMap<String, PathBuf>,
+    pub broker_socket: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+pub struct SandboxLaunchConfig {
+    pub init_binary: PathBuf,
+    pub worker_binary: PathBuf,
+    pub delegated_cgroup_root: PathBuf,
+    pub broker_socket: PathBuf,
+    pub roots: std::collections::BTreeMap<String, PathBuf>,
+}
+
+pub struct SandboxLauncher {
+    config: SandboxLaunchConfig,
+    verifier: Arc<dyn broker::CapabilityVerifier>,
+    revocations: Arc<dyn broker::RevocationOracle>,
+}
+
+impl SandboxLauncher {
+    pub fn new(
+        mut config: SandboxLaunchConfig,
+        verifier: Arc<dyn broker::CapabilityVerifier>,
+        revocations: Arc<dyn broker::RevocationOracle>,
+    ) -> Result<Self, SandboxError> {
+        config.init_binary = validate_trusted_executable(&config.init_binary)?;
+        config.worker_binary = validate_trusted_executable(&config.worker_binary)?;
+        config.delegated_cgroup_root = fs::canonicalize(config.delegated_cgroup_root)?;
+        let mut roots = std::collections::BTreeMap::new();
+        for (id, path) in config.roots {
+            if id.is_empty() || id.len() > 128 || roots.contains_key(&id) {
+                return Err(SandboxError::InvalidConfig("invalid or duplicate trusted root id".into()));
+            }
+            let canonical = fs::canonicalize(path)?;
+            if !fs::metadata(&canonical)?.is_dir() {
+                return Err(SandboxError::InvalidConfig(format!(
+                    "trusted root is not a directory: {}",
+                    canonical.display()
+                )));
+            }
+            roots.insert(id, canonical);
+        }
+        config.roots = roots;
+        if config.broker_socket.as_os_str().is_empty() {
+            return Err(SandboxError::InvalidConfig("broker socket path is empty".into()));
+        }
+        Ok(Self { config, verifier, revocations })
+    }
+
+    /// Launch an already-signed OCap v1 task. The child is held at a start gate
+    /// until the daemon has attached it to the resource cgroup. Namespace setup
+    /// and UID/GID dropping happen in the trusted init helper before worker exec.
+    pub fn spawn(
+        &self,
+        capability: SignedCapability,
+        cgroup_id: &str,
+        worker_args: &[std::ffi::OsString],
+    ) -> Result<SandboxedChild, SandboxError> {
+        self.verifier.verify(&capability)
+            .map_err(|_| SandboxError::InvalidConfig("capability signature verification failed".into()))?;
+        let claims = &capability.claims;
+        claims.validate()?;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| SandboxError::Enforcement("system clock is before UNIX epoch".into()))?
+            .as_secs();
+        if now >= claims.expires_at_unix {
+            return Err(SandboxError::InvalidConfig("capability expired before launch".into()));
+        }
+        if self.revocations.is_revoked(&claims.token_id)
+            .map_err(|_| SandboxError::Enforcement("KEL revocation oracle failed closed".into()))?
+        {
+            return Err(SandboxError::InvalidConfig("capability revoked by KEL".into()));
+        }
+        for grant in &claims.file_grants {
+            if !self.config.roots.contains_key(&grant.root_id) {
+                return Err(SandboxError::InvalidConfig(format!(
+                    "capability references unknown root {}",
+                    grant.root_id
+                )));
+            }
+        }
+
+        // Build and seal the manifest before starting any worker process.
+        let manifest = SandboxManifest {
+            capability: capability.clone(),
+            roots: self.config.roots.clone(),
+            broker_socket: self.config.broker_socket.clone(),
+        };
+        let mut manifest_file = create_sealed_manifest(&manifest)?;
+        manifest_file.seek(SeekFrom::Start(0))?;
+
+        // O_CLOEXEC on both ends prevents accidental descriptor inheritance.
+        // pre_exec duplicates only the read end to fixed FD 5.
+        let mut pipe = [-1; 2];
+        if unsafe { libc::pipe2(pipe.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+            return Err(SandboxError::Io(std::io::Error::last_os_error()));
+        }
+        let gate_read = unsafe { OwnedFd::from_raw_fd(pipe[0]) };
+        let gate_write = unsafe { OwnedFd::from_raw_fd(pipe[1]) };
+        let gate_for_child = duplicate_cloexec(gate_read.as_raw_fd(), 10)?;
+        let manifest_for_child = duplicate_cloexec(manifest_file.as_raw_fd(), 11)?;
+
+        let mut cgroup = CgroupV2::create(
+            &self.config.delegated_cgroup_root,
+            cgroup_id,
+            &claims.budget,
+        )?;
+
+        let mut command = Command::new(&self.config.init_binary);
+        command
+            .arg("--uid").arg(claims.subject_uid.to_string())
+            .arg("--gid").arg(claims.subject_gid.to_string())
+            .arg("--")
+            .arg(&self.config.worker_binary)
+            .args(worker_args)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("LANG", "C");
+
+        // No allocation, locks, logging, or non-async-signal-safe work occurs
+        // in pre_exec: it only duplicates already-open descriptors.
+        unsafe {
+            command.pre_exec(move || {
+                if libc::dup2(gate_for_child.as_raw_fd(), 5) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::dup2(manifest_for_child.as_raw_fd(), MANIFEST_FD) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+
+        let mut child = command.spawn()?;
+        drop(command);
+        drop(gate_read);
+
+        if let Err(error) = cgroup.attach_pid(child.id()) {
+            let _ = cgroup.kill_all();
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+        let release = [0xA5u8];
+        let written = unsafe {
+            libc::write(gate_write.as_raw_fd(), release.as_ptr().cast(), release.len())
+        };
+        drop(gate_write);
+        if written != 1 {
+            let error = std::io::Error::last_os_error();
+            let _ = cgroup.kill_all();
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(SandboxError::Io(error));
+        }
+
+        Ok(SandboxedChild { child, cgroup, exited: false })
+    }
+}
+
+/// Waitable child retaining its cgroup, so drop/kill tears down the entire task.
+pub struct SandboxedChild {
+    child: Child,
+    cgroup: CgroupV2,
+    exited: bool,
+}
+
+impl SandboxedChild {
+    pub fn id(&self) -> u32 {
+        self.child.id()
+    }
+
+    pub fn cgroup_path(&self) -> &Path {
+        self.cgroup.path()
+    }
+
+    pub fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
+        let status = self.child.try_wait()?;
+        if status.is_some() {
+            self.exited = true;
+        }
+        Ok(status)
+    }
+
+    pub fn wait(&mut self) -> std::io::Result<ExitStatus> {
+        let status = self.child.wait()?;
+        self.exited = true;
+        Ok(status)
+    }
+
+    pub fn kill(&mut self) -> Result<(), SandboxError> {
+        self.cgroup.kill_all()?;
+        let _ = self.child.kill();
+        self.child.wait()?;
+        self.exited = true;
+        Ok(())
+    }
+}
+
+impl Drop for SandboxedChild {
+    fn drop(&mut self) {
+        if !self.exited {
+            let _ = self.cgroup.kill_all();
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            self.exited = true;
+        }
+    }
+}
+
+fn duplicate_cloexec(fd: RawFd, min_fd: RawFd) -> Result<OwnedFd, SandboxError> {
+    let duplicate = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, min_fd) };
+    if duplicate < 0 {
+        return Err(SandboxError::Io(std::io::Error::last_os_error()));
+    }
+    Ok(unsafe { OwnedFd::from_raw_fd(duplicate) })
+}
+
+fn create_sealed_manifest(manifest: &SandboxManifest) -> Result<File, SandboxError> {
+    const REQUIRED_SEALS: libc::c_int =
+        libc::F_SEAL_WRITE | libc::F_SEAL_SHRINK | libc::F_SEAL_GROW | libc::F_SEAL_SEAL;
+    let name = CString::new("klyn-sandbox-manifest")
+        .map_err(|e| SandboxError::InvalidConfig(e.to_string()))?;
+    let raw = unsafe {
+        libc::syscall(
+            libc::SYS_memfd_create,
+            name.as_ptr(),
+            libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING,
+        ) as RawFd
+    };
+    if raw < 0 {
+        return Err(SandboxError::Enforcement(format!(
+            "memfd_create unavailable: {}",
+            std::io::Error::last_os_error()
+        )));
+    }
+    let mut file = File::from(unsafe { OwnedFd::from_raw_fd(raw) });
+    let encoded = serde_json::to_vec(manifest)?;
+    if encoded.len() > MAX_BROKER_FRAME_BYTES {
+        return Err(SandboxError::InvalidConfig("sealed manifest exceeds size limit".into()));
+    }
+    file.write_all(&encoded)?;
+    file.flush()?;
+    if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_ADD_SEALS, REQUIRED_SEALS) } < 0 {
+        return Err(SandboxError::Enforcement(format!(
+            "sealing manifest failed: {}",
+            std::io::Error::last_os_error()
+        )));
+    }
+    Ok(file)
+}
+
+/// Read FD 4 only if the kernel reports all required memfd seals.
+pub fn read_sealed_manifest(fd: RawFd) -> Result<SandboxManifest, SandboxError> {
+    const REQUIRED_SEALS: libc::c_int =
+        libc::F_SEAL_WRITE | libc::F_SEAL_SHRINK | libc::F_SEAL_GROW | libc::F_SEAL_SEAL;
+    let seals = unsafe { libc::fcntl(fd, libc::F_GET_SEALS) };
+    if seals < 0 || seals & REQUIRED_SEALS != REQUIRED_SEALS {
+        return Err(SandboxError::Enforcement(
+            "worker manifest is not a fully sealed memfd".into(),
+        ));
+    }
+    let duplicate = duplicate_cloexec(fd, 10)?;
+    let mut file = File::from(duplicate);
+    file.seek(SeekFrom::Start(0))?;
+    let mut bytes = Vec::new();
+    file.take((MAX_BROKER_FRAME_BYTES + 1) as u64).read_to_end(&mut bytes)?;
+    if bytes.is_empty() || bytes.len() > MAX_BROKER_FRAME_BYTES {
+        return Err(SandboxError::InvalidConfig("manifest size out of bounds".into()));
+    }
+    let manifest: SandboxManifest = serde_json::from_slice(&bytes)?;
+    manifest.capability.claims.validate()?;
+    Ok(manifest)
+}
+
+/// Trusted worker bootstrap. It reads the sealed manifest, opens the broker on
+/// FD 3, closes the manifest descriptor, then applies required kernel policy.
+/// On any error the caller must terminate the process immediately.
+pub fn bootstrap_worker() -> Result<broker::BrokerClient, SandboxError> {
+    let manifest = read_sealed_manifest(MANIFEST_FD)?;
+    let client = broker::BrokerClient::connect_reserved(&manifest.broker_socket)
+        .map_err(|e| SandboxError::Enforcement(format!("broker connection failed: {e}")))?;
+    if unsafe { libc::close(MANIFEST_FD) } != 0 {
+        return Err(SandboxError::Enforcement(format!(
+            "closing manifest FD failed: {}",
+            std::io::Error::last_os_error()
+        )));
+    }
+    landlock_seccomp::enforce_worker(
+        &manifest.capability.claims,
+        &manifest.roots,
+        BROKER_FD,
+    )?;
+    Ok(client)
 }
