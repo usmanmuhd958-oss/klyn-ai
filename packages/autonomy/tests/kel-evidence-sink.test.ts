@@ -50,6 +50,7 @@ const acceptedVerification: VerificationReportV1 = {
 function testEvent(): CapabilityEvidenceEvent {
   const attestationPayload = Object.freeze({
     schema: "urn:klyn:capability-preexecution-attestation:v1" as const,
+    collectorPrincipalId: "trusted-runtime-producer",
     invocationId: "invoke-1",
     tokenId: "token-1",
     tokenDigest: "a".repeat(64),
