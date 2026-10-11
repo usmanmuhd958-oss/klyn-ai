@@ -14,6 +14,8 @@ compile_error!("klyn-sandbox currently requires Linux kernel isolation primitive
 
 pub mod broker;
 pub mod landlock_seccomp;
+pub mod namespace;
+pub mod supervisor;
 
 use std::{
     collections::BTreeSet,
@@ -23,6 +25,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use nix::sys::statfs::{statfs, CGROUP2_SUPER_MAGIC};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -269,24 +272,40 @@ impl CgroupV2 {
         budget.validate()?;
         validate_cgroup_id(id)?;
         let root = fs::canonicalize(delegated_root)?;
-        if !root.join("cgroup.controllers").is_file() {
+        let filesystem = statfs(&root)
+            .map_err(|error| SandboxError::Enforcement(format!("cgroup statfs failed: {error}")))?;
+        if filesystem.filesystem_type() != CGROUP2_SUPER_MAGIC {
             return Err(SandboxError::InvalidConfig(
-                "delegated root is not a cgroup-v2 directory".into(),
+                "resource limits require a real cgroup-v2 filesystem".into(),
+            ));
+        }
+        if !root.join("cgroup.controllers").is_file()
+            || !root.join("cgroup.subtree_control").is_file()
+        {
+            return Err(SandboxError::InvalidConfig(
+                "delegated root is missing cgroup-v2 controller metadata".into(),
             ));
         }
         let available = fs::read_to_string(root.join("cgroup.controllers"))?;
+        let enabled = fs::read_to_string(root.join("cgroup.subtree_control"))?;
         for controller in ["cpu", "memory", "pids"] {
             if !available.split_whitespace().any(|c| c == controller) {
                 return Err(SandboxError::InvalidConfig(format!(
                     "required cgroup-v2 controller is unavailable: {controller}"
                 )));
             }
+            if !enabled.split_whitespace().any(|c| c == controller) {
+                return Err(SandboxError::InvalidConfig(format!(
+                    "required cgroup-v2 controller is not enabled for delegated children: {controller}"
+                )));
+            }
         }
         if !budget.io_limits.is_empty()
-            && !available.split_whitespace().any(|c| c == "io")
+            && (!available.split_whitespace().any(|c| c == "io")
+                || !enabled.split_whitespace().any(|c| c == "io"))
         {
             return Err(SandboxError::InvalidConfig(
-                "I/O budget requested but cgroup-v2 io controller is unavailable".into(),
+                "I/O budget requested but cgroup-v2 io controller is unavailable or disabled".into(),
             ));
         }
 
@@ -380,19 +399,36 @@ fn validate_cgroup_id(id: &str) -> Result<(), SandboxError> {
 pub fn validate_trusted_executable(path: impl AsRef<Path>) -> Result<PathBuf, SandboxError> {
     let canonical = fs::canonicalize(path)?;
     let metadata = fs::metadata(&canonical)?;
-    let mode = metadata.mode();
-    let owner = metadata.uid();
-    let euid = unsafe { libc::geteuid() };
+    let euid = nix::unistd::geteuid().as_raw();
+
     if !metadata.is_file()
-        || mode & 0o111 == 0
-        || mode & 0o022 != 0
-        || (owner != 0 && owner != euid)
+        || metadata.mode() & 0o111 == 0
+        || metadata.mode() & 0o022 != 0
+        || (metadata.uid() != 0 && metadata.uid() != euid)
     {
         return Err(SandboxError::InvalidConfig(format!(
             "trusted executable has unsafe type, mode, or owner: {}",
             canonical.display()
         )));
     }
+
+    // The executable's containing directory must not permit replacement by
+    // group/other users, nor be owned by an unrelated unprivileged identity.
+    let mut parent = canonical.parent();
+    while let Some(directory) = parent {
+        let metadata = fs::metadata(directory)?;
+        if !metadata.is_dir()
+            || metadata.mode() & 0o022 != 0
+            || (metadata.uid() != 0 && metadata.uid() != euid)
+        {
+            return Err(SandboxError::InvalidConfig(format!(
+                "trusted executable parent is not operator-controlled: {}",
+                directory.display()
+            )));
+        }
+        parent = directory.parent();
+    }
+
     Ok(canonical)
 }
 

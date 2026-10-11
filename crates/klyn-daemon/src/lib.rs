@@ -8,6 +8,7 @@
 
 pub mod fs_service;
 pub mod lifecycle;
+pub mod sandbox_service;
 pub mod policy;
 pub mod server;
 
