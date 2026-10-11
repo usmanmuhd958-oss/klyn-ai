@@ -593,6 +593,59 @@ pub fn bootstrap_worker_from_env(
 }
 
 #[cfg(test)]
+mod candidate_capability_tests {
+    use super::*;
+
+    fn claims() -> CapabilityClaims {
+        CapabilityClaims {
+            version: OCAP_VERSION,
+            token_id: "candidate-test".into(),
+            subject_uid: 1000,
+            subject_gid: 1000,
+            expires_at_unix: 4_000_000_000,
+            file_grants: vec![FileGrant {
+                root_id: candidate_root_id("tx-abc-123").unwrap(),
+                prefix: "".into(),
+                access: FileAccess::Read,
+            }],
+            candidate_transaction_id: Some("tx-abc-123".into()),
+            candidate_write_enabled: true,
+            network_grants: vec![],
+            budget: ResourceBudget {
+                memory_max_bytes: 64 * 1024 * 1024,
+                cpu_quota_micros: 100_000,
+                cpu_period_micros: 100_000,
+                pids_max: 8,
+                io_limits: vec![],
+            },
+        }
+    }
+
+    #[test]
+    fn candidate_root_ids_are_transaction_specific_and_validate_input() {
+        let first = candidate_root_id("tx-abc-123").unwrap();
+        let second = candidate_root_id("tx-def-456").unwrap();
+        assert_ne!(first, second);
+        assert!(is_candidate_root_id(&first));
+        assert!(!is_candidate_root_id("candidate-../outside"));
+        assert!(candidate_root_id("../outside").is_err());
+    }
+
+    #[test]
+    fn candidate_write_authority_requires_matching_transaction_and_read_grant() {
+        let mut token = claims();
+        token.candidate_transaction_id = Some("tx-def-456".into());
+        assert!(token.validate().is_err());
+
+        token.candidate_transaction_id = Some("tx-abc-123".into());
+        assert!(token.validate().is_ok());
+
+        token.file_grants[0].access = FileAccess::ReadWrite;
+        assert!(token.validate().is_err());
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

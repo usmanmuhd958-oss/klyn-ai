@@ -66,6 +66,16 @@ pub fn enter_worker_namespaces() -> Result<(), SandboxError> {
     let host_uid = Uid::current().as_raw();
     let host_gid = Gid::current().as_raw();
 
+    // Map the namespace's only worker identity to an unprivileged host identity.
+    // The launcher must run as a dedicated non-root service user with a
+    // delegated cgroup-v2 subtree; mapping namespace UID 1000 to host root is
+    // explicitly unsupported.
+    if host_uid == 0 || host_gid == 0 {
+        return Err(SandboxError::InvalidConfig(
+            "user namespaces require a dedicated non-root host UID/GID".into(),
+        ));
+    }
+
     unshare(CloneFlags::CLONE_NEWUSER)
         .map_err(|e| SandboxError::Enforcement(format!("unshare user namespace failed: {e}")))?;
 
@@ -83,6 +93,22 @@ pub fn enter_worker_namespaces() -> Result<(), SandboxError> {
         format!("{WORKER_NAMESPACE_ID} {host_gid} 1\n"),
     )
     .map_err(|e| SandboxError::Enforcement(format!("write GID map failed: {e}")))?;
+
+    // A UID/GID map alone does not change the running process credentials.
+    // Drop all real/effective/saved IDs to the sole mapped identity before
+    // creating further namespaces or opening any worker resource.
+    nix::unistd::setresgid(
+        Some(Gid::from_raw(WORKER_NAMESPACE_ID)),
+        Some(Gid::from_raw(WORKER_NAMESPACE_ID)),
+        Some(Gid::from_raw(WORKER_NAMESPACE_ID)),
+    )
+    .map_err(|e| SandboxError::Enforcement(format!("setresgid failed: {e}")))?;
+    nix::unistd::setresuid(
+        Some(Uid::from_raw(WORKER_NAMESPACE_ID)),
+        Some(Uid::from_raw(WORKER_NAMESPACE_ID)),
+        Some(Uid::from_raw(WORKER_NAMESPACE_ID)),
+    )
+    .map_err(|e| SandboxError::Enforcement(format!("setresuid failed: {e}")))?;
 
     unshare(
         CloneFlags::CLONE_NEWNS
