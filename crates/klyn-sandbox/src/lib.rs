@@ -716,7 +716,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod cgroup_fail_closed_tests {
     use super::*;

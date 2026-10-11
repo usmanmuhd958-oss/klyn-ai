@@ -347,9 +347,7 @@ mod tests {
         for domain in [libc::AF_INET, libc::AF_UNIX] {
             // SAFETY: the syscall only attempts to create a socket. The
             // installed filter must deny it before the kernel creates one.
-            let created = unsafe {
-                libc::syscall(libc::SYS_socket, domain, libc::SOCK_STREAM, 0)
-            };
+            let created = unsafe { libc::syscall(libc::SYS_socket, domain, libc::SOCK_STREAM, 0) };
             assert_eq!(created, -1);
             assert_eq!(
                 std::io::Error::last_os_error().raw_os_error(),
@@ -374,5 +372,4 @@ mod tests {
             Some(libc::EPERM)
         );
     }
-
 }
