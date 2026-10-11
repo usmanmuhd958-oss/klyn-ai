@@ -98,15 +98,15 @@ pub fn enter_worker_namespaces() -> Result<(), SandboxError> {
     // Drop all real/effective/saved IDs to the sole mapped identity before
     // creating further namespaces or opening any worker resource.
     nix::unistd::setresgid(
-        Some(Gid::from_raw(WORKER_NAMESPACE_ID)),
-        Some(Gid::from_raw(WORKER_NAMESPACE_ID)),
-        Some(Gid::from_raw(WORKER_NAMESPACE_ID)),
+        Gid::from_raw(WORKER_NAMESPACE_ID),
+        Gid::from_raw(WORKER_NAMESPACE_ID),
+        Gid::from_raw(WORKER_NAMESPACE_ID),
     )
     .map_err(|e| SandboxError::Enforcement(format!("setresgid failed: {e}")))?;
     nix::unistd::setresuid(
-        Some(Uid::from_raw(WORKER_NAMESPACE_ID)),
-        Some(Uid::from_raw(WORKER_NAMESPACE_ID)),
-        Some(Uid::from_raw(WORKER_NAMESPACE_ID)),
+        Uid::from_raw(WORKER_NAMESPACE_ID),
+        Uid::from_raw(WORKER_NAMESPACE_ID),
+        Uid::from_raw(WORKER_NAMESPACE_ID),
     )
     .map_err(|e| SandboxError::Enforcement(format!("setresuid failed: {e}")))?;
 
