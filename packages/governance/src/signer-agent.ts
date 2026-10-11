@@ -133,7 +133,7 @@ function parsePae(value: Buffer): ParsedPae | undefined {
 }
 
 /** The checkpoint key is deliberately scoped to signing canonical KEL tree heads only. */
-function isAuthorizedCheckpointPae(value: Buffer): boolean {
+function isAuthorizedCheckpointPae(value: Buffer, expectedKeyEpoch: string): boolean {
   const parsed = parsePae(value);
   if (!parsed || parsed.payloadType !== KEL_TREE_HEAD_PAYLOAD_TYPE) return false;
   let payload: unknown;
@@ -150,7 +150,7 @@ function isAuthorizedCheckpointPae(value: Buffer): boolean {
     typeof head.ledgerId === 'string' && head.ledgerId.length > 0 &&
     head.hashAlgorithm === 'sha256' && head.treeAlgorithm === 'rfc9162-sha256' &&
     typeof head.treeSize === 'string' && /^(0|[1-9][0-9]*)$/.test(head.treeSize) &&
-    typeof head.keyEpoch === 'string' && /^(0|[1-9][0-9]*)$/.test(head.keyEpoch) &&
+    typeof head.keyEpoch === 'string' && head.keyEpoch === expectedKeyEpoch && /^(0|[1-9][0-9]*)$/.test(head.keyEpoch) &&
     typeof head.issuedAtEpochMs === 'string' && /^(0|[1-9][0-9]*)$/.test(head.issuedAtEpochMs) &&
     typeof head.rootHash === 'string' && /^sha256:[a-f0-9]{64}$/.test(head.rootHash) &&
     (head.previousCheckpointDigest === null ||
@@ -290,6 +290,9 @@ export class UnixSignerAgent {
       return { version: PROTOCOL_VERSION, error: { code: 'unauthenticated', message: 'signer authentication failed' } };
     }
     if (request.method === 'signer.info') {
+      if (Object.keys(request.params ?? {}).length !== 0) {
+        return { version: PROTOCOL_VERSION, error: { code: 'invalid_params', message: 'signer.info does not accept parameters' } };
+      }
       return {
         version: PROTOCOL_VERSION,
         result: {
@@ -301,14 +304,15 @@ export class UnixSignerAgent {
     }
     if (request.method === 'signer.sign') {
       const params = request.params ?? {};
-      if (params.keyId !== this.backend.keyId || typeof params.payloadBase64 !== 'string') {
+      if (Object.keys(params).some((key) => !['keyId', 'payloadBase64'].includes(key)) ||
+          params.keyId !== this.backend.keyId || typeof params.payloadBase64 !== 'string') {
         return { version: PROTOCOL_VERSION, error: { code: 'invalid_params', message: 'signer key ID or payload is invalid' } };
       }
       const payload = Buffer.from(params.payloadBase64, 'base64');
       if (payload.toString('base64') !== params.payloadBase64) {
         return { version: PROTOCOL_VERSION, error: { code: 'invalid_payload', message: 'payload is not canonical Base64' } };
       }
-      if (!isAuthorizedCheckpointPae(payload)) {
+      if (!isAuthorizedCheckpointPae(payload, this.backend.keyEpoch)) {
         return {
           version: PROTOCOL_VERSION,
           error: {
