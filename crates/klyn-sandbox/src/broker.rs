@@ -354,6 +354,11 @@ fn execute_request(
     match operation {
         BrokerOperation::OpenFile { root_id, path, access } => {
             validate_relative_path(&path, false).map_err(|_| "invalid relative path".to_string())?;
+            if root_id == crate::CANDIDATE_ROOT_ID && access != FileAccess::Read {
+                return Err(
+                    "candidate workspace writes must use klyn-fs transactional IPC".to_string(),
+                );
+            }
             let grant: &FileGrant = claims.file_grants.iter().find(|grant| {
                 grant.root_id == root_id
                     && grant.access.permits(access)
@@ -679,6 +684,35 @@ mod tests {
         };
         let peer = PeerCredentials { uid: signed.claims.subject_uid, gid: signed.claims.subject_gid };
         assert!(authorize(&signed, peer, &inner).is_err());
+    }
+
+    #[test]
+    fn candidate_workspace_writes_are_denied_by_the_broker() {
+        let key = SigningKey::from_bytes(&[23u8; 32]);
+        let mut claims = test_claims(
+            nix::unistd::geteuid().as_raw(),
+            nix::unistd::getegid().as_raw(),
+        );
+        claims.file_grants = vec![FileGrant {
+            root_id: crate::CANDIDATE_ROOT_ID.into(),
+            prefix: "".into(),
+            access: FileAccess::ReadWrite,
+        }];
+        let inner = BrokerInner {
+            roots: BTreeMap::new(),
+            verifier: Arc::new(Ed25519CapabilityVerifier::new(key.verifying_key())),
+            revocations: Arc::new(NeverRevoked),
+        };
+        let result = execute_request(
+            &claims,
+            BrokerOperation::OpenFile {
+                root_id: crate::CANDIDATE_ROOT_ID.into(),
+                path: "README.md".into(),
+                access: FileAccess::Write,
+            },
+            &inner,
+        );
+        assert!(result.is_err());
     }
 
     #[test]
