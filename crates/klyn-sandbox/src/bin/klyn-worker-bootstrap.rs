@@ -10,7 +10,7 @@ use std::{
     env,
     fs::{self, File, OpenOptions},
     io::{self, BufRead, Read, Write},
-    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
     process::{Command, ExitCode},
 };
@@ -265,7 +265,7 @@ fn broker_read_file(
         .map_err(SandboxError::Enforcement)?;
     let mut file = File::from(descriptor);
     let mut bytes = Vec::new();
-    file.by_ref()
+    (&mut file)
         .take((MAX_MUTATION_BYTES + 1) as u64)
         .read_to_end(&mut bytes)?;
     if bytes.len() > MAX_MUTATION_BYTES {
@@ -337,7 +337,7 @@ fn read_private_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, San
     }
 
     let mut bytes = Vec::with_capacity(after.len() as usize);
-    file.by_ref()
+    (&mut file)
         .take((MAX_BROKER_FRAME_BYTES + 1) as u64)
         .read_to_end(&mut bytes)?;
     if bytes.is_empty() || bytes.len() > MAX_BROKER_FRAME_BYTES {
