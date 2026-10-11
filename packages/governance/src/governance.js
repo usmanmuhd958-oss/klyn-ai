@@ -1,16 +1,16 @@
-import { AuditLedger } from "./audit.js";
-import { ArtifactAttestor } from "./attestation.js";
-import { ZeroTrustAuthorizer } from "./authorization.js";
-import { CompletionGate, EvidenceLedger } from "./evidence.js";
-import { parseToolExecutionRequest } from "./validation.js";
+import { AuditLedger } from './audit.js';
+import { ArtifactAttestor } from './attestation.js';
+import { ZeroTrustAuthorizer } from './authorization.js';
+import { CompletionGate, EvidenceLedger } from './evidence.js';
+import { parseToolExecutionRequest } from './validation.js';
 export class GovernanceEngine {
     audit;
     evidence;
     completion;
     attestation;
     authorizer;
-    constructor(options = {}) {
-        this.audit = new AuditLedger(options.auditStorage);
+    constructor() {
+        this.audit = new AuditLedger();
         this.evidence = new EvidenceLedger(this.audit);
         this.completion = new CompletionGate(this.audit, this.evidence);
         this.attestation = new ArtifactAttestor(this.audit, this.evidence, this.completion);
@@ -26,12 +26,12 @@ export class GovernanceEngine {
             request = undefined;
         }
         this.audit.append({
-            kind: "authorization",
+            kind: 'authorization',
             requestId: decision.requestId,
-            principalId: request?.principal.principalId ?? "unknown",
-            toolName: request?.toolName ?? "unknown",
-            operation: request?.operation ?? "unknown",
-            decision: decision.allowed ? "allowed" : "denied",
+            principalId: request?.principal.principalId ?? 'unknown',
+            toolName: request?.toolName ?? 'unknown',
+            operation: request?.operation ?? 'unknown',
+            decision: decision.allowed ? 'allowed' : 'denied',
             reason: decision.reason,
             ...(decision.scopeId === undefined ? {} : { scopeId: decision.scopeId }),
             timestampEpochMs: decision.evaluatedAtEpochMs,
@@ -47,9 +47,6 @@ export class GovernanceEngine {
     attestArtifact(manifestInput, objectiveInput, keyId, privateKey, nowEpochMs = Date.now()) {
         return this.attestation.attest(manifestInput, objectiveInput, keyId, privateKey, nowEpochMs);
     }
-    appendAuditEvent(event) {
-        this.audit.append(event);
-    }
     snapshot() {
         return Object.freeze({
             auditHeadHash: this.audit.headHash(),
@@ -57,14 +54,11 @@ export class GovernanceEngine {
             evidenceCount: this.totalEvidenceCount(),
         });
     }
-    close() {
-        this.audit.close();
-    }
     totalEvidenceCount() {
         let count = 0;
         const records = this.audit.records();
         for (const record of records)
-            if (record.event.kind === "evidence-recorded")
+            if (record.event.kind === 'evidence-recorded')
                 count += 1;
         return count;
     }

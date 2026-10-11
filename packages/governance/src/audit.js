@@ -1,36 +1,21 @@
-import { sha256, canonicalize } from "./crypto.js";
-import { isJsonValue, ValidationError } from "./validation.js";
-import { InMemoryAuditStorageAdapter } from "./audit-storage.js";
-const GENESIS_HASH = "0".repeat(64);
+import { sha256, canonicalize } from './crypto.js';
+import { isJsonValue, ValidationError } from './validation.js';
+const GENESIS_HASH = '0'.repeat(64);
 function auditEventToJson(event) {
     const normalized = JSON.parse(JSON.stringify(event));
     if (!isJsonValue(normalized))
-        throw new ValidationError("audit event contains unsupported data");
+        throw new ValidationError('audit event contains unsupported data');
     return normalized;
 }
 function hashRecord(sequence, previousHash, event) {
     return sha256(canonicalize({ sequence, previousHash, event: auditEventToJson(event) }));
 }
 export class AuditLedger {
-    storage;
-    recordsStore;
-    constructor(storage = new InMemoryAuditStorageAdapter()) {
-        this.storage = storage;
-        const loaded = storage.load();
-        this.recordsStore = [...loaded];
-        if (!this.verify())
-            throw new ValidationError("audit storage contains an invalid hash chain");
-    }
+    recordsStore = [];
     append(event) {
         const previousHash = this.recordsStore.at(-1)?.hash ?? GENESIS_HASH;
         const sequence = this.recordsStore.length + 1;
-        const record = Object.freeze({
-            sequence,
-            previousHash,
-            event: deepFreeze(event),
-            hash: hashRecord(sequence, previousHash, event),
-        });
-        this.storage.append(record);
+        const record = Object.freeze({ sequence, previousHash, event: deepFreeze(event), hash: hashRecord(sequence, previousHash, event) });
         this.recordsStore.push(record);
         return record;
     }
@@ -57,12 +42,9 @@ export class AuditLedger {
         }
         return true;
     }
-    close() {
-        this.storage.close?.();
-    }
 }
 function deepFreeze(value) {
-    if (typeof value !== "object" || value === null)
+    if (typeof value !== 'object' || value === null)
         return value;
     if (Object.isFrozen(value))
         return value;

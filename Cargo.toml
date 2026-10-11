@@ -1,5 +1,12 @@
 [workspace]
 members = [
-    "crates/klyn-vault"
+    "crates/klyn-sandbox",
+    "crates/klyn-protocol",
+    "crates/klyn-daemon",
+    "crates/klyn-fs",
+]
+exclude = [
+    "crates/klyn-vault",
+    "crates/klyn-types",
 ]
 resolver = "2"
