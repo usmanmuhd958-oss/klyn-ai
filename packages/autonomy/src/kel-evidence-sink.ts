@@ -19,6 +19,7 @@ import type {
   EvidenceSubjectV1,
   KelAppendReceiptV1,
   VerificationReportV1,
+  JsonValue,
 } from "@klyn/governance";
 import type {
   CapabilityEvidenceEvent,
@@ -139,6 +140,9 @@ export class CapabilityKelEvidenceSink implements CapabilityEvidenceSink {
       throw new TypeError("event.requestDigest must be SHA-256 hex or null");
     }
     if (event.invocationId !== null) requiredId(event.invocationId, "event.invocationId");
+    if (event.kind === "capability-invocation-authorized" && !event.preExecutionAttestation) {
+      throw new TypeError("authorization evidence must include the runtime-signed pre-execution attestation");
+    }
 
     const now = this.now();
     if (!Number.isSafeInteger(now) || now < 0) throw new TypeError("KEL adapter clock returned an invalid time");
@@ -204,6 +208,9 @@ export class CapabilityKelEvidenceSink implements CapabilityEvidenceSink {
         invocationId: event.invocationId,
         requestDigest: event.requestDigest,
         policyDigestClaim: event.policyDigest,
+        preExecutionAttestation: event.preExecutionAttestation
+          ? JSON.parse(canonicalizeJcs(event.preExecutionAttestation)) as JsonValue
+          : null,
         capabilityOutcome: event.outcome,
         reasonCode: event.reasonCode,
         details: event.details,
