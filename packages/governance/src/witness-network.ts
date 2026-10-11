@@ -299,6 +299,10 @@ export class WitnessNetworkWorker {
     const checkpointDigest = digestJcs(message.checkpointEnvelope);
     const now = String(Date.now());
     const incomingQuorum = this.options.quorumVerifier.verify(message.checkpointEnvelope, message.signatures, now);
+    if (incomingQuorum.checkpointAuthentication !== 'pass') {
+      sendJson(response, 422, { error: 'checkpoint_key_lifecycle_rejected' });
+      return;
+    }
     const validInput = message.signatures.filter((item) => incomingQuorum.validWitnessIds.includes(item.witnessId));
     for (const signature of validInput) this.options.receiptStore.put(checkpointDigest, signature, now);
 
