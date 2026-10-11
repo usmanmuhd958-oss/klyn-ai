@@ -18,7 +18,7 @@ on:
       - .github/workflows/klyn-rust-step3.yml
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: klyn-rust-step3-${{ github.ref }}
@@ -33,7 +33,21 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Format
+      - name: Apply rustfmt
+        run: cargo fmt --all
+      - name: Persist formatted Rust sources
+        if: github.event_name == 'push' && github.ref == 'refs/heads/feat/klyn-step3-os-sandbox'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add crates/klyn-sandbox crates/klyn-daemon
+            git commit -m "style(rust): apply rustfmt to Step 3 implementation"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
+      - name: Verify formatting
         run: cargo fmt --all -- --check
       - name: Unit and integration tests
         run: cargo test --package klyn-fs --package klyn-protocol --package klyn-daemon --package klyn-sandbox
