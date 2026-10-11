@@ -11,7 +11,7 @@ use std::{
     fs::{self, File},
     io::{Read, Seek, SeekFrom},
     os::{
-        fd::{AsRawFd, FromRawFd},
+        fd::FromRawFd,
         unix::fs::MetadataExt,
     },
     path::PathBuf,
