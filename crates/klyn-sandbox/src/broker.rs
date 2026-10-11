@@ -32,7 +32,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering}, Arc, Mutex},
     thread::{self, JoinHandle},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use crate::landlock_seccomp::{open_beneath, open_scoped_directory};
@@ -46,14 +46,14 @@ const F_SEAL_GROW: i32 = 0x0004;
 const F_SEAL_WRITE: i32 = 0x0008;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BrokerRequestEnvelope {
     pub schema: String,
     pub invocation: CapabilityInvocationRequest,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BrokerResponse {
     pub schema: String,
     pub invocation_id: String,
@@ -1276,6 +1276,155 @@ pub fn receive_frame_with_fd(stream: &mut UnixStream) -> Result<(Vec<u8>, Option
         stream.read_exact(&mut data[used..expected])?;
     }
     Ok((data[4..expected].to_vec(), received_fds.pop()))
+}
+
+/// Verified result delivered to a worker over its pre-opened broker stream.
+pub struct BrokerClientGrant {
+    pub response: BrokerResponse,
+    pub fd: Option<OwnedFd>,
+}
+
+/// Verifies a broker's response independently before exposing a granted descriptor.
+/// The stream must be pre-opened by the trusted launcher; this client never calls connect(),
+/// so it can operate under the worker seccomp profile.
+pub struct BrokerClient {
+    keys: Arc<dyn CapabilityKeyResolver>,
+    expected_collector_principal_id: String,
+    maximum_clock_skew_ms: u64,
+}
+
+impl BrokerClient {
+    pub fn new(
+        keys: Arc<dyn CapabilityKeyResolver>,
+        expected_collector_principal_id: String,
+        maximum_clock_skew_ms: u64,
+    ) -> Result<Self> {
+        if expected_collector_principal_id.is_empty() ||
+            expected_collector_principal_id.len() > 128 ||
+            expected_collector_principal_id.contains('\0') ||
+            maximum_clock_skew_ms > 60_000 {
+            return Err(SandboxError::Denied("broker client collector identity or clock-skew policy is invalid".into()));
+        }
+        Ok(Self { keys, expected_collector_principal_id, maximum_clock_skew_ms })
+    }
+
+    pub fn invoke(
+        &self,
+        stream: &mut UnixStream,
+        request: &CapabilityInvocationRequest,
+    ) -> Result<BrokerClientGrant> {
+        let now = current_epoch_ms()?;
+        if request.deadline_epoch_ms <= now || !is_digest(&request.sandbox_profile_digest) {
+            return Err(SandboxError::Denied("request deadline or sandbox profile digest is invalid".into()));
+        }
+        let token_digest = request.token.digest()?;
+        request.token.verify(
+            self.keys.as_ref(),
+            &TokenExpectation {
+                now_epoch_ms: now,
+                subject_principal_id: &request.principal_id,
+                mission_id: &request.mission_id,
+                audience: &request.audience,
+                max_clock_skew_ms: self.maximum_clock_skew_ms,
+            },
+        )?;
+        let request_digest = request.operation.canonical_digest()?;
+        if !is_digest(&request.operation.request_digest) || request_digest != request.operation.request_digest {
+            return Err(SandboxError::Denied("client request digest does not bind the exact resource selector and budget".into()));
+        }
+        let scope = resolve_scope(&request.token.payload.scopes, &request.operation)?;
+        let effective_budget = request.token.payload.budget.attenuate(&request.operation.requested_budgets)?;
+        let effective_deadline = request.deadline_epoch_ms
+            .min(request.token.payload.expires_at_epoch_ms)
+            .min(now.saturating_add(effective_budget.max_wall_clock_ms_per_invocation));
+        if effective_deadline <= now {
+            return Err(SandboxError::Denied("effective broker deadline has elapsed".into()));
+        }
+
+        let remaining = effective_deadline.saturating_sub(current_epoch_ms()?);
+        if remaining == 0 {
+            return Err(SandboxError::BudgetExceeded("broker request deadline elapsed before IPC".into()));
+        }
+        let timeout = Duration::from_millis(remaining.min(30_000));
+        stream.set_read_timeout(Some(timeout))?;
+        stream.set_write_timeout(Some(timeout))?;
+        let envelope = BrokerRequestEnvelope {
+            schema: BROKER_PROTOCOL_SCHEMA.into(),
+            invocation: request.clone(),
+        };
+        stream.write_all(&framed(&envelope)?)?;
+        let (body, fd) = receive_frame_with_fd(stream)?;
+        let response: BrokerResponse = serde_json::from_slice(&body)
+            .map_err(|error| SandboxError::Protocol(format!("invalid broker response JSON: {error}")))?;
+        if response.schema != BROKER_RESPONSE_SCHEMA || response.invocation_id != request.invocation_id {
+            return Err(SandboxError::Protocol("broker response schema or invocation ID does not match the request".into()));
+        }
+        let received_fd_count = if fd.is_some() { 1usize } else { 0usize };
+        if response.fd_count as usize != received_fd_count {
+            return Err(SandboxError::Protocol("broker FD count does not match SCM_RIGHTS ancillary data".into()));
+        }
+        if !response.allowed {
+            if fd.is_some() || response.attestation.is_some() || response.authorization_evidence.is_some() {
+                return Err(SandboxError::Protocol("denied broker response must not contain descriptors or authorization proof".into()));
+            }
+            return Err(SandboxError::Denied(format!(
+                "{}: {}",
+                response.reason_code,
+                response.error.as_deref().unwrap_or("broker denied the capability request")
+            )));
+        }
+        if response.reason_code != "capability_authorized" ||
+            response.token_digest.as_deref() != Some(token_digest.as_str()) ||
+            response.request_digest.as_deref() != Some(request_digest.as_str()) {
+            return Err(SandboxError::Protocol("authorized response does not bind the expected token and request digests".into()));
+        }
+
+        let attestation = response.attestation.as_ref()
+            .ok_or_else(|| SandboxError::Protocol("authorized broker response lacks a runtime attestation".into()))?;
+        let payload = &attestation.payload;
+        let collector = self.expected_collector_principal_id.as_str();
+        if payload.schema != CAPABILITY_ATTESTATION_SCHEMA ||
+            payload.collector_principal_id != collector ||
+            payload.invocation_id != request.invocation_id ||
+            payload.token_id != request.token.payload.token_id ||
+            payload.token_digest != token_digest ||
+            payload.principal_id != request.principal_id ||
+            payload.mission_id != request.mission_id ||
+            payload.runtime_instance_id != request.runtime_instance_id ||
+            payload.audience != request.audience ||
+            payload.request_digest != request_digest ||
+            payload.scope_digest != digest_jcs(&scope)? ||
+            payload.policy_digest != request.token.payload.policy_digest ||
+            payload.sandbox_profile_digest != request.sandbox_profile_digest ||
+            payload.reservation_id.is_empty() || payload.reservation_id.len() > 128 ||
+            payload.expires_at_epoch_ms <= payload.issued_at_epoch_ms ||
+            payload.issued_at_epoch_ms > now.saturating_add(self.maximum_clock_skew_ms) ||
+            payload.expires_at_epoch_ms <= now ||
+            payload.expires_at_epoch_ms > effective_deadline ||
+            payload.issued_at_epoch_ms < request.token.payload.not_before_epoch_ms.saturating_sub(self.maximum_clock_skew_ms) {
+            return Err(SandboxError::Denied("runtime attestation binding or lifetime is invalid".into()));
+        }
+        verify_detached_signature(
+            &payload, &attestation.signature, self.keys.as_ref(), collector,
+        )?;
+
+        let receipt = response.authorization_evidence.as_ref()
+            .ok_or_else(|| SandboxError::KelEvidence("authorized broker response lacks accepted KEL evidence receipt".into()))?;
+        if receipt.ledger_id.is_empty() || receipt.ledger_id.len() > 128 ||
+            receipt.evidence_id != format!("{}:authorized", request.invocation_id) ||
+            !is_digest(&receipt.statement_digest) ||
+            receipt.committed_at_epoch_ms.saturating_add(self.maximum_clock_skew_ms) < payload.issued_at_epoch_ms {
+            return Err(SandboxError::KelEvidence("KEL authorization receipt does not bind this invocation".into()));
+        }
+
+        Ok(BrokerClientGrant { response, fd })
+    }
+}
+
+fn current_epoch_ms() -> Result<u64> {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)
+        .map_err(|_| SandboxError::Protocol("system clock precedes UNIX epoch".into()))?;
+    u64::try_from(now.as_millis()).map_err(|_| SandboxError::Protocol("system clock overflow".into()))
 }
 
 fn make_pipe() -> Result<(OwnedFd, OwnedFd)> {
