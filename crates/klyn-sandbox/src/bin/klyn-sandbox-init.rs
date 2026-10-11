@@ -156,7 +156,7 @@ fn run() -> Result<(), String> {
         // Keep FD 4 for the trusted worker bootstrap to read the sealed
         // manifest, but remove ambient descriptors from this exec boundary.
         for fd in 3..1024 {
-            if fd != BROKER_FD && fd != MANIFEST_FD {
+            if fd != MANIFEST_FD {
                 libc::close(fd);
             }
         }
