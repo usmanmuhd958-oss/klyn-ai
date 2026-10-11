@@ -23,18 +23,13 @@ use klyn_daemon::{
     fs_service::FsService,
     lifecycle::Lifecycle,
     policy::{Permission, UidPolicy},
-    sandbox_service::{
-        SandboxService, SandboxServiceConfig,
-    },
+    sandbox_service::{SandboxService, SandboxServiceConfig},
     server::{self, BoundSocket},
     Router,
 };
 use klyn_fs::{FsEngine, DEFAULT_PUBLICATION_REF};
 use klyn_protocol::Method;
-use klyn_sandbox::{
-    broker::RevocationOracle,
-    ResourceBudget,
-};
+use klyn_sandbox::{broker::RevocationOracle, ResourceBudget};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -119,11 +114,7 @@ fn entrypoint() -> Result<(), Box<dyn Error>> {
     }
 
     let socket = BoundSocket::bind(&application.socket_path)?;
-    server::serve(
-        socket,
-        application.router,
-        application.drain_timeout,
-    )?;
+    server::serve(socket, application.router, application.drain_timeout)?;
     Ok(())
 }
 
@@ -131,10 +122,7 @@ fn initialize() -> Result<Application, Box<dyn Error>> {
     let daemon_uid = nix::unistd::geteuid().as_raw();
     let daemon_gid = nix::unistd::getegid().as_raw();
     if daemon_uid == 0 || daemon_gid == 0 {
-        return Err(invalid_config(
-            "run klyn-daemon as a dedicated non-root host UID/GID",
-        )
-        .into());
+        return Err(invalid_config("run klyn-daemon as a dedicated non-root host UID/GID").into());
     }
 
     let repository = required_absolute_path("KLYN_REPOSITORY")?;
@@ -165,10 +153,9 @@ fn initialize() -> Result<Application, Box<dyn Error>> {
     let mut policy_grants = Vec::new();
     for grant in policy_config.grants {
         if grant.uid == 0 || grant.permissions.is_empty() {
-            return Err(invalid_config(
-                "root UID and grants with no permissions are forbidden",
-            )
-            .into());
+            return Err(
+                invalid_config("root UID and grants with no permissions are forbidden").into(),
+            );
         }
         for permission in grant.permissions {
             policy_grants.push((grant.uid, permission.permission()));
@@ -232,7 +219,9 @@ fn initialize() -> Result<Application, Box<dyn Error>> {
 /// generated commands: create a disposable empty candidate, start the worker,
 /// require PID 1 inside the PID namespace, then shut down and abort the candidate.
 fn run_worker_smoke(application: &Application) -> Result<(), Box<dyn Error>> {
-    let created = application.fs_service.execute(Method::FsBegin, &json!({}))?;
+    let created = application
+        .fs_service
+        .execute(Method::FsBegin, &json!({}))?;
     let transaction_id = created
         .get("transaction_id")
         .and_then(Value::as_str)
@@ -271,10 +260,9 @@ fn run_worker_smoke(application: &Application) -> Result<(), Box<dyn Error>> {
         Ok(())
     })();
 
-    let abort_result = application.fs_service.execute(
-        Method::FsAbort,
-        &json!({"transaction_id": transaction_id}),
-    );
+    let abort_result = application
+        .fs_service
+        .execute(Method::FsAbort, &json!({"transaction_id": transaction_id}));
 
     run_result?;
     abort_result?;
@@ -293,9 +281,9 @@ fn required_absolute_path(name: &str) -> Result<PathBuf, Box<dyn Error>> {
 
 fn optional_u64(name: &str, default: u64) -> Result<u64, Box<dyn Error>> {
     match env::var(name) {
-        Ok(value) => Ok(value.parse::<u64>().map_err(|_| {
-            invalid_config(&format!("{name} must be an unsigned integer"))
-        })?),
+        Ok(value) => Ok(value
+            .parse::<u64>()
+            .map_err(|_| invalid_config(&format!("{name} must be an unsigned integer")))?),
         Err(env::VarError::NotPresent) => Ok(default),
         Err(error) => Err(invalid_config(&format!("{name}: {error}")).into()),
     }
@@ -303,9 +291,9 @@ fn optional_u64(name: &str, default: u64) -> Result<u64, Box<dyn Error>> {
 
 fn optional_usize(name: &str, default: usize) -> Result<usize, Box<dyn Error>> {
     match env::var(name) {
-        Ok(value) => Ok(value.parse::<usize>().map_err(|_| {
-            invalid_config(&format!("{name} must be an unsigned integer"))
-        })?),
+        Ok(value) => Ok(value
+            .parse::<usize>()
+            .map_err(|_| invalid_config(&format!("{name} must be an unsigned integer")))?),
         Err(env::VarError::NotPresent) => Ok(default),
         Err(error) => Err(invalid_config(&format!("{name}: {error}")).into()),
     }
