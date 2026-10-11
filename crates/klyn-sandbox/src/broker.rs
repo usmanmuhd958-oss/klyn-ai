@@ -1451,11 +1451,97 @@ fn list_directory_snapshot(fd: RawFd, maximum: u64) -> Result<Vec<u8>> {
     Ok(encoded)
 }
 
-fn pump_bounded_network(proxy: UnixStream, remote: TcpStream, maximum: u64) -> Result<()> {
-    proxy.set_read_timeout(Some(Duration::from_millis(250)))?;
-    remote.set_read_timeout(Some(Duration::from_millis(250)))?;
-    proxy.set_write_timeout(Some(Duration::from_millis(250)))?;
-    remote.set_write_timeout(Some(Duration::from_millis(250)))?;
+fn connect_first_allowed(addresses: &[SocketAddr], deadline: Instant) -> Result<TcpStream> {
+    for address in addresses {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(SandboxError::BudgetExceeded("network connection deadline elapsed".into()));
+        }
+        match TcpStream::connect_timeout(address, remaining.min(Duration::from_secs(3))) {
+            Ok(stream) => return Ok(stream),
+            Err(_) if Instant::now() < deadline => continue,
+            Err(_) => break,
+        }
+    }
+    Err(SandboxError::Denied("all permitted destinations failed to connect before deadline".into()))
+}
+
+fn read_network_snapshot(mut remote: TcpStream, maximum: u64, deadline: Instant) -> Result<Vec<u8>> {
+    let mut bytes = Vec::with_capacity(maximum.min(64 * 1024) as usize);
+    let mut buffer = [0u8; 8192];
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(SandboxError::BudgetExceeded("network receive deadline elapsed".into()));
+        }
+        remote.set_read_timeout(Some(remaining.min(Duration::from_millis(250))))?;
+        match remote.read(&mut buffer) {
+            Ok(0) => return Ok(bytes),
+            Ok(count) => {
+                if (bytes.len() as u64).saturating_add(count as u64) > maximum {
+                    return Err(SandboxError::BudgetExceeded("network response exceeded byte ceiling".into()));
+                }
+                bytes.extend_from_slice(&buffer[..count]);
+            }
+            Err(error) if matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted) => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
+fn pump_verified_network_send(
+    mut proxy: UnixStream,
+    addresses: Vec<SocketAddr>,
+    expected_digest: String,
+    maximum: u64,
+    deadline: Instant,
+) -> Result<()> {
+    let max_for_vec = usize::try_from(maximum)
+        .map_err(|_| SandboxError::BudgetExceeded("network payload size does not fit address space".into()))?;
+    let mut payload = Vec::with_capacity(max_for_vec.min(64 * 1024));
+    let mut buffer = [0u8; 8192];
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(SandboxError::BudgetExceeded("net.send upload deadline elapsed before transmission".into()));
+        }
+        proxy.set_read_timeout(Some(remaining.min(Duration::from_millis(250))))?;
+        match proxy.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(count) => {
+                if (payload.len() as u64).saturating_add(count as u64) > maximum {
+                    return Err(SandboxError::BudgetExceeded("net.send payload exceeds byte ceiling; nothing was transmitted".into()));
+                }
+                payload.extend_from_slice(&buffer[..count]);
+            }
+            Err(error) if matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted) => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    if hex::encode(Sha256::digest(&payload)) != expected_digest {
+        return Err(SandboxError::Denied("net.send payload digest mismatch; no bytes were transmitted".into()));
+    }
+    let mut remote = connect_first_allowed(&addresses, deadline)?;
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Err(SandboxError::BudgetExceeded("net.send deadline elapsed before transmission".into()));
+    }
+    remote.set_write_timeout(Some(remaining.min(Duration::from_millis(250))))?;
+    remote.write_all(&payload)?;
+    remote.shutdown(std::net::Shutdown::Write)?;
+    Ok(())
+}
+
+fn pump_bounded_network(
+    proxy: UnixStream,
+    remote: TcpStream,
+    maximum: u64,
+    deadline: Instant,
+) -> Result<()> {
+    proxy.set_read_timeout(Some(Duration::from_millis(100)))?;
+    remote.set_read_timeout(Some(Duration::from_millis(100)))?;
+    proxy.set_write_timeout(Some(Duration::from_millis(100)))?;
+    remote.set_write_timeout(Some(Duration::from_millis(100)))?;
     let total = Arc::new(AtomicU64::new(0));
     let stopped = Arc::new(AtomicBool::new(false));
     let proxy_read = proxy.try_clone()?;
@@ -1463,11 +1549,15 @@ fn pump_bounded_network(proxy: UnixStream, remote: TcpStream, maximum: u64) -> R
     let total_a = total.clone();
     let stopped_a = stopped.clone();
     let upstream = thread::Builder::new().name("klyn-net-upstream".into()).spawn(move || {
-        relay_limited(proxy_read, remote_write, total_a, stopped_a, maximum)
+        let result = relay_limited_until(proxy_read, remote_write, total_a, stopped_a.clone(), maximum, deadline);
+        if result.is_err() { stopped_a.store(true, Ordering::Release); }
+        result
     })?;
+
     let total_b = total.clone();
     let stopped_b = stopped.clone();
-    let downstream = relay_limited(remote.try_clone()?, proxy.try_clone()?, total_b, stopped_b, maximum);
+    let downstream = relay_limited_until(remote.try_clone()?, proxy.try_clone()?, total_b, stopped_b.clone(), maximum, deadline);
+    if downstream.is_err() { stopped_b.store(true, Ordering::Release); }
     stopped.store(true, Ordering::Release);
     let _ = proxy.shutdown(std::net::Shutdown::Both);
     let _ = remote.shutdown(std::net::Shutdown::Both);
@@ -1478,26 +1568,51 @@ fn pump_bounded_network(proxy: UnixStream, remote: TcpStream, maximum: u64) -> R
 }
 
 fn relay_limited<R: Read, W: Write>(
+    reader: R,
+    writer: W,
+    total: Arc<AtomicU64>,
+    stopped: Arc<AtomicBool>,
+    maximum: u64,
+) -> Result<()> {
+    relay_limited_until(reader, writer, total, stopped, maximum, Instant::now() + Duration::from_secs(60))
+}
+
+fn relay_limited_until<R: Read, W: Write>(
     mut reader: R,
     mut writer: W,
     total: Arc<AtomicU64>,
     stopped: Arc<AtomicBool>,
     maximum: u64,
+    deadline: Instant,
 ) -> Result<()> {
     let mut buffer = [0u8; 8192];
     while !stopped.load(Ordering::Acquire) {
+        if Instant::now() >= deadline {
+            stopped.store(true, Ordering::Release);
+            return Err(SandboxError::BudgetExceeded("network relay deadline elapsed".into()));
+        }
         match reader.read(&mut buffer) {
             Ok(0) => { stopped.store(true, Ordering::Release); break; }
             Ok(count) => {
-                let previous = total.fetch_add(count as u64, Ordering::AcqRel);
-                if previous.saturating_add(count as u64) > maximum {
-                    stopped.store(true, Ordering::Release);
-                    return Err(SandboxError::BudgetExceeded("network proxy byte quota exceeded".into()));
+                let mut previous = total.load(Ordering::Acquire);
+                loop {
+                    let next = previous.saturating_add(count as u64);
+                    if next > maximum {
+                        stopped.store(true, Ordering::Release);
+                        return Err(SandboxError::BudgetExceeded("network proxy byte quota exceeded".into()));
+                    }
+                    match total.compare_exchange_weak(previous, next, Ordering::AcqRel, Ordering::Acquire) {
+                        Ok(_) => break,
+                        Err(actual) => previous = actual,
+                    }
                 }
-                writer.write_all(&buffer[..count])?;
+                if let Err(error) = writer.write_all(&buffer[..count]) {
+                    stopped.store(true, Ordering::Release);
+                    return Err(error.into());
+                }
             }
             Err(error) if matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted) => continue,
-            Err(error) => return Err(error.into()),
+            Err(error) => { stopped.store(true, Ordering::Release); return Err(error.into()); }
         }
     }
     Ok(())
