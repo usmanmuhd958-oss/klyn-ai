@@ -144,7 +144,6 @@ pub(crate) fn set_private_fifo(path: &Path) -> Result<(), SandboxError> {
     Ok(())
 }
 
-
 pub(crate) fn is_no_reader(error: &io::Error) -> bool {
     error.raw_os_error() == Some(nix::errno::Errno::ENXIO as i32)
 }
