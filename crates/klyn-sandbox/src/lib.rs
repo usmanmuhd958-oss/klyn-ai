@@ -484,7 +484,7 @@ use std::{
     os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
     os::unix::fs::FileTypeExt,
     os::unix::process::CommandExt,
-    process::{Child, Command, ExitStatus},
+    process::{Child, Command, ExitStatus, Stdio},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -628,6 +628,12 @@ impl SandboxLauncher {
             .arg("--")
             .arg(&self.config.worker_binary)
             .args(worker_args)
+            // Never inherit daemon-controlled stdio descriptors into an
+            // untrusted task. A separately authorized logging broker can be
+            // added as an explicit descriptor grant later.
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .env_clear()
             .env("PATH", "/usr/bin:/bin")
             .env("LANG", "C");
