@@ -14,6 +14,7 @@ compile_error!("klyn-sandbox currently requires Linux kernel isolation primitive
 
 pub mod broker;
 pub mod landlock_seccomp;
+pub mod worker_bootstrap;
 
 use std::{
     collections::BTreeSet,
