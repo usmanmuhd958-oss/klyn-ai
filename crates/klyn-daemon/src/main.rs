@@ -1,10 +1,10 @@
 //! KEL v1 daemon entrypoint.
 //!
-//! Secrets are injected by the service manager/secret provider. Do not put key material
-//! in source control, command-line arguments, or agent-controlled environment variables.
-use ed25519_dalek::{SigningKey, VerifyingKey};
-use klyn_daemon::{rpc, EvidenceStore};
-use std::{collections::BTreeMap, env, error::Error, path::PathBuf};
+//! The daemon never loads the checkpoint private seed. A separate signer agent owns
+//! HSM/PKCS#11 or cloud KMS credentials and exposes the authenticated signer protocol.
+use ed25519_dalek::VerifyingKey;
+use klyn_daemon::{key_custody::ExternalSignerClient, rpc, EvidenceStore};
+use std::{collections::BTreeMap, env, error::Error, path::PathBuf, sync::Arc, time::Duration};
 
 fn required(name: &str) -> Result<String, Box<dyn Error>> {
     let value = env::var(name)?;
@@ -23,22 +23,21 @@ fn main() -> Result<(), Box<dyn Error>> {
     let socket_path = PathBuf::from(required("KEL_SOCKET_PATH")?);
     let database_path = PathBuf::from(required("KEL_DATABASE_PATH")?);
     let ledger_id = required("KEL_LEDGER_ID")?;
-    let checkpoint_key_id = required("KEL_CHECKPOINT_KEY_ID")?;
-    let checkpoint_key_epoch = required("KEL_CHECKPOINT_KEY_EPOCH")?;
-    checkpoint_key_epoch.parse::<u64>()
-        .map_err(|_| "KEL_CHECKPOINT_KEY_EPOCH must be a decimal unsigned integer")?;
-
     let auth_token = required("KEL_RPC_AUTH_TOKEN_HEX")?;
     if auth_token.len() != 64 || !auth_token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err("KEL_RPC_AUTH_TOKEN_HEX must contain exactly 32 bytes of hex".into());
     }
 
-    let private_seed = raw_32_byte_hex(
-        "KEL_CHECKPOINT_PRIVATE_KEY_HEX",
-        &required("KEL_CHECKPOINT_PRIVATE_KEY_HEX")?,
-    )?;
-    let checkpoint_signing_key = SigningKey::from_bytes(&private_seed);
+    let signer_socket = PathBuf::from(required("KEL_SIGNER_SOCKET_PATH")?);
+    let signer_token_path = PathBuf::from(required("KEL_SIGNER_AUTH_TOKEN_FILE")?);
+    let signer_token = ExternalSignerClient::token_from_file(signer_token_path)?;
+    let signer = Arc::new(ExternalSignerClient::connect(
+        signer_socket,
+        signer_token,
+        Duration::from_secs(5),
+    )?);
 
+    // Only public producer keys are configured here; no private-key seed enters this process.
     let producer_key_json = required("KEL_PRODUCER_KEYS_JSON")?;
     let producer_hex: BTreeMap<String, String> = serde_json::from_str(&producer_key_json)?;
     if producer_hex.is_empty() {
@@ -53,14 +52,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         producer_keys.insert(key_id, VerifyingKey::from_bytes(&bytes)?);
     }
 
-    let store = EvidenceStore::open(
-        database_path,
-        ledger_id,
-        checkpoint_key_id,
-        checkpoint_key_epoch,
-        checkpoint_signing_key,
-        producer_keys,
-    )?;
+    let store = EvidenceStore::open_with_signer(database_path, ledger_id, signer, producer_keys)?;
     eprintln!("KEL daemon initialized; socket={}", socket_path.display());
     rpc::serve(socket_path, auth_token, store)?;
     Ok(())
