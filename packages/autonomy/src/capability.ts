@@ -243,6 +243,7 @@ export interface CapabilityEvidenceEvent {
   readonly invocationId: string | null;
   readonly requestDigest: string | null;
   readonly policyDigest: string;
+  readonly preExecutionAttestation?: PreExecutionAttestationV1;
   readonly outcome: "allowed" | "denied" | "completed" | "failed" | "revoked";
   readonly reasonCode: string;
   readonly details: Readonly<Record<string, string | number | boolean | null>>;
