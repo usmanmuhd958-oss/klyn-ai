@@ -52,9 +52,17 @@ impl Ed25519CapabilityVerifier {
     }
 }
 
+/// Deterministic OCap v1 payload encoding: JSON objects are recursively
+/// key-sorted by serde_json's default map representation; claim fields contain
+/// no floating-point values. The TypeScript signer must use the same encoding.
+pub fn canonical_capability_bytes(claims: &CapabilityClaims) -> Result<Vec<u8>, String> {
+    let value = serde_json::to_value(claims).map_err(|e| e.to_string())?;
+    serde_json::to_vec(&value).map_err(|e| e.to_string())
+}
+
 impl CapabilityVerifier for Ed25519CapabilityVerifier {
     fn verify(&self, token: &SignedCapability) -> Result<(), String> {
-        let bytes = serde_json::to_vec(&token.claims).map_err(|e| e.to_string())?;
+        let bytes = canonical_capability_bytes(&token.claims)?;
         let signature = Signature::from_slice(&token.signature).map_err(|e| e.to_string())?;
         self.key.verify_strict(&bytes, &signature).map_err(|e| e.to_string())?;
         token.claims.validate().map_err(|e| e.to_string())
@@ -620,6 +628,7 @@ fn receive_fd(socket: RawFd) -> io::Result<OwnedFd> {
         }
     }
     drop(msg);
+    drop(iov);
     if flags.contains(MsgFlags::MSG_CTRUNC) || bytes != 1 || marker[0] != b'F' {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid or truncated SCM_RIGHTS frame"));
     }
@@ -667,7 +676,7 @@ mod tests {
     fn ed25519_capability_signature_verifies_strictly() {
         let key = SigningKey::from_bytes(&[7u8; 32]);
         let claims = test_claims(unsafe { libc::geteuid() } as u32, unsafe { libc::getegid() } as u32);
-        let signature = key.sign(&serde_json::to_vec(&claims).unwrap()).to_bytes().to_vec();
+        let signature = key.sign(&canonical_capability_bytes(&claims).unwrap()).to_bytes().to_vec();
         let token = SignedCapability { claims, signature };
         Ed25519CapabilityVerifier::new(key.verifying_key()).verify(&token).unwrap();
 
@@ -698,7 +707,7 @@ mod tests {
         let key = SigningKey::from_bytes(&[9u8; 32]);
         let claims = test_claims(unsafe { libc::geteuid() } as u32, unsafe { libc::getegid() } as u32);
         let signed = SignedCapability {
-            signature: key.sign(&serde_json::to_vec(&claims).unwrap()).to_bytes().to_vec(),
+            signature: key.sign(&canonical_capability_bytes(&claims).unwrap()).to_bytes().to_vec(),
             claims,
         };
         let inner = BrokerInner {
