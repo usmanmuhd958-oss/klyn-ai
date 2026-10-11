@@ -11,8 +11,9 @@ use std::{
 };
 
 use landlock::{
-    make_bitflags, AccessFs, ABI, CompatLevel, PathBeneath, PathFd, RestrictionStatus,
-    Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus, RestrictSelfAttr,
+    make_bitflags, Access, AccessFs, ABI, CompatLevel, Compatible, PathBeneath, PathFd,
+    RestrictionStatus, Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus,
+    RestrictSelfAttr,
 };
 use seccompiler::{
     BpfProgram, SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition,
@@ -32,7 +33,7 @@ pub fn apply_landlock(
     roots: &BTreeMap<String, PathBuf>,
 ) -> Result<RestrictionStatus, SandboxError> {
     claims.validate()?;
-    let abi = ABI::V3;
+    let abi = ABI::V8;
     let mut ruleset = Ruleset::default()
         .set_compatibility(CompatLevel::HardRequirement)
         .handle_access(AccessFs::from_all(abi))
