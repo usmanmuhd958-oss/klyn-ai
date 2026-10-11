@@ -3,5 +3,6 @@ members = [
     "crates/klyn-vault",
     "crates/klyn-evidence",
     "crates/klyn-daemon",
+    "crates/klyn-sandbox",
 ]
 resolver = "2"
