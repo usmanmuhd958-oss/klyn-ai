@@ -14,6 +14,7 @@ import {
   type KelEvidenceStatus,
 } from './kel.js';
 import { signEd25519 } from './crypto.js';
+import type { AuditOutboxItem, AuditOutboxRecord } from './audit-storage.js';
 import type { ArtifactAttestation, AuditEvent, AuditRecord, JsonValue } from './types.js';
 
 export interface LegacyKelAdapterOptions {
@@ -27,12 +28,32 @@ export interface LegacyKelAdapterOptions {
 }
 export interface LegacyAuditAppendResult {
   readonly record: AuditRecord;
-  readonly receipt: KelAppendReceiptV1;
+  /** Null means the legacy record and KEL event are durable in the outbox but not delivered yet. */
+  readonly receipt: KelAppendReceiptV1 | null;
+  readonly queued: boolean;
+  readonly outboxEventId: string;
 }
 export interface LegacyArtifactAttestationResult {
   readonly attestation: ArtifactAttestation;
-  readonly auditReceipt: KelAppendReceiptV1;
-  readonly artifactReceipt: KelAppendReceiptV1;
+  readonly auditReceipt: KelAppendReceiptV1 | null;
+  readonly artifactReceipt: KelAppendReceiptV1 | null;
+  readonly queued: boolean;
+  readonly outboxEventId: string;
+}
+interface LegacyOutboxEvidenceV1 {
+  readonly evidenceId: string;
+  readonly envelope: DsseEnvelopeV1;
+}
+interface LegacyOutboxPayloadV1 {
+  readonly schema: 'urn:klyn:legacy-kel-outbox:v1';
+  readonly evidence: readonly LegacyOutboxEvidenceV1[];
+}
+export interface LegacyOutboxDrainResult {
+  readonly processed: number;
+  readonly delivered: number;
+  readonly stillPending: number;
+  readonly failures: readonly { readonly eventId: string; readonly message: string }[];
+  readonly receiptsByEventId: ReadonlyMap<string, readonly KelAppendReceiptV1[]>;
 }
 
 function statusFromAuditEvent(event: AuditEvent): KelEvidenceStatus {
@@ -127,16 +148,28 @@ export class LegacyGovernanceKelAdapter {
     this.now = options.now ?? Date.now;
   }
 
+  /**
+   * Appends the legacy audit event and its complete KEL envelope to the same SQLite
+   * transaction. A failed network delivery leaves the payload durable for replay.
+   */
   public async appendAudit(event: AuditEvent): Promise<LegacyAuditAppendResult> {
-    const record = this.audit.append(event);
-    const envelope = envelopeFor(this.statementFromAuditRecord(record), this.producerKeyId, this.producerPrivateKey);
-    const receipt = await this.transport.appendEvidence(envelope, String(this.now()));
-    if (receipt.evidenceId !== this.statementFromAuditRecord(record).evidenceId) {
-      throw new Error('KEL daemon receipt does not correspond to the legacy audit record');
-    }
-    return { record, receipt };
+    let outboxEventId = '';
+    const record = this.audit.appendWithOutbox(event, (nextRecord) => {
+      const statement = this.statementFromAuditRecord(nextRecord);
+      const envelope = envelopeFor(statement, this.producerKeyId, this.producerPrivateKey);
+      outboxEventId = this.outboxId(nextRecord);
+      return this.makeOutboxItem(outboxEventId, [ { evidenceId: statement.evidenceId, envelope } ]);
+    });
+    const drained = await this.drainOutbox();
+    const receipt = drained.receiptsByEventId.get(outboxEventId)?.[0] ?? null;
+    return { record, receipt, queued: receipt === null, outboxEventId };
   }
 
+  /**
+   * The attestor's legacy audit append and both KEL envelopes are committed atomically
+   * by AuditLedger's storage adapter. If the KEL daemon is unavailable the whole bundle
+   * remains pending; a replay is idempotent for evidence already appended remotely.
+   */
   public async attestArtifact(
     manifestInput: unknown,
     objectiveInput: unknown,
@@ -144,24 +177,87 @@ export class LegacyGovernanceKelAdapter {
     privateKey: KeyObject,
     nowEpochMs = this.now(),
   ): Promise<LegacyArtifactAttestationResult> {
-    const attestation = this.attestor.attest(manifestInput, objectiveInput, keyId, privateKey, nowEpochMs);
-    const latestAuditRecord = this.audit.records().at(-1);
-    if (!latestAuditRecord || latestAuditRecord.event.kind !== 'artifact-attested' ||
-        latestAuditRecord.event.attestationPayloadDigest !== attestation.payloadDigest) {
-      throw new Error('ArtifactAttestor did not append the matching legacy audit record');
-    }
+    let outboxEventId = '';
+    const attestation = this.attestor.attest(
+      manifestInput,
+      objectiveInput,
+      keyId,
+      privateKey,
+      nowEpochMs,
+      (record, value) => {
+        if (!record || record.event.kind !== 'artifact-attested' ||
+            record.event.attestationPayloadDigest !== value.payloadDigest) {
+          throw new Error('ArtifactAttestor generated an inconsistent audit/outbox record');
+        }
+        const auditStatement = this.statementFromAuditRecord(record);
+        const artifactStatement = this.statementFromArtifactAttestation(value);
+        const auditEnvelope = envelopeFor(auditStatement, this.producerKeyId, this.producerPrivateKey);
+        const artifactEnvelope = envelopeFor(artifactStatement, this.producerKeyId, this.producerPrivateKey);
+        outboxEventId = this.outboxId(record);
+        return this.makeOutboxItem(outboxEventId, [
+          { evidenceId: auditStatement.evidenceId, envelope: auditEnvelope },
+          { evidenceId: artifactStatement.evidenceId, envelope: artifactEnvelope },
+        ]);
+      },
+    );
+    const drained = await this.drainOutbox();
+    const receipts = drained.receiptsByEventId.get(outboxEventId) ?? [];
+    return {
+      attestation,
+      auditReceipt: receipts[0] ?? null,
+      artifactReceipt: receipts[1] ?? null,
+      queued: receipts.length !== 2,
+      outboxEventId,
+    };
+  }
 
-    const auditStatement = this.statementFromAuditRecord(latestAuditRecord);
-    const auditReceipt = await this.transport.appendEvidence(
-      envelopeFor(auditStatement, this.producerKeyId, this.producerPrivateKey),
-      String(this.now()),
-    );
-    const artifactStatement = this.statementFromArtifactAttestation(attestation);
-    const artifactReceipt = await this.transport.appendEvidence(
-      envelopeFor(artifactStatement, this.producerKeyId, this.producerPrivateKey),
-      String(this.now()),
-    );
-    return { attestation, auditReceipt, artifactReceipt };
+  /** Drain durable events in order. Failures remain pending and are replayable. */
+  public async drainOutbox(limit = 100): Promise<LegacyOutboxDrainResult> {
+    const pending: readonly AuditOutboxRecord[] = this.audit.pendingOutbox(limit);
+    const failures: Array<{ eventId: string; message: string }> = [];
+    const receiptsByEventId = new Map<string, readonly KelAppendReceiptV1[]>();
+    let delivered = 0;
+
+    for (const item of pending) {
+      try {
+        const payload = JSON.parse(item.payloadJson) as LegacyOutboxPayloadV1;
+        if (payload.schema !== 'urn:klyn:legacy-kel-outbox:v1' ||
+            !Array.isArray(payload.evidence) || payload.evidence.length === 0) {
+          throw new Error('outbox payload schema is invalid');
+        }
+        const receipts: KelAppendReceiptV1[] = [];
+        for (const evidence of payload.evidence) {
+          if (!evidence.evidenceId || !evidence.envelope) throw new Error('outbox evidence entry is incomplete');
+          const receipt = await this.transport.appendEvidence(evidence.envelope, String(this.now()));
+          if (receipt.evidenceId !== evidence.evidenceId) throw new Error('KEL receipt evidence ID mismatch');
+          receipts.push(receipt);
+        }
+        this.audit.markOutboxDelivered(item.eventId, JSON.stringify(receipts));
+        receiptsByEventId.set(item.eventId, receipts);
+        delivered += 1;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        try { this.audit.markOutboxFailure(item.eventId, message); } catch { /* retain original failure */ }
+        failures.push({ eventId: item.eventId, message });
+        // Preserve strict order: don't deliver later entries after an earlier failure.
+        break;
+      }
+    }
+    const stillPending = this.audit.pendingOutbox(1000).length;
+    return { processed: pending.length, delivered, stillPending, failures, receiptsByEventId };
+  }
+
+  private outboxId(record: AuditRecord): string {
+    return 'kel-outbox-' + String(record.sequence) + '-' + record.hash.slice(0, 24);
+  }
+
+  private makeOutboxItem(eventId: string, evidence: readonly LegacyOutboxEvidenceV1[]): AuditOutboxItem {
+    const payload: LegacyOutboxPayloadV1 = { schema: 'urn:klyn:legacy-kel-outbox:v1', evidence };
+    return {
+      eventId,
+      payloadJson: JSON.stringify(payload),
+      createdAtEpochMs: String(this.now()),
+    };
   }
 
   private statementFromAuditRecord(record: AuditRecord): EvidenceStatementV1 {
