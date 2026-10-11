@@ -95,7 +95,11 @@ mod tests {
     use super::*;
 
     fn peer(uid: u32) -> PeerIdentity {
-        PeerIdentity { pid: 123, uid, gid: 456 }
+        PeerIdentity {
+            pid: 123,
+            uid,
+            gid: 456,
+        }
     }
 
     #[test]
@@ -103,7 +107,10 @@ mod tests {
         let mut policy = UidPolicy::new();
         policy.grant(1000, Permission::ObserveDaemon);
         assert!(policy.authorize(peer(1000), Method::Ping).is_ok());
-        assert_eq!(policy.authorize(peer(1001), Method::Ping), Err(PolicyError::Denied));
+        assert_eq!(
+            policy.authorize(peer(1001), Method::Ping),
+            Err(PolicyError::Denied)
+        );
     }
 
     #[test]

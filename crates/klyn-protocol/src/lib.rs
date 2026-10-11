@@ -231,7 +231,9 @@ mod tests {
 
     #[test]
     fn ping_accepts_only_an_empty_object() {
-        assert!(request(Method::Ping, serde_json::json!({})).validate().is_ok());
+        assert!(request(Method::Ping, serde_json::json!({}))
+            .validate()
+            .is_ok());
         assert!(request(Method::Ping, serde_json::json!({"extra": true}))
             .validate()
             .is_err());
@@ -239,7 +241,8 @@ mod tests {
 
     #[test]
     fn unknown_top_level_fields_are_rejected() {
-        let data = br#"{"protocol_version":1,"request_id":1,"method":"ping","params":{},"admin":true}"#;
+        let data =
+            br#"{"protocol_version":1,"request_id":1,"method":"ping","params":{},"admin":true}"#;
         assert!(decode_request(data).is_err());
     }
 

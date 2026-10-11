@@ -4,11 +4,10 @@ use std::{
     fs,
     io::{self, BufReader},
     os::{
-        linux::fs::MetadataExt as LinuxMetadataExt,
         unix::{
+            ffi::OsStrExt,
             fs::{FileTypeExt, MetadataExt, PermissionsExt},
             net::{UnixListener, UnixStream},
-            ffi::OsStrExt,
         },
     },
     path::{Path, PathBuf},
@@ -22,13 +21,12 @@ use std::{
 
 use klyn_protocol::{
     decode_request, read_frame, write_response, FrameError, Response, RpcErrorCode,
-    MAX_FRAME_BYTES,
 };
 use nix::sys::socket::{getsockopt, sockopt::PeerCredentials};
 use thiserror::Error;
 
 use crate::{
-    lifecycle::{ConnectionLease, Lifecycle, LifecycleError, LifecycleState},
+    lifecycle::{Lifecycle, LifecycleError, LifecycleState},
     policy::PeerIdentity,
     Router,
 };
@@ -74,7 +72,10 @@ impl BoundSocket {
     pub fn bind(path: impl AsRef<Path>) -> Result<Self, DaemonError> {
         let path = path.as_ref();
         let file_name = path.file_name().ok_or(DaemonError::InvalidSocketPath)?;
-        let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
         let canonical_parent = fs::canonicalize(parent)?;
         let parent_metadata = fs::metadata(&canonical_parent)?;
         if !parent_metadata.is_dir() {
@@ -146,7 +147,9 @@ pub fn serve(
             LifecycleState::Ready => {}
             LifecycleState::Draining => break,
             LifecycleState::Failed => return Err(DaemonError::LifecycleFailed),
-            LifecycleState::Starting => return Err(DaemonError::Lifecycle(LifecycleError::NotReady)),
+            LifecycleState::Starting => {
+                return Err(DaemonError::Lifecycle(LifecycleError::NotReady))
+            }
             LifecycleState::Stopped => return Ok(()),
         }
 
@@ -167,7 +170,10 @@ pub fn serve(
                     .spawn(move || {
                         let _ = serve_connection(stream, &worker_router);
                     })
-                    .map_err(|_| DaemonError::WorkerSpawn)?;
+                    .map_err(|_| {
+                        let _ = lifecycle.fail("IPC worker thread could not be started");
+                        DaemonError::WorkerSpawn
+                    })?;
                 workers.push(handle);
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {

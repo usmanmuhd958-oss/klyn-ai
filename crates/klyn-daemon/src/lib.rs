@@ -128,16 +128,12 @@ impl Router {
 
 fn lifecycle_error_response(request_id: Option<u64>, error: LifecycleError) -> Response {
     match error {
-        LifecycleError::ShuttingDown => Response::failure(
-            request_id,
-            RpcErrorCode::ShuttingDown,
-            "daemon is draining",
-        ),
-        LifecycleError::NotReady => Response::failure(
-            request_id,
-            RpcErrorCode::NotReady,
-            "daemon is not ready",
-        ),
+        LifecycleError::ShuttingDown => {
+            Response::failure(request_id, RpcErrorCode::ShuttingDown, "daemon is draining")
+        }
+        LifecycleError::NotReady => {
+            Response::failure(request_id, RpcErrorCode::NotReady, "daemon is not ready")
+        }
         LifecycleError::Failed
         | LifecycleError::DrainTimeout
         | LifecycleError::LockPoisoned
@@ -166,7 +162,11 @@ mod tests {
     }
 
     fn peer(uid: u32) -> PeerIdentity {
-        PeerIdentity { pid: 5, uid, gid: 5 }
+        PeerIdentity {
+            pid: 5,
+            uid,
+            gid: 5,
+        }
     }
 
     #[test]
@@ -192,8 +192,14 @@ mod tests {
         lifecycle.mark_ready().unwrap();
         let router = Router::new(lifecycle.clone(), Arc::new(BrokenPolicy));
         let response = router.dispatch(request(Method::Ping, json!({})), peer(1000));
-        assert_eq!(response.error.unwrap().code, RpcErrorCode::PolicyUnavailable);
-        assert_eq!(lifecycle.snapshot().unwrap().state, lifecycle::LifecycleState::Failed);
+        assert_eq!(
+            response.error.unwrap().code,
+            RpcErrorCode::PolicyUnavailable
+        );
+        assert_eq!(
+            lifecycle.snapshot().unwrap().state,
+            lifecycle::LifecycleState::Failed
+        );
     }
 
     #[test]
@@ -206,7 +212,12 @@ mod tests {
 
         let response = router.dispatch(request(Method::DaemonShutdown, json!({})), peer(1000));
         assert_eq!(response.result.unwrap()["state"], "draining");
-        lifecycle.complete_shutdown(std::time::Duration::from_millis(10)).unwrap();
-        assert_eq!(lifecycle.snapshot().unwrap().state, lifecycle::LifecycleState::Stopped);
+        lifecycle
+            .complete_shutdown(std::time::Duration::from_millis(10))
+            .unwrap();
+        assert_eq!(
+            lifecycle.snapshot().unwrap().state,
+            lifecycle::LifecycleState::Stopped
+        );
     }
 }

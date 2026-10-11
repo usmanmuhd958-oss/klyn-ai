@@ -63,7 +63,11 @@ fn unauthorized_requests_are_rejected_without_entering_the_handler() {
             method: Method::DaemonStatus,
             params: json!({}),
         },
-        klyn_daemon::policy::PeerIdentity { pid: 123, uid: 9876, gid: 9876 },
+        klyn_daemon::policy::PeerIdentity {
+            pid: 123,
+            uid: 9876,
+            gid: 9876,
+        },
     );
 
     assert_eq!(
@@ -101,6 +105,8 @@ fn shutdown_acknowledgement_is_sent_before_stopped_state() {
     assert_eq!(response.result.unwrap()["state"], "draining");
 
     worker.join().unwrap();
-    lifecycle.complete_shutdown(Duration::from_millis(50)).unwrap();
+    lifecycle
+        .complete_shutdown(Duration::from_millis(50))
+        .unwrap();
     assert_eq!(lifecycle.snapshot().unwrap().state, LifecycleState::Stopped);
 }

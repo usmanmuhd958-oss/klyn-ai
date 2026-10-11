@@ -34,6 +34,7 @@ struct StateData {
     failure: Option<String>,
 }
 
+#[derive(Debug)]
 struct LifecycleInner {
     data: Mutex<StateData>,
     changed: Condvar,
@@ -79,7 +80,11 @@ impl Lifecycle {
     }
 
     pub fn snapshot(&self) -> Result<LifecycleSnapshot, LifecycleError> {
-        let data = self.inner.data.lock().map_err(|_| LifecycleError::LockPoisoned)?;
+        let data = self
+            .inner
+            .data
+            .lock()
+            .map_err(|_| LifecycleError::LockPoisoned)?;
         Ok(LifecycleSnapshot {
             state: data.state,
             in_flight_requests: data.in_flight_requests,
@@ -89,7 +94,11 @@ impl Lifecycle {
     }
 
     pub fn mark_ready(&self) -> Result<(), LifecycleError> {
-        let mut data = self.inner.data.lock().map_err(|_| LifecycleError::LockPoisoned)?;
+        let mut data = self
+            .inner
+            .data
+            .lock()
+            .map_err(|_| LifecycleError::LockPoisoned)?;
         if data.state != LifecycleState::Starting {
             return Err(LifecycleError::InvalidTransition {
                 from: data.state,
@@ -102,7 +111,11 @@ impl Lifecycle {
     }
 
     pub fn begin_request(&self) -> Result<RequestLease, LifecycleError> {
-        let mut data = self.inner.data.lock().map_err(|_| LifecycleError::LockPoisoned)?;
+        let mut data = self
+            .inner
+            .data
+            .lock()
+            .map_err(|_| LifecycleError::LockPoisoned)?;
         match data.state {
             LifecycleState::Ready => {
                 data.in_flight_requests = data
@@ -123,7 +136,11 @@ impl Lifecycle {
     /// Tracks accepted connections separately from authorized operations so a
     /// shutdown cannot report Stopped while a response is still being written.
     pub fn begin_connection(&self) -> Result<ConnectionLease, LifecycleError> {
-        let mut data = self.inner.data.lock().map_err(|_| LifecycleError::LockPoisoned)?;
+        let mut data = self
+            .inner
+            .data
+            .lock()
+            .map_err(|_| LifecycleError::LockPoisoned)?;
         match data.state {
             LifecycleState::Ready | LifecycleState::Draining => {
                 data.active_connections = data
@@ -141,7 +158,11 @@ impl Lifecycle {
     }
 
     pub fn begin_draining(&self) -> Result<(), LifecycleError> {
-        let mut data = self.inner.data.lock().map_err(|_| LifecycleError::LockPoisoned)?;
+        let mut data = self
+            .inner
+            .data
+            .lock()
+            .map_err(|_| LifecycleError::LockPoisoned)?;
         if data.state != LifecycleState::Ready {
             return Err(match data.state {
                 LifecycleState::Draining => LifecycleError::ShuttingDown,
@@ -161,7 +182,11 @@ impl Lifecycle {
     }
 
     pub fn fail(&self, reason: impl Into<String>) -> Result<(), LifecycleError> {
-        let mut data = self.inner.data.lock().map_err(|_| LifecycleError::LockPoisoned)?;
+        let mut data = self
+            .inner
+            .data
+            .lock()
+            .map_err(|_| LifecycleError::LockPoisoned)?;
         match data.state {
             LifecycleState::Stopped => {
                 return Err(LifecycleError::InvalidTransition {
@@ -182,7 +207,11 @@ impl Lifecycle {
     /// Only transitions Draining -> Stopped after all accepted connections and
     /// authorized requests have completed. Timeout transitions to Failed.
     pub fn complete_shutdown(&self, timeout: Duration) -> Result<(), LifecycleError> {
-        let data = self.inner.data.lock().map_err(|_| LifecycleError::LockPoisoned)?;
+        let data = self
+            .inner
+            .data
+            .lock()
+            .map_err(|_| LifecycleError::LockPoisoned)?;
         if data.state != LifecycleState::Draining {
             return Err(LifecycleError::InvalidTransition {
                 from: data.state,
@@ -209,9 +238,7 @@ impl Lifecycle {
             });
         }
 
-        if timed_out.timed_out()
-            && (data.in_flight_requests != 0 || data.active_connections != 0)
-        {
+        if timed_out.timed_out() && (data.in_flight_requests != 0 || data.active_connections != 0) {
             data.state = LifecycleState::Failed;
             data.failure = Some("shutdown drain deadline expired".to_owned());
             self.inner.changed.notify_all();
@@ -230,6 +257,7 @@ impl Default for Lifecycle {
     }
 }
 
+#[derive(Debug)]
 pub struct RequestLease {
     inner: Arc<LifecycleInner>,
     active: bool,
@@ -255,6 +283,7 @@ impl Drop for RequestLease {
     }
 }
 
+#[derive(Debug)]
 pub struct ConnectionLease {
     inner: Arc<LifecycleInner>,
     active: bool,
@@ -287,7 +316,10 @@ mod tests {
     #[test]
     fn lifecycle_requires_starting_to_ready_before_work() {
         let lifecycle = Lifecycle::new();
-        assert_eq!(lifecycle.begin_request().unwrap_err(), LifecycleError::NotReady);
+        assert_eq!(
+            lifecycle.begin_request().unwrap_err(),
+            LifecycleError::NotReady
+        );
         lifecycle.mark_ready().unwrap();
         assert!(lifecycle.begin_request().is_ok());
     }
@@ -301,7 +333,10 @@ mod tests {
         ));
         lifecycle.mark_ready().unwrap();
         lifecycle.begin_draining().unwrap();
-        assert_eq!(lifecycle.begin_request().unwrap_err(), LifecycleError::ShuttingDown);
+        assert_eq!(
+            lifecycle.begin_request().unwrap_err(),
+            LifecycleError::ShuttingDown
+        );
     }
 
     #[test]
@@ -313,7 +348,9 @@ mod tests {
         lifecycle.begin_draining().unwrap();
         drop(request);
         drop(connection);
-        lifecycle.complete_shutdown(Duration::from_millis(10)).unwrap();
+        lifecycle
+            .complete_shutdown(Duration::from_millis(10))
+            .unwrap();
         assert_eq!(lifecycle.snapshot().unwrap().state, LifecycleState::Stopped);
     }
 
