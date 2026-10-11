@@ -1472,6 +1472,53 @@ mod tests {
     }
 
     #[test]
+    fn staged_write_checks_digest_and_atomically_replaces_or_creates() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("existing.txt"), b"original-content").unwrap();
+        let root = File::open(temp.path()).unwrap();
+
+        let run_write = |path: &str, op: &str, payload: &[u8], maximum: u64, digest: String| {
+            let (read_end, write_end) = make_pipe().unwrap();
+            let mut writer = File::from(write_end);
+            writer.write_all(payload).unwrap();
+            drop(writer);
+            pump_bounded_file_write(
+                read_end,
+                duplicate_fd(root.as_raw_fd()).unwrap(),
+                path.to_owned(),
+                op.to_owned(),
+                maximum,
+                digest,
+            )
+        };
+
+        let rejected = run_write(
+            "existing.txt",
+            "fs.write",
+            b"tampered-payload",
+            1024,
+            "a".repeat(64),
+        );
+        assert!(rejected.is_err());
+        assert_eq!(std::fs::read(temp.path().join("existing.txt")).unwrap(), b"original-content");
+
+        let update = b"verified-content";
+        let digest = hex::encode(Sha256::digest(update));
+        run_write("existing.txt", "fs.write", update, 1024, digest).unwrap();
+        assert_eq!(std::fs::read(temp.path().join("existing.txt")).unwrap(), update);
+
+        let create = b"new verified file";
+        let digest = hex::encode(Sha256::digest(create));
+        run_write("new.txt", "fs.create", create, 1024, digest).unwrap();
+        assert_eq!(std::fs::read(temp.path().join("new.txt")).unwrap(), create);
+
+        let duplicate_create = b"must not replace";
+        let digest = hex::encode(Sha256::digest(duplicate_create));
+        assert!(run_write("new.txt", "fs.create", duplicate_create, 1024, digest).is_err());
+        assert_eq!(std::fs::read(temp.path().join("new.txt")).unwrap(), create);
+    }
+
+    #[test]
     fn selector_unknown_fields_are_rejected() {
         let selector = json!({"relativePath":"repo/src/a.rs","sudo":true}).as_object().unwrap().clone();
         assert!(reject_selector_keys(&selector, &["relativePath"]).is_err());
