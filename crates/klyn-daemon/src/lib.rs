@@ -3,18 +3,21 @@
 //! The daemon owns persistence and key use. Private keys must be supplied by a
 //! trusted key provider/HSM in production; never load them from agent-controlled input.
 
+pub mod key_custody;
 pub mod rpc;
 
-use ed25519_dalek::{SigningKey, VerifyingKey};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use ed25519_dalek::{Signature, Signer as DalekSigner, SigningKey, Verifier, VerifyingKey};
+use key_custody::{CheckpointSigner, SigningProviderError};
 use klyn_evidence::{
-    canonicalize, digest_json, envelope_digest, leaf_hash, merkle_root, node_hash, sign_envelope,
-    validate_evidence, verify_envelope, DsseEnvelopeV1, EvidenceStatementV1, LedgerLeafV1,
+    canonicalize, digest_json, dsse_pae, envelope_digest, leaf_hash, merkle_root, node_hash,
+    validate_evidence, verify_envelope, DsseEnvelopeV1, DsseSignatureV1, EvidenceStatementV1, LedgerLeafV1,
     InclusionProofV1, TreeHeadV1, EVIDENCE_PAYLOAD_TYPE, TREE_HEAD_PAYLOAD_TYPE,
 };
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, path::Path};
+use std::{collections::BTreeMap, path::Path, sync::Arc};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -70,16 +73,33 @@ pub struct LedgerHealthV1 {
     pub root_hash: String,
 }
 
+struct LocalEd25519Signer {
+    key_id: String,
+    epoch: String,
+    signing_key: SigningKey,
+    verifying_key: VerifyingKey,
+}
+impl CheckpointSigner for LocalEd25519Signer {
+    fn key_id(&self) -> &str { &self.key_id }
+    fn key_epoch(&self) -> &str { &self.epoch }
+    fn verifying_key(&self) -> &VerifyingKey { &self.verifying_key }
+    fn sign_pae(&self, pre_auth_encoding: &[u8]) -> std::result::Result<[u8; 64], SigningProviderError> {
+        Ok(self.signing_key.sign(pre_auth_encoding).to_bytes())
+    }
+}
+
 pub struct EvidenceStore {
     connection: Connection,
     ledger_id: String,
     checkpoint_key_id: String,
     checkpoint_key_epoch: String,
-    checkpoint_signing_key: SigningKey,
+    checkpoint_signer: Arc<dyn CheckpointSigner>,
     producer_keys: BTreeMap<String, VerifyingKey>,
 }
 
 impl EvidenceStore {
+    /// Compatibility constructor for tests and local development. Production startup
+    /// must call open_with_signer with an external HSM/KMS-backed signer.
     pub fn open(
         path: impl AsRef<Path>,
         ledger_id: impl Into<String>,
@@ -88,10 +108,32 @@ impl EvidenceStore {
         checkpoint_signing_key: SigningKey,
         producer_keys: BTreeMap<String, VerifyingKey>,
     ) -> Result<Self> {
+        let verifying_key = checkpoint_signing_key.verifying_key();
+        let signer = Arc::new(LocalEd25519Signer {
+            key_id: checkpoint_key_id.into(),
+            epoch: checkpoint_key_epoch.into(),
+            signing_key: checkpoint_signing_key,
+            verifying_key,
+        });
+        Self::open_with_signer(path, ledger_id, signer, producer_keys)
+    }
+
+    /// Open the ledger with an abstract signing provider. The daemon never receives
+    /// private-key bytes when using ExternalSignerClient.
+    pub fn open_with_signer(
+        path: impl AsRef<Path>,
+        ledger_id: impl Into<String>,
+        checkpoint_signer: Arc<dyn CheckpointSigner>,
+        producer_keys: BTreeMap<String, VerifyingKey>,
+    ) -> Result<Self> {
         let ledger_id = ledger_id.into();
-        let checkpoint_key_epoch = checkpoint_key_epoch.into();
+        let checkpoint_key_epoch = checkpoint_signer.key_epoch().to_owned();
         if ledger_id.trim().is_empty() {
             return Err(LedgerError::Invariant("ledger id is required".into()));
+        }
+        if checkpoint_signer.key_id().trim().is_empty() ||
+            checkpoint_key_epoch.parse::<u64>().is_err() {
+            return Err(LedgerError::Invariant("checkpoint signer key id/epoch is invalid".into()));
         }
         let connection = Connection::open(path)?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
@@ -176,9 +218,9 @@ impl EvidenceStore {
         let store = Self {
             connection,
             ledger_id,
-            checkpoint_key_id: checkpoint_key_id.into(),
+            checkpoint_key_id: checkpoint_signer.key_id().to_owned(),
             checkpoint_key_epoch,
-            checkpoint_signing_key,
+            checkpoint_signer,
             producer_keys,
         };
         store.verify_meta()?;
@@ -327,9 +369,23 @@ impl EvidenceStore {
             key_epoch: self.checkpoint_key_epoch.clone(),
             issued_at_epoch_ms: now_epoch_ms.to_string(),
         };
-        let checkpoint_envelope = sign_envelope(
-            TREE_HEAD_PAYLOAD_TYPE, &tree_head, &self.checkpoint_key_id, &self.checkpoint_signing_key
-        )?;
+        let checkpoint_payload = canonicalize(&tree_head)?;
+        let pae = dsse_pae(TREE_HEAD_PAYLOAD_TYPE, &checkpoint_payload);
+        let signature = self.checkpoint_signer.sign_pae(&pae)
+            .map_err(|error| LedgerError::Invariant(format!("checkpoint signing failed: {error}")))?;
+        // Verify provider output locally; a misconfigured or compromised adapter cannot
+        // cause an unverifiable checkpoint to be committed.
+        self.checkpoint_signer.verifying_key().verify(
+            &pae, &Signature::from_bytes(&signature)
+        ).map_err(|_| LedgerError::Invariant("checkpoint signer returned an invalid signature".into()))?;
+        let checkpoint_envelope = DsseEnvelopeV1 {
+            payload_type: TREE_HEAD_PAYLOAD_TYPE.to_owned(),
+            payload: BASE64.encode(&checkpoint_payload),
+            signatures: vec![DsseSignatureV1 {
+                keyid: self.checkpoint_key_id.clone(),
+                sig: BASE64.encode(signature),
+            }],
+        };
         let checkpoint_digest = digest_json(&checkpoint_envelope)?;
         tx.execute(
             "INSERT INTO signed_tree_heads(tree_size,root_hash,checkpoint_digest,envelope_json,issued_at_epoch_ms)
