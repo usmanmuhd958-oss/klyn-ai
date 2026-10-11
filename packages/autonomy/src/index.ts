@@ -196,3 +196,5 @@ export class RealTimeContainmentInterceptor {
     return this.ledger.isTerminated();
   }
 }
+
+export * from "./capability.js";
