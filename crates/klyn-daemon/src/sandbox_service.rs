@@ -41,6 +41,8 @@ const PRIVATE_MANIFEST_LIMIT: usize = klyn_sandbox::MAX_BROKER_FRAME_BYTES;
 pub enum SandboxServiceError {
     #[error(transparent)]
     Sandbox(#[from] SandboxError),
+    #[error("sandbox filesystem I/O failed: {0}")]
+    Io(#[from] std::io::Error),
     #[error("candidate transaction is not active or cannot be resolved")]
     CandidateUnavailable,
     #[error("sandbox broker thread could not be started")]
@@ -137,7 +139,7 @@ impl SandboxService {
     ) -> Result<ManagedSandboxedWorker, SandboxServiceError> {
         budget.validate()?;
         let cgroup_id = transaction_id.to_owned();
-        klyn_sandbox::validate_cgroup_id(&cgroup_id)?;
+        let root_id = candidate_root_id(&cgroup_id)?;
 
         let candidate_path = self
             .fs_service
@@ -151,7 +153,6 @@ impl SandboxService {
             .into());
         }
 
-        let root_id = candidate_root_id(transaction_id)?;
         let mut roots = BTreeMap::new();
         roots.insert(root_id.clone(), candidate_path);
 
