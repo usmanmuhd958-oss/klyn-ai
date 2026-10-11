@@ -7,9 +7,9 @@
 use std::{collections::BTreeMap, os::fd::RawFd, path::PathBuf};
 
 use landlock::{
-    make_bitflags, Access, AccessFs, Compatible, CompatLevel, PathBeneath, PathFd,
-    RestrictSelfAttr, RestrictionStatus, Ruleset, RulesetAttr, RulesetCreatedAttr,
-    RulesetStatus, ABI,
+    make_bitflags, Access, AccessFs, CompatLevel, Compatible, PathBeneath, PathFd,
+    RestrictSelfAttr, RestrictionStatus, Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus,
+    ABI,
 };
 use seccompiler::{
     BpfProgram, SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition, SeccompFilter,
