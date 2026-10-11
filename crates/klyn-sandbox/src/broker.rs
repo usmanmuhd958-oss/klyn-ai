@@ -1218,14 +1218,9 @@ fn duplicate_fd(fd: RawFd) -> Result<OwnedFd> {
 
 fn create_staging_memfd() -> Result<File> {
     let name = CString::new("klyn-write-staging").map_err(|e| SandboxError::Protocol(e.to_string()))?;
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    return Err(SandboxError::UnsupportedKernel("memfd_create is not configured for this architecture".into()));
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    {
-        let fd = unsafe { libc::syscall(libc::SYS_memfd_create, name.as_ptr(), MEMFD_CLOEXEC | MFD_ALLOW_SEALING) };
-        if fd < 0 { return Err(io::Error::last_os_error().into()); }
-        Ok(File::from(unsafe { OwnedFd::from_raw_fd(fd as RawFd) }))
-    }
+    let fd = unsafe { libc::syscall(libc::SYS_memfd_create, name.as_ptr(), MEMFD_CLOEXEC | MFD_ALLOW_SEALING) };
+    if fd < 0 { return Err(io::Error::last_os_error().into()); }
+    Ok(File::from(unsafe { OwnedFd::from_raw_fd(fd as RawFd) }))
 }
 
 fn pump_bounded_file_write(
@@ -1260,18 +1255,95 @@ fn pump_bounded_file_write(
         return Err(io::Error::last_os_error().into());
     }
 
+    // Resolve the parent directory with openat2, then commit with renameat2 in that
+    // same directory. This prevents partially-written targets on quota/digest failures.
     let root = root_fd.as_fd();
-    let flags = if operation == "fs.create" {
-        libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL
-    } else {
-        libc::O_WRONLY | libc::O_TRUNC
+    let (parent_path, basename) = split_parent_path(&relative_path);
+    if basename.is_empty() || basename == "." || basename == ".." || basename.contains('/') {
+        return Err(SandboxError::Denied("write target basename is not canonical".into()));
+    }
+    let parent_fd = open_scoped_directory(root, parent_path)?;
+    let target_name = CString::new(basename)
+        .map_err(|_| SandboxError::Denied("write target contains NUL".into()))?;
+
+    if operation == "fs.write" {
+        let existing = unsafe {
+            libc::openat(
+                parent_fd.as_raw_fd(),
+                target_name.as_ptr(),
+                0x200000 | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            )
+        };
+        if existing < 0 { return Err(io::Error::last_os_error().into()); }
+        let existing_fd = unsafe { OwnedFd::from_raw_fd(existing) };
+        let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+        if unsafe { libc::fstat(existing_fd.as_raw_fd(), stat.as_mut_ptr()) } != 0 {
+            return Err(io::Error::last_os_error().into());
+        }
+        let stat = unsafe { stat.assume_init() };
+        if (stat.st_mode & libc::S_IFMT) != libc::S_IFREG {
+            return Err(SandboxError::Denied("fs.write may replace only an existing regular file".into()));
+        }
+    } else if operation != "fs.create" {
+        return Err(SandboxError::Denied("unsupported staged filesystem mutation".into()));
+    }
+
+    let mut random = [0u8; 16];
+    let random_count = unsafe {
+        libc::syscall(libc::SYS_getrandom, random.as_mut_ptr(), random.len(), 0u32)
     };
-    let target_fd = open_beneath(root, &relative_path, flags, 0o600)?;
-    let mut target = File::from(target_fd);
-    io::copy(&mut staging, &mut target)?;
-    target.flush()?;
-    target.sync_data()?;
-    Ok(())
+    if random_count != random.len() as isize {
+        return Err(SandboxError::UnsupportedKernel("secure temporary-name entropy unavailable".into()));
+    }
+    let temporary_name = CString::new(format!(".klyn-write-{}", hex::encode(random)))
+        .map_err(|e| SandboxError::Protocol(e.to_string()))?;
+
+    let mut temporary_exists = false;
+    let commit_result = (|| -> Result<()> {
+        let temporary_fd = unsafe {
+            libc::openat(
+                parent_fd.as_raw_fd(),
+                temporary_name.as_ptr(),
+                libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+                0o600,
+            )
+        };
+        if temporary_fd < 0 { return Err(io::Error::last_os_error().into()); }
+        temporary_exists = true;
+        let mut temporary = unsafe { File::from_raw_fd(temporary_fd) };
+        io::copy(&mut staging, &mut temporary)?;
+        temporary.flush()?;
+        temporary.sync_all()?;
+        drop(temporary);
+
+        // RENAME_NOREPLACE makes fs.create atomic without overwriting an existing name.
+        // fs.write atomically replaces one existing regular file after its staged payload
+        // and digest have been fully verified. There is deliberately no unsafe fallback.
+        let rename_flags: u32 = if operation == "fs.create" { 1 } else { 0 };
+        let renamed = unsafe {
+            libc::syscall(
+                libc::SYS_renameat2,
+                parent_fd.as_raw_fd(),
+                temporary_name.as_ptr(),
+                parent_fd.as_raw_fd(),
+                target_name.as_ptr(),
+                rename_flags,
+            )
+        };
+        if renamed != 0 { return Err(io::Error::last_os_error().into()); }
+        temporary_exists = false;
+        if unsafe { libc::fsync(parent_fd.as_raw_fd()) } != 0 {
+            return Err(SandboxError::Io(io::Error::new(
+                io::ErrorKind::Other,
+                "atomic rename committed but parent-directory fsync failed; durability is uncertain",
+            )));
+        }
+        Ok(())
+    })();
+    if temporary_exists {
+        unsafe { libc::unlinkat(parent_fd.as_raw_fd(), temporary_name.as_ptr(), 0); }
+    }
+    commit_result
 }
 
 fn memfd_snapshot(bytes: &[u8]) -> Result<OwnedFd> {
