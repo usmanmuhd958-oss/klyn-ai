@@ -496,6 +496,7 @@ pub struct SandboxManifest {
     pub capability: SignedCapability,
     pub roots: std::collections::BTreeMap<String, PathBuf>,
     pub broker_socket: PathBuf,
+    pub broker_uid: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -581,9 +582,13 @@ impl SandboxLauncher {
         // broker socket's parent directory is protected from untrusted writes,
         // while per-request SO_PEERCRED and capability verification authorize it.
         let socket_meta = fs::symlink_metadata(&self.config.broker_socket)?;
-        if !socket_meta.file_type().is_socket() || socket_meta.mode() & 0o777 != 0o666 {
+        let daemon_uid = unsafe { libc::geteuid() };
+        if !socket_meta.file_type().is_socket()
+            || socket_meta.mode() & 0o777 != 0o666
+            || (socket_meta.uid() != 0 && socket_meta.uid() != daemon_uid)
+        {
             return Err(SandboxError::InvalidConfig(
-                "broker endpoint must be a Unix socket with exact mode 0666 in a trusted directory".into(),
+                "broker endpoint must be a trusted Unix socket with exact mode 0666".into(),
             ));
         }
 
@@ -592,6 +597,7 @@ impl SandboxLauncher {
             capability: capability.clone(),
             roots: self.config.roots.clone(),
             broker_socket: self.config.broker_socket.clone(),
+            broker_uid: socket_meta.uid(),
         };
         let mut manifest_file = create_sealed_manifest(&manifest)?;
         manifest_file.seek(SeekFrom::Start(0))?;
@@ -786,8 +792,10 @@ pub fn read_sealed_manifest(fd: RawFd) -> Result<SandboxManifest, SandboxError> 
 /// On any error the caller must terminate the process immediately.
 pub fn bootstrap_worker() -> Result<broker::BrokerClient, SandboxError> {
     let manifest = read_sealed_manifest(MANIFEST_FD)?;
-    let client = broker::BrokerClient::connect_reserved(&manifest.broker_socket)
-        .map_err(|e| SandboxError::Enforcement(format!("broker connection failed: {e}")))?;
+    let client = broker::BrokerClient::connect_verified_reserved(
+        &manifest.broker_socket,
+        manifest.broker_uid,
+    ).map_err(|e| SandboxError::Enforcement(format!("broker connection or peer verification failed: {e}")))?;
     if unsafe { libc::close(MANIFEST_FD) } != 0 {
         return Err(SandboxError::Enforcement(format!(
             "closing manifest FD failed: {}",
