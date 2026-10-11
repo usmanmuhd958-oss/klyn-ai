@@ -190,7 +190,7 @@ fn dispatch(request: &RpcRequestV1, token: &[u8], store: &Arc<Mutex<EvidenceStor
             }
         }
         "witness.receipts.submit" => {
-            let params: SubmitWitnessReceiptsParamsV1 = match serde_json::from_value(request.params.clone()) {
+            let params: SubmitWitnessReceiptsParamsV1 = match serde_json::from_value::<SubmitWitnessReceiptsParamsV1>(request.params.clone()) {
                 Ok(params) if (2..=3).contains(&params.threshold) && params.signatures.len() <= 3 => params,
                 _ => return response_error(&request.id, "invalid_params", "witness receipt submission requires checkpointEnvelope, up to three signatures, and threshold 2 or 3"),
             };
