@@ -1,0 +1,39 @@
+name: KLYN Rust Sandbox and Worker Bootstrap
+
+on:
+  push:
+    branches:
+      - feat/step3-worker-bootstrap
+  pull_request:
+    branches:
+      - main
+      - master
+      - feat/klyn-step2-transactional-fs
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - crates/klyn-sandbox/**
+      - .github/workflows/klyn-rust-step3.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: klyn-rust-step3-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format workspace
+        run: cargo fmt --all -- --check
+      - name: Sandbox unit and integration tests
+        run: cargo test --locked -p klyn-sandbox
+      - name: Sandbox Clippy
+        run: cargo clippy --locked -p klyn-sandbox --all-targets -- -D warnings
