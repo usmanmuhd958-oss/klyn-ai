@@ -11,7 +11,7 @@ import {
   rmSync,
 } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { createServer, type Server } from 'node:net';
+import { createServer, type Server, type Socket } from 'node:net';
 
 const PROTOCOL_VERSION = 1;
 const MAX_FRAME_BYTES = 64 * 1024;
