@@ -1423,6 +1423,7 @@ export class CapabilityInvocationPipelineV1 implements CapabilityInvocationPipel
         invocationId: request.invocationId,
         requestDigest,
         policyDigest: request.token.payload.policyDigest,
+        preExecutionAttestation: attestation,
         outcome: "allowed",
         reasonCode: "pre_execution_attestation_verified",
         details: Object.freeze({
