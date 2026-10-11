@@ -227,7 +227,6 @@ export class WitnessNetworkWorker {
       requestCert: true,
       rejectUnauthorized: true,
       minVersion: 'TLSv1.2',
-      maxConnections: this.maxConcurrentRequests,
     }, (request, response) => {
       if (this.activeRequests >= this.maxConcurrentRequests) {
         sendJson(response, 503, { error: 'capacity_exhausted' });
@@ -241,6 +240,7 @@ export class WitnessNetworkWorker {
         this.activeRequests = Math.max(0, this.activeRequests - 1);
       });
     });
+    server.maxConnections = this.maxConcurrentRequests;
     this.server = server;
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject);
