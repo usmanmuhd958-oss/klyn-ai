@@ -152,6 +152,10 @@ export class CapabilityKelEvidenceSink implements CapabilityEvidenceSink {
     if (!/^(0|[1-9][0-9]*)$/.test(sequenceInRun)) {
       throw new TypeError("KEL sequence allocator must return a canonical decimal integer string");
     }
+    const resolvedPolicyDigest = asKelDigest(context.policyDigest, "context.policyDigest");
+    if (resolvedPolicyDigest !== "sha256:" + event.policyDigest) {
+      throw new TypeError("KEL policy context digest must match the signed capability policyDigest claim");
+    }
 
     const status = kelStatus(event);
     const statement: EvidenceStatementV1 = Object.freeze({
@@ -165,7 +169,7 @@ export class CapabilityKelEvidenceSink implements CapabilityEvidenceSink {
       context: Object.freeze({
         intentDigest: asKelDigest(context.intentDigest, "context.intentDigest"),
         planDigest: asKelDigest(context.planDigest, "context.planDigest"),
-        policyDigest: asKelDigest(context.policyDigest, "context.policyDigest"),
+        policyDigest: resolvedPolicyDigest,
         sourceTreeDigest: asKelDigest(context.sourceTreeDigest, "context.sourceTreeDigest"),
         runtimeImageDigest: asKelDigest(context.runtimeImageDigest, "context.runtimeImageDigest"),
       }),
