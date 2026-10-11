@@ -629,16 +629,15 @@ impl EvidenceStore {
             return Err(LedgerError::Invariant("checkpoint metadata does not match active ledger key".into()));
         }
         let checkpoint_digest = digest_json(checkpoint_envelope)?;
-        let stored: Option<(i64, String, String)> = self.connection.query_row(
-            "SELECT tree_size, root_hash, ledger_id FROM signed_tree_heads WHERE checkpoint_digest=?1",
+        let stored: Option<(i64, String)> = self.connection.query_row(
+            "SELECT tree_size, root_hash FROM signed_tree_heads WHERE checkpoint_digest=?1",
             params![checkpoint_digest],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         ).optional()?;
-        let (stored_size, stored_root, stored_ledger) = stored
+        let (stored_size, stored_root) = stored
             .ok_or_else(|| LedgerError::Invariant("witness checkpoint is not a committed signed tree head".into()))?;
         if stored_size.to_string() != tree_head.tree_size ||
-            format!("sha256:{stored_root}") != tree_head.root_hash ||
-            stored_ledger != tree_head.ledger_id {
+            format!("sha256:{stored_root}") != tree_head.root_hash {
             return Err(LedgerError::Invariant("witness checkpoint does not match persisted tree head".into()));
         }
 
