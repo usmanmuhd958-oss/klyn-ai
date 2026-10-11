@@ -8,6 +8,7 @@ on:
       - "docs/**"
       - "crates/klyn-evidence/**"
       - "crates/klyn-daemon/**"
+      - "crates/klyn-sandbox/**"
       - "packages/governance/**"
       - "packages/autonomy/**"
       - ".github/workflows/kel-v1.yml"
@@ -32,8 +33,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Test KEL protocol and daemon storage
-        run: cargo test --locked -p klyn-evidence -p klyn-daemon
+      - name: Test KEL, sandbox kernel policies and daemon storage
+        run: cargo test --locked -p klyn-evidence -p klyn-daemon -p klyn-sandbox
 
   typescript-kel:
     runs-on: ubuntu-latest
