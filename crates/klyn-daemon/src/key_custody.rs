@@ -8,8 +8,9 @@ use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     fs,
+    fs::OpenOptions,
     io::{self, Read, Write},
-    os::unix::fs::PermissionsExt,
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     os::unix::net::UnixStream,
     path::{Path, PathBuf},
     time::Duration,
@@ -136,14 +137,28 @@ impl ExternalSignerClient {
 
     /// Load a signer auth token from a protected file (mode 0600 or stricter).
     pub fn token_from_file(path: impl AsRef<Path>) -> SigningResult<String> {
-        let metadata = fs::symlink_metadata(path.as_ref())?;
-        if metadata.file_type().is_symlink() || !metadata.is_file() ||
-            metadata.permissions().mode() & 0o077 != 0 {
+        let path = path.as_ref();
+        let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        let parent_metadata = fs::symlink_metadata(parent)?;
+        if parent_metadata.file_type().is_symlink() || !parent_metadata.is_dir() ||
+            parent_metadata.permissions().mode() & 0o077 != 0 {
+            return Err(SigningProviderError::Protocol(
+                "signer token parent directory must be private (mode 0700 or stricter)".into(),
+            ));
+        }
+        // O_NOFOLLOW closes the lstat/read TOCTOU window: a symlink replacement must fail.
+        let mut file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(path)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() || metadata.permissions().mode() & 0o077 != 0 {
             return Err(SigningProviderError::Protocol(
                 "signer token must be a regular file with permissions 0600 or stricter".into(),
             ));
         }
-        let token = fs::read_to_string(path)?;
+        let mut token = String::new();
+        file.read_to_string(&mut token)?;
         let token = token.trim().to_owned();
         if token.len() != 64 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Err(SigningProviderError::Protocol("invalid signer token file content".into()));
