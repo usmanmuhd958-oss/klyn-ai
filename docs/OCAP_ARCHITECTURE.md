@@ -42,30 +42,36 @@ The protocol follows deny-by-default rules:
    deployments. Failed admission consumes quota unless an audited policy explicitly
    refunds the reservation.
 6. A runtime collector signs a *pre-execution authorization attestation* after policy
-   checks and sandbox preparation and before dispatch. That attestation proves the
-   runtime approved a specific token digest, request digest, sandbox profile, and
-   quota reservation; it does not assert that the operation later succeeded.
-7. The signed decision and its scope/policy/token digests are appended to KEL before
-   untrusted execution begins. Completion/failure is a distinct later event. If KEL
-   append, attestation verification, revocation lookup, quota reservation, or sandbox
-   installation fails, execution must not begin.
+   checks and sandbox preparation and before dispatch. Its Ed25519 key ID must resolve
+   to a trusted collector principal. The signed payload binds token/request/scope/policy
+   digests, runtime audience, sandbox profile, mission and quota reservation; it does
+   not assert that the operation later succeeded.
+7. KEL receives the canonical DSSE EvidenceStatementV1 authorization record **including
+   the full signed attestation**, not just its digest. Completion/failure is a distinct
+   later event. Revocation is checked before quota admission and immediately before
+   dispatch. If KEL append/verification, attestation verification, revocation lookup,
+   quota reservation, or sandbox installation fails, execution must not begin.
 
 ## Capability scope model
 
 Each `CapabilityScope` represents one resource kind and one broker handle:
 
 - **Filesystem** — a root handle plus canonical relative subtree, explicit
-  read/list/metadata/write/create/delete operations and a byte ceiling. The native
-  broker must resolve paths beneath an already-opened root (for example, using
+  read/list/metadata/write/create/delete operations and a byte ceiling. Requests carry
+  an exact relative path and a byte ceiling no greater than the scope; writes/creates
+  bind a content digest. Unknown selector fields are rejected. The native broker must
+  resolve paths beneath an already-opened root (for example, using
   `openat2` with beneath/no-magic-link constraints on Linux), reject symlink and
   TOCTOU escapes, and apply the policy to every open and mutation.
-- **Network** — explicit hosts and port ranges; there is no wildcard or implicit
-  internet capability. The network broker should resolve and pin allowed addresses,
+- **Network** — explicit normalized hosts, port ranges and request byte ceilings;
+  sends bind a payload digest. There is no wildcard or implicit internet capability.
+  The network broker should resolve and pin allowed addresses,
   enforce redirect policy, reject DNS rebinding to forbidden ranges, and block
   loopback/link-local/cloud metadata endpoints unless separately granted.
 - **Process** — executable content digests, non-empty argv prefixes, named
   environment keys and a process ceiling. Spawn uses an approved absolute binary
-  handle, never a shell string; environment values are broker-generated/validated,
+  handle, never a shell string; signal operations accept only an explicit allowlist.
+  Environment values are broker-generated/validated,
   and namespace/cgroup/seccomp controls remain mandatory.
 - **Memory** — explicit registered region IDs and read/write operations, with
   maximum bytes per invocation. Region IDs must be resolved by the runtime and
@@ -115,16 +121,21 @@ the signed parent-digest chain or maintaining a durable descendant index.
 
 The production pipeline order is normative:
 
-`verify token signature -> check subject/audience/time -> check token/ancestor
-revocation -> atomically reserve total/concurrent quota -> match exact scope and
-requested operation -> prepare sandbox -> collector signs pre-execution attestation
--> append KEL authorization evidence -> revalidate sandbox lease -> dispatch isolated
-worker -> enforce runtime/cpu/memory/network/output limits -> append completion or
-failure evidence -> finalize reservation`.
+`verify token signature/issuer -> check subject/audience/mission/time -> check token
+and ancestor revocation -> atomically reserve total/concurrent quota -> validate the
+canonical request digest and exact resource selector -> intersect requested budget
+with granted budget -> prepare sandbox -> collector signs a principal-bound pre-execution
+attestation -> append the full signed attestation in KEL -> revalidate sandbox lease
+and recheck revocation -> dispatch the runtime-configured isolated worker -> enforce
+runtime/CPU/memory/network/output/process ceilings -> append completion/failure evidence
+-> finalize the reservation`.
 
 The execution worker receives only a mediated broker context and the minimum
-capability it needs. The authority process must never pass its signing key, unrestricted
-filesystem/network clients, ambient credentials, or raw OS handles to the agent.
+capability it needs. The executor is configured by the trusted runtime at startup;
+invocation callers cannot inject an arbitrary callback. The authority process must
+never pass its signing key, unrestricted filesystem/network clients, ambient credentials,
+or raw OS handles to the agent. Requested per-invocation limits can only reduce the
+grant; the OS sandbox and metering backends must enforce actual measured use.
 
 ## Required deployment adapters
 
