@@ -1,4 +1,4 @@
-import { appendFileSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { appendFileSync, chmodSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
@@ -190,17 +190,34 @@ export class SqliteAuditStorageAdapter implements AuditStorageAdapter {
       );
     }
     if (!path.trim()) throw new Error("SQLite audit path is required");
-    mkdirSync(dirname(resolve(path)), { recursive: true });
+    const databasePath = resolve(path);
+    const parentPath = dirname(databasePath);
+    mkdirSync(parentPath, { recursive: true, mode: 0o700 });
+    const parentMetadata = lstatSync(parentPath);
+    if (parentMetadata.isSymbolicLink() || !parentMetadata.isDirectory() ||
+        (parentMetadata.mode & 0o077) !== 0) {
+      throw new Error("SQLite audit parent directory must be private (mode 0700 or stricter)");
+    }
+    try {
+      const existing = lstatSync(databasePath);
+      if (existing.isSymbolicLink() || !existing.isFile()) {
+        throw new Error("SQLite audit database path must be a regular file, not a symlink");
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
 
     const busyTimeoutMs = options.busyTimeoutMs ?? 5_000;
     if (!Number.isInteger(busyTimeoutMs) || busyTimeoutMs < 0) {
       throw new RangeError("busyTimeoutMs must be a non-negative integer");
     }
 
-    this.database = new DatabaseSync(resolve(path), {
+    this.database = new DatabaseSync(databasePath, {
       timeout: busyTimeoutMs,
       enableForeignKeyConstraints: true,
     });
+    // The database and derived WAL/SHM files are private to the service account.
+    chmodSync(databasePath, 0o600);
     this.database.exec("PRAGMA journal_mode=WAL;");
     this.database.exec("PRAGMA synchronous=FULL;");
     this.database.exec(`
