@@ -3,12 +3,10 @@
 use std::{
     fs,
     io::{self, BufReader},
-    os::{
-        unix::{
-            ffi::OsStrExt,
-            fs::{FileTypeExt, MetadataExt, PermissionsExt},
-            net::{UnixListener, UnixStream},
-        },
+    os::unix::{
+        ffi::OsStrExt,
+        fs::{FileTypeExt, MetadataExt, PermissionsExt},
+        net::{UnixListener, UnixStream},
     },
     path::{Path, PathBuf},
     sync::{
