@@ -167,7 +167,7 @@ pub fn query_landlock_abi() -> Result<i32> {
 /// or magic links. The returned O_PATH descriptor is safe to use as a Landlock rule anchor.
 pub fn open_scoped_directory(root: BorrowedFd<'_>, relative_path: &str) -> Result<OwnedFd> {
     if relative_path.starts_with('/') || relative_path.contains('\0') ||
-        relative_path.split('/').any(|part| part == ".." || part == ".") {
+        relative_path.split('/').any(|part| part == ".." || (part == "." && relative_path != ".")) {
         return Err(SandboxError::Denied("subtree path is not canonical relative syntax".into()));
     }
     let path = if relative_path.is_empty() { "." } else { relative_path };
