@@ -362,6 +362,15 @@ test("invocation appends a verified runtime attestation to KEL before dispatch",
         throw new Error("broker must not be used by this read-only executor fixture");
       },
     },
+    executor: {
+      async execute(context) {
+        assert.equal(context.authorizationEvidence.evidenceId, "evidence-1");
+        assert.equal(context.preExecutionAttestation.payload.schema, CAPABILITY_ATTESTATION_SCHEMA);
+        assert.equal(context.scope.kind, "filesystem");
+        order.push("executor-dispatched");
+        return "read-result";
+      },
+    },
     now: () => 2000,
     makeId: (() => {
       let n = 0;
@@ -369,15 +378,7 @@ test("invocation appends a verified runtime attestation to KEL before dispatch",
     })(),
   });
 
-  const result = await pipeline.invoke(request, {
-    async execute(context) {
-      assert.equal(context.authorizationEvidence.evidenceId, "evidence-1");
-      assert.equal(context.preExecutionAttestation.payload.schema, CAPABILITY_ATTESTATION_SCHEMA);
-      assert.equal(context.scope.kind, "filesystem");
-      order.push("executor-dispatched");
-      return "read-result";
-    },
-  });
+  const result = await pipeline.invoke(request);
 
   assert.equal(result, "read-result");
   assert.equal(finishedOutcome, "completed");
@@ -436,14 +437,15 @@ test("invocation rejects a bad request digest before sandbox setup or execution"
     },
     evidence: new TestEvidenceSink(),
     broker: { async perform() { throw new Error("unused broker fixture"); } },
+    executor: {
+      async execute() {
+        executorCalled = true;
+        return "not-run";
+      },
+    },
     now: () => 2000,
   });
-  await assert.rejects(pipeline.invoke(request, {
-    async execute() {
-      executorCalled = true;
-      return "not-run";
-    },
-  }), /request digest does not match/);
+  await assert.rejects(pipeline.invoke(request), /request digest does not match/);
   assert.equal(sandboxPrepareCalled, false);
   assert.equal(executorCalled, false);
 });
