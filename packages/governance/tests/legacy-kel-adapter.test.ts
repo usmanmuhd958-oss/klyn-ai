@@ -1,8 +1,11 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import test from 'node:test';
 import { AuditLedger } from '../src/audit.js';
-import { InMemoryAuditStorageAdapter } from '../src/audit-storage.js';
+import { InMemoryAuditStorageAdapter, SqliteAuditStorageAdapter } from '../src/audit-storage.js';
 import {
   KEL_EVIDENCE_PAYLOAD_TYPE,
   verifyDsseEnvelope,
@@ -83,4 +86,104 @@ test('legacy AuditLedger records can be signed and submitted without changing le
   assert.equal(statement.outcome.status, 'pass');
   assert.equal(statement.extensions.legacySystem, 'AuditLedger');
   assert.equal(statement.extensions.legacyRecordHash, result.record.hash);
+});
+
+test('SQLite outbox commits atomically with legacy audit and replays after transport failure', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'kel-legacy-outbox-'));
+  const databasePath = join(directory, 'governance.sqlite3');
+  const pair = generateKeyPairSync('ed25519');
+  let failOnce = true;
+  const transport = {
+    appendEvidence: async (envelope: DsseEnvelopeV1): Promise<KelAppendReceiptV1> => {
+      if (failOnce) {
+        failOnce = false;
+        throw new Error('simulated daemon outage');
+      }
+      const statement = verifyDsseEnvelope(
+        envelope,
+        KEL_EVIDENCE_PAYLOAD_TYPE,
+        new Map([['durable-producer', pair.publicKey]]),
+      ) as unknown as EvidenceStatementV1;
+      return receipt(statement.evidenceId, envelope);
+    },
+  };
+  const event: AuditEvent = {
+    kind: 'authorization',
+    requestId: 'outbox-req-1',
+    principalId: 'agent-1',
+    toolName: 'git',
+    operation: 'read',
+    decision: 'allowed',
+    reason: 'granted',
+    timestampEpochMs: 1234,
+  };
+
+  try {
+    const firstStorage = new SqliteAuditStorageAdapter(databasePath);
+    const firstAudit = new AuditLedger(firstStorage);
+    const adapter = new LegacyGovernanceKelAdapter(firstAudit, {} as ArtifactAttestor, {
+      ledgerId: 'legacy-ledger',
+      producerId: 'legacy-control-plane',
+      producerKeyId: 'durable-producer',
+      producerPrivateKey: pair.privateKey,
+      transport,
+      now: () => 1234,
+    });
+    const queued = await adapter.appendAudit(event);
+    assert.equal(queued.queued, true);
+    assert.equal(queued.receipt, null);
+    assert.equal(firstAudit.length(), 1);
+    assert.equal(firstAudit.pendingOutbox(10).length, 1);
+    firstAudit.close();
+
+    const restartedStorage = new SqliteAuditStorageAdapter(databasePath);
+    const restartedAudit = new AuditLedger(restartedStorage);
+    assert.equal(restartedAudit.length(), 1);
+    const restartedAdapter = new LegacyGovernanceKelAdapter(restartedAudit, {} as ArtifactAttestor, {
+      ledgerId: 'legacy-ledger',
+      producerId: 'legacy-control-plane',
+      producerKeyId: 'durable-producer',
+      producerPrivateKey: pair.privateKey,
+      transport,
+      now: () => 1235,
+    });
+    const drained = await restartedAdapter.drainOutbox();
+    assert.equal(drained.delivered, 1);
+    assert.equal(drained.stillPending, 0);
+    assert.equal(restartedAudit.pendingOutbox(10).length, 0);
+    restartedAudit.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('failed outbox insert rolls back the associated SQLite audit record', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'kel-outbox-atomicity-'));
+  const databasePath = join(directory, 'atomic.sqlite3');
+  const storage = new SqliteAuditStorageAdapter(databasePath);
+  const audit = new AuditLedger(storage);
+  const event: AuditEvent = {
+    kind: 'authorization',
+    requestId: 'atomic-req',
+    principalId: 'agent-1',
+    toolName: 'git',
+    operation: 'read',
+    decision: 'allowed',
+    reason: 'granted',
+    timestampEpochMs: 99,
+  };
+  const outbox = { eventId: 'unique-outbox-event', payloadJson: JSON.stringify({ evidence: [] }), createdAtEpochMs: '99' };
+  try {
+    audit.appendWithOutbox(event, () => outbox);
+    assert.throws(() => audit.appendWithOutbox(event, () => outbox));
+    assert.equal(audit.length(), 1);
+    assert.equal(audit.pendingOutbox(10).length, 1);
+    audit.close();
+    const reopenedStorage = new SqliteAuditStorageAdapter(databasePath);
+    const reopenedAudit = new AuditLedger(reopenedStorage);
+    assert.equal(reopenedAudit.length(), 1, 'second audit write must roll back with duplicate outbox key');
+    reopenedAudit.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
