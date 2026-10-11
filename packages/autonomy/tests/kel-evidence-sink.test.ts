@@ -24,7 +24,7 @@ const producerKeys = new Map([[producerKeyId, publicKey]]);
 const trustedContext = {
   intentDigest: "sha256:" + "1".repeat(64),
   planDigest: "sha256:" + "2".repeat(64),
-  policyDigest: "sha256:" + "3".repeat(64),
+  policyDigest: "sha256:" + "f".repeat(64),
   sourceTreeDigest: "sha256:" + "4".repeat(64),
   runtimeImageDigest: "sha256:" + "5".repeat(64),
 };
