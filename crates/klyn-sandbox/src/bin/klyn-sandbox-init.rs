@@ -153,12 +153,13 @@ fn run() -> Result<(), String> {
     process.env("PATH", "/usr/bin:/bin");
     process.env("LANG", "C");
     let error = unsafe { process.pre_exec(|| {
-        // Keep FD 4 for the trusted worker bootstrap to read the sealed
-        // manifest, but remove ambient descriptors from this exec boundary.
-        for fd in 3..1024 {
-            if fd != MANIFEST_FD {
-                libc::close(fd);
-            }
+        // Keep only the sealed manifest at FD 4. close_range avoids the
+        // descriptor-leak bug inherent in loops with an arbitrary upper bound.
+        if libc::syscall(libc::SYS_close_range, 3u32, 3u32, 0u32) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if libc::syscall(libc::SYS_close_range, 5u32, u32::MAX, 0u32) != 0 {
+            return Err(std::io::Error::last_os_error());
         }
         Ok(())
     }) }.exec();
