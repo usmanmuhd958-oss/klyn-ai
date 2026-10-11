@@ -21,6 +21,8 @@ export type CapabilityOperation =
   | "memory.read" | "memory.write"
   | "ipc.send" | "ipc.receive";
 
+export type CapabilitySelectorValue = string | number | boolean | null | readonly string[];
+
 export interface CapabilityScopeBase<K extends CapabilityResourceKind, O extends CapabilityOperation> {
   readonly kind: K;
   /** Random broker handle ID, never a raw OS handle or ambient resource name. */
@@ -221,7 +223,8 @@ export type CapabilityEvidenceKind =
   | "capability-revoked"
   | "capability-invocation-authorized"
   | "capability-invocation-rejected"
-  | "capability-invocation-completed";
+  | "capability-invocation-completed"
+  | "capability-invocation-failed";
 
 export interface CapabilityEvidenceEvent {
   readonly schema: typeof CAPABILITY_EVIDENCE_SCHEMA;
@@ -237,7 +240,7 @@ export interface CapabilityEvidenceEvent {
   readonly invocationId: string | null;
   readonly requestDigest: string | null;
   readonly policyDigest: string;
-  readonly outcome: "allowed" | "denied" | "completed" | "revoked";
+  readonly outcome: "allowed" | "denied" | "completed" | "failed" | "revoked";
   readonly reasonCode: string;
   readonly details: Readonly<Record<string, string | number | boolean | null>>;
 }
@@ -297,7 +300,7 @@ export interface CapabilityResourceRequest {
   /** Canonical digest of arguments; secret values are not copied into KEL evidence. */
   readonly requestDigest: string;
   /** The broker resolves this against the signed scope; a caller-supplied path is never trusted alone. */
-  readonly resourceSelector: Readonly<Record<string, string | number | boolean | null>>;
+  readonly resourceSelector: Readonly<Record<string, CapabilitySelectorValue>>;
   readonly requestedBudgets: Partial<CapabilityBudget>;
 }
 
@@ -567,6 +570,11 @@ export interface PreExecutionAttestationExpectation {
   readonly tokenDigest?: string;
   readonly requestDigest?: string;
   readonly runtimeInstanceId?: string;
+  readonly missionId?: string;
+  readonly scopeDigest?: string;
+  readonly policyDigest?: string;
+  readonly sandboxProfileDigest?: string;
+  readonly reservationId?: string;
 }
 
 export function verifyPreExecutionAttestation(
@@ -622,7 +630,12 @@ export function verifyPreExecutionAttestation(
   if ((expectation.invocationId && expectation.invocationId !== payload.invocationId) ||
       (expectation.tokenDigest && expectation.tokenDigest !== payload.tokenDigest) ||
       (expectation.requestDigest && expectation.requestDigest !== payload.requestDigest) ||
-      (expectation.runtimeInstanceId && expectation.runtimeInstanceId !== payload.runtimeInstanceId)) {
+      (expectation.runtimeInstanceId && expectation.runtimeInstanceId !== payload.runtimeInstanceId) ||
+      (expectation.missionId && expectation.missionId !== payload.missionId) ||
+      (expectation.scopeDigest && expectation.scopeDigest !== payload.scopeDigest) ||
+      (expectation.policyDigest && expectation.policyDigest !== payload.policyDigest) ||
+      (expectation.sandboxProfileDigest && expectation.sandboxProfileDigest !== payload.sandboxProfileDigest) ||
+      (expectation.reservationId && expectation.reservationId !== payload.reservationId)) {
     throw new CapabilitySecurityError("attestation_binding_mismatch", "runtime attestation does not bind the expected invocation");
   }
 }
