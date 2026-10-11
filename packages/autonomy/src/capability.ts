@@ -906,6 +906,9 @@ export class AttenuatedCapabilityBuilderV1 implements AttenuatedCapabilityBuilde
       throw new CapabilitySecurityError("capability_revoked", "parent capability or an ancestor has been revoked");
     }
     const parent = this.parent.payload;
+    if (rule.missionId !== parent.missionId) {
+      throw new CapabilitySecurityError("mission_mismatch", "delegated capability cannot change mission");
+    }
     if (this.signer.keyId !== this.parent.signature.keyId ||
         this.signer.principalId !== parent.issuerPrincipalId) {
       throw new CapabilitySecurityError("delegation_signer_mismatch", "attenuation must use the trusted signer bound to the parent issuer");
