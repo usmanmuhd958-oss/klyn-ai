@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync, sign } from "node:crypto";
 import test from "node:test";
 import {
   AttenuatedCapabilityBuilderV1,
