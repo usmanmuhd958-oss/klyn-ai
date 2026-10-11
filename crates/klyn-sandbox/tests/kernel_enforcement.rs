@@ -125,6 +125,29 @@ unsafe fn run_kernel_probe() -> i32 {
         return 34;
     }
 
+    // Creating or joining additional namespaces is an escape attempt and
+    // must be rejected by default-deny seccomp.
+    let unshare_rc = libc::unshare(libc::CLONE_NEWUSER);
+    if unshare_rc != -1 || *libc::__errno_location() != libc::EPERM {
+        return 35;
+    }
+
+    // Mount and ptrace are likewise unavailable after isolation is active.
+    let mount_target = match CString::new("/tmp") {
+        Ok(value) => value,
+        Err(_) => return 36,
+    };
+    let mount_rc = libc::mount(
+        std::ptr::null(),
+        mount_target.as_ptr(),
+        std::ptr::null(),
+        0,
+        std::ptr::null(),
+    );
+    if mount_rc != -1 || *libc::__errno_location() != libc::EPERM {
+        return 37;
+    }
+
     // Process execution is unavailable after the worker filter is active.
     let shell = match CString::new("/bin/sh") {
         Ok(value) => value,
