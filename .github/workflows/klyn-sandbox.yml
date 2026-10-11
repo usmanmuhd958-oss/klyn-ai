@@ -1,0 +1,53 @@
+name: klyn-sandbox
+
+on:
+  push:
+    branches:
+      - main
+      - "feat/**"
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - crates/klyn-sandbox/**
+      - .github/workflows/klyn-sandbox.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - crates/klyn-sandbox/**
+      - .github/workflows/klyn-sandbox.yml
+
+permissions:
+  contents: read
+
+jobs:
+  linux-kernel-enforcement:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format sandbox crate
+        run: cargo fmt --manifest-path crates/klyn-sandbox/Cargo.toml -- --check
+      - name: Test sandbox primitives and kernel boundaries
+        run: cargo test -p klyn-sandbox
+      - name: Lint sandbox crate
+        run: cargo clippy -p klyn-sandbox --all-targets
+  cross-check-aarch64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install stable Rust and aarch64 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+      - name: Cross-check aarch64 compilation
+        run: cargo check -p klyn-sandbox --target aarch64-unknown-linux-gnu
