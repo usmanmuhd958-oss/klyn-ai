@@ -198,3 +198,4 @@ export class RealTimeContainmentInterceptor {
 }
 
 export * from "./capability.js";
+export * from "./kel-evidence-sink.js";
