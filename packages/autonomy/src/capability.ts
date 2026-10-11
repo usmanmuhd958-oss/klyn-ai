@@ -727,14 +727,8 @@ export function validateCapabilityScope(scope: CapabilityScope): void {
       break;
     case "network":
       assertUniqueStrings(scope.hosts, "scope.hosts", false);
-      for (const host of scope.hosts) {
-        const labels = host.split(".");
-        const validDnsName = host.length <= 253 && labels.every((label) =>
-          label.length >= 1 && label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label));
-        if (host !== host.toLowerCase() || host.endsWith(".") ||
-            (isIP(host) === 0 && !validDnsName)) {
-          throw new CapabilitySecurityError("scope_invalid", "network hosts must be normalized exact DNS names or IP literals");
-        }
+      if (scope.hosts.some((host) => !isCanonicalNetworkHost(host))) {
+        throw new CapabilitySecurityError("scope_invalid", "network hosts must be normalized exact DNS names or IP literals");
       }
       if (!Array.isArray(scope.ports) || scope.ports.length === 0) throw new CapabilitySecurityError("scope_invalid", "network ports must be explicit");
       for (const range of scope.ports) {
@@ -774,6 +768,15 @@ export function validateCapabilityScope(scope: CapabilityScope): void {
       throw new CapabilitySecurityError("scope_invalid", "unsupported scope: " + String(exhaustive));
     }
   }
+}
+
+function isCanonicalNetworkHost(host: string): boolean {
+  if (host.length === 0 || host !== host.toLowerCase() || host.endsWith(".")) return false;
+  if (isIP(host) > 0) return true;
+  if (host.length > 253) return false;
+  return host.split(".").every((label) =>
+    label.length >= 1 && label.length <= 63 &&
+    /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label));
 }
 
 function operationsForKind(kind: CapabilityResourceKind): readonly CapabilityOperation[] {
@@ -1085,39 +1088,76 @@ function selectorPathWithinScope(scope: FileSystemCapabilityScope, selector: Rea
   return isPathWithin(scope.relativePathPrefix, path);
 }
 
+function assertOnlySelectorKeys(
+  selector: Readonly<Record<string, CapabilitySelectorValue>>,
+  allowed: readonly string[],
+  resourceKind: CapabilityResourceKind,
+): void {
+  if (typeof selector !== "object" || selector === null || Array.isArray(selector)) {
+    throw new CapabilitySecurityError("resource_selector_invalid", "resource selector must be a plain object");
+  }
+  const prototype = Object.getPrototypeOf(selector);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new CapabilitySecurityError("resource_selector_invalid", "resource selector must be a plain data object");
+  }
+  for (const key of Object.keys(selector)) {
+    if (!allowed.includes(key)) {
+      throw new CapabilitySecurityError("resource_selector_invalid", "unknown " + resourceKind + " selector field: " + key);
+    }
+  }
+}
+
 function scopeAllowsRequest(scope: CapabilityScope, request: CapabilityResourceRequest): boolean {
   if (scope.kind !== request.kind || scope.handleId !== request.handleId ||
       !(scope.operations as readonly CapabilityOperation[]).includes(request.operation)) return false;
 
   const selector = request.resourceSelector;
   switch (scope.kind) {
-    case "filesystem":
-      return selectorPathWithinScope(scope, selector);
+    case "filesystem": {
+      assertOnlySelectorKeys(selector, ["relativePath", "maxBytes", "contentDigest"], scope.kind);
+      if (!selectorPathWithinScope(scope, selector)) return false;
+      const maxBytes = selectorInteger(selector, "maxBytes", 1);
+      if (maxBytes > scope.maxBytesPerInvocation) return false;
+      if ((request.operation === "fs.write" || request.operation === "fs.create") &&
+          !/^[a-f0-9]{64}$/.test(selectorString(selector, "contentDigest"))) return false;
+      if (request.operation !== "fs.write" && request.operation !== "fs.create" &&
+          selector.contentDigest !== undefined) return false;
+      return true;
+    }
     case "network": {
+      assertOnlySelectorKeys(selector, ["host", "port", "maxBytes", "payloadDigest"], scope.kind);
       const host = selectorString(selector, "host");
       const port = selectorInteger(selector, "port", 1);
-      if (port > 65535 || host !== host.toLowerCase() || host.includes("*") ||
-          !(isIP(host) > 0 || /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(host))) return false;
+      const maxBytes = selectorInteger(selector, "maxBytes", 1);
+      if (port > 65535 || !isCanonicalNetworkHost(host) || maxBytes > scope.maxBytesPerInvocation) return false;
+      if (request.operation === "net.send" &&
+          !/^[a-f0-9]{64}$/.test(selectorString(selector, "payloadDigest"))) return false;
+      if (request.operation !== "net.send" && selector.payloadDigest !== undefined) return false;
       return scope.hosts.includes(host) && scope.ports.some((range) => port >= range.first && port <= range.last);
     }
     case "process": {
+      assertOnlySelectorKeys(selector, ["processHandleId", "executableSha256", "argv", "environmentKeys", "processCount"], scope.kind);
       if (request.operation !== "process.spawn") {
         const processHandleId = selectorString(selector, "processHandleId");
         validId(processHandleId, "resourceSelector.processHandleId");
-        // The trusted broker must additionally prove this process belongs to resourceId
-        // and to this principal. Process identifiers supplied by a caller are not trusted.
-        return true;
+        // The native broker must bind the process handle to resourceId and the caller.
+        // A caller-supplied PID/handle is never trusted without broker ownership lookup.
+        return selector.executableSha256 === undefined && selector.argv === undefined &&
+          selector.environmentKeys === undefined && selector.processCount === undefined;
       }
       const executableDigest = selectorString(selector, "executableSha256");
       if (!/^[a-f0-9]{64}$/.test(executableDigest) || !scope.executableSha256.includes(executableDigest)) return false;
       const argv = selectorStringArray(selector, "argv");
       const envKeys = selectorStringArray(selector, "environmentKeys", true);
+      const processCount = selector.processCount === undefined ? 1 : selectorInteger(selector, "processCount", 1);
+      const allowedProcesses = request.requestedBudgets.maxProcesses ?? scope.maxProcesses;
       return argv.length > 0 &&
         scope.argvPrefixes.some((prefix) => stringPrefix(prefix, argv)) &&
         subsetOf(envKeys, scope.environmentKeys) &&
-        scope.maxProcesses > 0;
+        processCount <= scope.maxProcesses && processCount <= allowedProcesses;
     }
     case "memory": {
+      assertOnlySelectorKeys(selector, ["regionId", "offset", "length"], scope.kind);
       const regionId = selectorString(selector, "regionId");
       const offset = selectorInteger(selector, "offset");
       const length = selectorInteger(selector, "length", 1);
@@ -1126,11 +1166,14 @@ function scopeAllowsRequest(scope: CapabilityScope, request: CapabilityResourceR
       return true;
     }
     case "ipc": {
+      assertOnlySelectorKeys(selector, ["channelId", "peerPrincipalId", "messageBytes", "payloadDigest"], scope.kind);
       const channelId = selectorString(selector, "channelId");
       const peerPrincipalId = selectorString(selector, "peerPrincipalId");
       const messageBytes = selectorInteger(selector, "messageBytes");
       validId(channelId, "resourceSelector.channelId");
       validId(peerPrincipalId, "resourceSelector.peerPrincipalId");
+      if (request.operation === "ipc.send" && !/^[a-f0-9]{64}$/.test(selectorString(selector, "payloadDigest"))) return false;
+      if (request.operation !== "ipc.send" && selector.payloadDigest !== undefined) return false;
       return scope.channelIds.includes(channelId) && scope.peerPrincipalIds.includes(peerPrincipalId) &&
         messageBytes <= scope.maxMessageBytes;
     }
@@ -1149,6 +1192,23 @@ function resolveUniqueScope(
     throw new CapabilitySecurityError("scope_ambiguous", "more than one scope matches; duplicate/overlapping grants are denied");
   }
   return matches[0]!;
+}
+
+function effectiveCapabilityBudget(
+  requested: Partial<CapabilityBudget>,
+  granted: CapabilityBudget,
+): CapabilityBudget {
+  const fields: readonly (keyof CapabilityBudget)[] = [
+    "maxInvocations", "maxConcurrentInvocations", "maxWallClockMsPerInvocation",
+    "maxCpuMsPerInvocation", "maxMemoryBytes", "maxNetworkBytes", "maxOutputBytes",
+    "maxProcesses", "maxFinancialSpendMinorUnits",
+  ];
+  const result = { ...granted };
+  for (const field of fields) {
+    const limit = requested[field];
+    if (limit !== undefined) result[field] = Math.min(granted[field], limit);
+  }
+  return Object.freeze(result);
 }
 
 function validateRequestedBudgets(requested: Partial<CapabilityBudget>, granted: CapabilityBudget): void {
@@ -1284,17 +1344,18 @@ export class CapabilityInvocationPipelineV1 implements CapabilityInvocationPipel
       }
 
       validateRequestedBudgets(request.operation.requestedBudgets, request.token.payload.budget);
+      const invocationBudget = effectiveCapabilityBudget(request.operation.requestedBudgets, request.token.payload.budget);
       scope = resolveUniqueScope(request.token.payload.scopes, request.operation);
       const effectiveDeadlineEpochMs = Math.min(
         request.deadlineEpochMs,
         request.token.payload.expiresAtEpochMs,
-        now + request.token.payload.budget.maxWallClockMsPerInvocation,
+        now + invocationBudget.maxWallClockMsPerInvocation,
       );
       if (!Number.isSafeInteger(effectiveDeadlineEpochMs) || effectiveDeadlineEpochMs <= this.now()) {
         throw new CapabilitySecurityError("deadline_expired", "token time or wall-clock budget leaves no execution window");
       }
 
-      lease = await this.dependencies.sandbox.prepare(request, scope, request.token.payload.budget);
+      lease = await this.dependencies.sandbox.prepare(request, scope, invocationBudget);
       validId(lease.leaseId, "sandbox.leaseId");
       if (lease.profileDigest !== request.sandboxProfileDigest ||
           !Number.isSafeInteger(lease.expiresAtEpochMs) ||
@@ -1384,7 +1445,7 @@ export class CapabilityInvocationPipelineV1 implements CapabilityInvocationPipel
         tokenDigest,
         requestDigest,
         scope,
-        budget: request.token.payload.budget,
+        budget: invocationBudget,
         deadlineEpochMs: effectiveDeadlineEpochMs,
         reservation,
         preExecutionAttestation: attestation,
