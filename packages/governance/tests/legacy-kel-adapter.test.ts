@@ -68,7 +68,9 @@ test('legacy AuditLedger records can be signed and submitted without changing le
   const result = await adapter.appendAudit(event);
   assert.equal(result.record.sequence, 1);
   assert.equal(result.record.event.kind, 'authorization');
+  assert.ok(result.receipt);
   assert.equal(result.receipt.evidenceId, 'legacy-audit-1-' + result.record.hash.slice(0, 24));
+  assert.equal(result.queued, false);
   assert.equal(submitted.length, 1);
 
   const statement = verifyDsseEnvelope(
