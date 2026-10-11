@@ -63,7 +63,10 @@ fn main() -> ExitCode {
         Ok(code) => ExitCode::from(code),
         Err(error) => {
             eprintln!("klyn-worker-bootstrap: {error}");
-            ExitCode::from(EXIT_SANDBOX)
+            match error {
+                SandboxError::InvalidConfig(_) => ExitCode::from(EXIT_CONFIGURATION),
+                _ => ExitCode::from(EXIT_SANDBOX),
+            }
         }
     }
 }
