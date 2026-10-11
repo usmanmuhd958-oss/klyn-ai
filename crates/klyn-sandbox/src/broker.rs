@@ -30,7 +30,7 @@ use std::{
         unix::{fs::{FileTypeExt, MetadataExt, PermissionsExt}, net::{UnixListener, UnixStream}},
     },
     path::{Path, PathBuf},
-    sync::{atomic::{AtomicBool, AtomicU64, Ordering}, Arc, Mutex},
+    sync::{atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering}, Arc, Mutex},
     thread::{self, JoinHandle},
     time::Duration,
 };
@@ -264,7 +264,76 @@ impl Drop for QuotaReservationGuard {
 impl CapabilityBroker {
     pub fn new(deps: BrokerDependencies) -> Self { Self { deps } }
 
+    /// Bounded multiclient service loop. Exhausted admission capacity rejects new
+    /// connections without parsing or executing their requests. Shutdown is cooperative;
+    /// per-connection I/O deadlines bound drain time.
+    pub fn serve(
+        self: Arc<Self>,
+        listener: PrivateBrokerListener,
+        shutdown: Arc<AtomicBool>,
+        max_concurrent_connections: usize,
+    ) -> Result<()> {
+        if max_concurrent_connections == 0 || max_concurrent_connections > 4096 {
+            return Err(SandboxError::Protocol("broker connection limit must be 1..=4096".into()));
+        }
+        listener.listener.set_nonblocking(true)?;
+        let active = Arc::new(AtomicUsize::new(0));
+        let mut workers: Vec<JoinHandle<()>> = Vec::new();
+        while !shutdown.load(Ordering::Acquire) {
+            let mut index = 0;
+            while index < workers.len() {
+                if workers[index].is_finished() {
+                    let handle = workers.swap_remove(index);
+                    if handle.join().is_err() {
+                        // A client-worker panic must not crash or authorize another request.
+                    }
+                } else {
+                    index += 1;
+                }
+            }
+            match listener.listener.accept() {
+                Ok((mut stream, _peer_addr)) => {
+                    stream.set_read_timeout(Some(Duration::from_secs(3)))?;
+                    stream.set_write_timeout(Some(Duration::from_secs(3)))?;
+                    let active_now = active.fetch_add(1, Ordering::AcqRel);
+                    if active_now >= max_concurrent_connections {
+                        active.fetch_sub(1, Ordering::AcqRel);
+                        let response = BrokerResponse::denied("busy".into(), "broker_busy", "broker admission capacity exhausted");
+                        let _ = write_frame(&mut stream, &response);
+                        continue;
+                    }
+                    let broker = self.clone();
+                    let active_worker = active.clone();
+                    match thread::Builder::new().name("klyn-resource-broker-client".into()).spawn(move || {
+                        let _ = broker.serve_one(&mut stream);
+                        active_worker.fetch_sub(1, Ordering::AcqRel);
+                    }) {
+                        Ok(handle) => workers.push(handle),
+                        Err(error) => {
+                            active.fetch_sub(1, Ordering::AcqRel);
+                            return Err(SandboxError::Io(error));
+                        }
+                    }
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(20));
+                }
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        drop(listener);
+        for worker in workers {
+            if worker.join().is_err() {
+                return Err(SandboxError::Protocol("broker worker panicked during shutdown".into()));
+            }
+        }
+        Ok(())
+    }
+
     pub fn serve_one(&self, stream: &mut UnixStream) -> Result<()> {
+        stream.set_read_timeout(Some(Duration::from_secs(3)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(3)))?;
         let uid = peer_uid(stream.as_raw_fd())?;
         let invocation_id_hint = "unknown".to_owned();
         let principal = self.deps.peer_principals.principal_for_uid(uid)
@@ -927,22 +996,46 @@ fn peer_uid(fd: RawFd) -> Result<u32> {
     Ok(credentials.uid)
 }
 
-pub fn bind_private_socket(path: &Path) -> Result<UnixListener> {
-    let parent = path.parent().ok_or_else(|| SandboxError::Denied("broker socket needs a parent directory".into()))?;
-    let metadata = fs::symlink_metadata(parent)?;
+pub struct PrivateBrokerListener {
+    pub listener: UnixListener,
+    path: PathBuf,
+}
+
+impl Drop for PrivateBrokerListener {
+    fn drop(&mut self) {
+        if let Ok(metadata) = fs::symlink_metadata(&self.path) {
+            if metadata.file_type().is_socket() {
+                let _ = fs::remove_file(&self.path);
+            }
+        }
+    }
+}
+
+pub fn bind_private_socket(path: &Path) -> Result<PrivateBrokerListener> {
+    let parent_input = path.parent().ok_or_else(|| SandboxError::Denied("broker socket needs a parent directory".into()))?;
+    let parent = fs::canonicalize(parent_input)?;
+    let metadata = fs::symlink_metadata(&parent)?;
     if !metadata.file_type().is_dir() || metadata.permissions().mode() & 0o077 != 0 ||
         metadata.uid() != unsafe { libc::geteuid() } {
         return Err(SandboxError::Denied("broker socket parent must be a private, owner-controlled directory".into()));
     }
-    if let Ok(existing) = fs::symlink_metadata(path) {
+    let file_name = path.file_name()
+        .filter(|name| !name.is_empty() && *name != "." && *name != "..")
+        .ok_or_else(|| SandboxError::Denied("broker socket path must end with a regular filename".into()))?;
+    let socket_path = parent.join(file_name);
+    if let Ok(existing) = fs::symlink_metadata(&socket_path) {
         if !existing.file_type().is_socket() {
             return Err(SandboxError::Denied("refusing to replace a non-socket path".into()));
         }
-        fs::remove_file(path)?;
+        fs::remove_file(&socket_path)?;
     }
-    let listener = UnixListener::bind(path)?;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    Ok(listener)
+    let listener = UnixListener::bind(&socket_path)?;
+    if let Err(error) = fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600)) {
+        drop(listener);
+        let _ = fs::remove_file(&socket_path);
+        return Err(error.into());
+    }
+    Ok(PrivateBrokerListener { listener, path: socket_path })
 }
 
 fn read_frame(stream: &mut UnixStream) -> Result<Vec<u8>> {
