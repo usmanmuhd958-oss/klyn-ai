@@ -318,6 +318,7 @@ impl ResourceBroker {
         }
 
         drop(tx);
+        drop(rx);
         for worker in workers {
             if worker.join().is_err() && serve_error.is_none() {
                 serve_error = Some(SandboxError::Enforcement(

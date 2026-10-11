@@ -128,7 +128,7 @@ fn child_stage() -> Result<u8, SandboxError> {
             ));
         }
         let canonical = fs::canonicalize(path)?;
-        if !canonical.is_dir() || canonical != *path {
+        if !canonical.is_dir() || canonical.as_path() != path.as_path() {
             return Err(SandboxError::InvalidConfig(format!(
                 "root must be a canonical directory: {}",
                 path.display()

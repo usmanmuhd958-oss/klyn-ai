@@ -355,7 +355,7 @@ impl CgroupV2 {
                     "required cgroup-v2 controller is unavailable: {controller}"
                 )));
             }
-            if !enabled.split_whitespace().any(|c| c == controller) {
+            if !controller_enabled(&enabled, controller) {
                 return Err(SandboxError::InvalidConfig(format!(
                     "required cgroup-v2 controller is not enabled for delegated children: {controller}"
                 )));
@@ -363,7 +363,7 @@ impl CgroupV2 {
         }
         if !budget.io_limits.is_empty()
             && (!available.split_whitespace().any(|c| c == "io")
-                || !enabled.split_whitespace().any(|c| c == "io"))
+                || !controller_enabled(&enabled, "io"))
         {
             return Err(SandboxError::InvalidConfig(
                 "I/O budget requested but cgroup-v2 io controller is unavailable or disabled"
@@ -439,6 +439,16 @@ impl Drop for CgroupV2 {
         // A non-empty cgroup cannot be removed; cleanup is best effort here.
         let _ = fs::remove_dir(&self.path);
     }
+}
+
+fn controller_enabled(enabled: &str, controller: &str) -> bool {
+    enabled.split_whitespace().any(|entry| {
+        entry
+            .strip_prefix('+')
+            .or_else(|| entry.strip_prefix('-'))
+            .unwrap_or(entry)
+            == controller
+    })
 }
 
 fn write_control(path: &Path, value: &str) -> io::Result<()> {
