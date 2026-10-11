@@ -94,12 +94,13 @@ impl FsService {
                 let id = request.transaction_id;
                 let result = {
                     let tx = registry.get_mut(&id).ok_or(FsServiceError::NotFound)?;
+                    let base_revision = tx.base_revision().to_owned();
                     tx.validate().map(|revision| {
                         json!({
                             "transaction_id": id,
                             "state": "validated",
-                            "candidate_revision": revision,
-                            "base_revision": tx.base_revision()
+                            "candidate_revision": revision.to_owned(),
+                            "base_revision": base_revision
                         })
                     })
                 };
