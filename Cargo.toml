@@ -3,9 +3,8 @@ members = [
     "crates/klyn-sandbox",
     "crates/klyn-protocol",
     "crates/klyn-daemon",
+    "crates/klyn-fs",
 ]
-# These manifests currently have no Rust target and are intentionally kept out
-# of the buildable workspace until their implementation phase.
 exclude = [
     "crates/klyn-vault",
     "crates/klyn-types",
