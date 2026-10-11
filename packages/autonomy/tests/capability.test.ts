@@ -141,6 +141,7 @@ test("Ed25519 token signatures bind the complete capability payload", () => {
 test("pre-execution attestation is signed and bound to a specific invocation", () => {
   const payload: PreExecutionAttestationPayloadV1 = {
     schema: "urn:klyn:capability-preexecution-attestation:v1",
+    collectorPrincipalId: "root-authority",
     invocationId: "invoke-1",
     tokenId: "token-1",
     tokenDigest: "a".repeat(64),
@@ -322,6 +323,7 @@ test("invocation appends a verified runtime attestation to KEL before dispatch",
   };
 
   const collector: ExecutionRuntimeCollector = {
+    principalId: "root-authority",
     async attestBeforeExecution(payload) {
       order.push("collector-attested");
       assert.equal(payload.invocationId, request.invocationId);
@@ -430,7 +432,7 @@ test("invocation rejects a bad request digest before sandbox setup or execution"
     revocations: new TestRevocationRegistry(),
     counters,
     sandbox,
-    collector: { async attestBeforeExecution(payload) { return { payload, signature: signer.signPayload(payload) }; } },
+    collector: { principalId: "root-authority", async attestBeforeExecution(payload) { return { payload, signature: signer.signPayload(payload) }; } },
     collectorKeys: {
       resolvePublicKey: (keyId) => keyId === "test-key-v1" ? publicKey : undefined,
       resolvePrincipalId: (keyId) => keyId === "test-key-v1" ? "root-authority" : undefined,
