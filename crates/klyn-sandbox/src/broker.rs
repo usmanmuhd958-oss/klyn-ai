@@ -600,7 +600,7 @@ fn write_frame<T: Serialize>(stream: &mut UnixStream, value: &T) -> io::Result<(
 }
 
 fn send_fd(socket: RawFd, fd: RawFd) -> io::Result<()> {
-    let byte = [b'F'];
+    let byte = *b"F";
     let iov = [IoSlice::new(&byte)];
     let fds = [fd];
     let cmsg = ControlMessage::ScmRights(&fds);

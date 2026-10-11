@@ -6,7 +6,7 @@
 
 use std::{
     fs,
-    io::{self, Read, Write},
+    io::{self, Read},
     os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     path::Path,
 };
@@ -144,15 +144,6 @@ pub(crate) fn set_private_fifo(path: &Path) -> Result<(), SandboxError> {
     Ok(())
 }
 
-pub(crate) fn write_release(path: &Path) -> Result<(), SandboxError> {
-    let mut writer = fs::OpenOptions::new()
-        .write(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
-        .open(path)?;
-    writer.write_all(&[START_GATE_MARKER])?;
-    writer.flush()?;
-    Ok(())
-}
 
 pub(crate) fn is_no_reader(error: &io::Error) -> bool {
     error.raw_os_error() == Some(nix::errno::Errno::ENXIO as i32)
