@@ -1,7 +1,8 @@
 import { type KeyObject } from 'node:crypto';
 import { AuditLedger } from './audit.js';
 import { canonicalize, digestJson, signEd25519, verifyEd25519 } from './crypto.js';
-import type { ArtifactAttestation } from './types.js';
+import type { ArtifactAttestation, AuditRecord } from './types.js';
+import type { AuditOutboxItem } from './audit-storage.js';
 import { parseArtifactManifest, ValidationError } from './validation.js';
 import { CompletionGate, EvidenceLedger } from './evidence.js';
 
@@ -16,7 +17,14 @@ export class ArtifactAttestor {
     this.completion = completion;
   }
 
-  public attest(manifestInput: unknown, objectiveInput: unknown, keyId: string, privateKey: KeyObject, nowEpochMs = Date.now()): ArtifactAttestation {
+  public attest(
+    manifestInput: unknown,
+    objectiveInput: unknown,
+    keyId: string,
+    privateKey: KeyObject,
+    nowEpochMs = Date.now(),
+    createOutbox?: (record: AuditRecord, attestation: ArtifactAttestation) => AuditOutboxItem,
+  ): ArtifactAttestation {
     const manifest = parseArtifactManifest(manifestInput);
     const completion = this.completion.evaluate(objectiveInput, nowEpochMs);
     if (!completion.complete || completion.objectiveId !== manifest.objectiveId) {
@@ -57,13 +65,18 @@ export class ArtifactAttestor {
     const signatureBase64 = signEd25519(canonicalize(payload), privateKey);
     const attestation: ArtifactAttestation = Object.freeze({ ...payload, payloadDigest, signatureBase64 });
 
-    this.audit.append({
-      kind: 'artifact-attested',
+    const auditEvent = {
+      kind: 'artifact-attested' as const,
       artifactId: manifest.artifactId,
       objectiveId: manifest.objectiveId,
       attestationPayloadDigest: payloadDigest,
       timestampEpochMs: nowEpochMs,
-    });
+    };
+    if (createOutbox) {
+      this.audit.appendWithOutbox(auditEvent, (record) => createOutbox(record, attestation));
+    } else {
+      this.audit.append(auditEvent);
+    }
     return attestation;
   }
 
