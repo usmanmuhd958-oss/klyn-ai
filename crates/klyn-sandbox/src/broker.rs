@@ -514,7 +514,7 @@ impl CapabilityBroker {
                 ("scopeDigest", json!(scope_digest)),
                 ("sandboxProfileDigest", json!(request.sandbox_profile_digest)),
                 ("attestationDigest", json!(digest_jcs(&attestation)?)),
-                ("reservationId", json!(reservation.reservation_id)),
+                ("reservationId", json!(quota_guard.reservation().reservation_id)),
             ]),
         };
         let authorization_evidence = match self.deps.evidence.append(&event) {
@@ -1292,7 +1292,7 @@ fn pump_bounded_file_write(
     let random_count = unsafe {
         libc::syscall(libc::SYS_getrandom, random.as_mut_ptr(), random.len(), 0u32)
     };
-    if random_count != random.len() as isize {
+    if random_count != random.len() as libc::c_long {
         return Err(SandboxError::UnsupportedKernel("secure temporary-name entropy unavailable".into()));
     }
     let temporary_name = CString::new(format!(".klyn-write-{}", hex::encode(random)))
