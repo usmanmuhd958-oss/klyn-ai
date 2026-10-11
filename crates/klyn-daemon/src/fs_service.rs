@@ -164,3 +164,24 @@ impl FsService {
         }
     }
 }
+
+
+impl klyn_sandbox::broker::CandidateMutationHandler for FsService {
+    fn write_candidate_file(
+        &self,
+        transaction_id: &str,
+        relative_path: &str,
+        expected_old_content: Option<&str>,
+        content: &str,
+    ) -> Result<(), String> {
+        let params = json!({
+            "transaction_id": transaction_id,
+            "path": relative_path,
+            "expected_old_content": expected_old_content,
+            "content": content,
+        });
+        self.execute(Method::FsWriteFile, &params)
+            .map(|_| ())
+            .map_err(|_| "klyn-fs rejected the candidate mutation".to_string())
+    }
+}
