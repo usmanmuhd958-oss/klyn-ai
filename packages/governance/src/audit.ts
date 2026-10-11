@@ -1,7 +1,7 @@
 import { sha256, canonicalize } from "./crypto.js";
 import type { AuditEvent, AuditRecord, JsonValue } from "./types.js";
 import { isJsonValue, ValidationError } from "./validation.js";
-import { InMemoryAuditStorageAdapter, type AuditStorageAdapter } from "./audit-storage.js";
+import { InMemoryAuditStorageAdapter, type AuditOutboxItem, type AuditOutboxRecord, type AuditStorageAdapter } from "./audit-storage.js";
 
 const GENESIS_HASH = "0".repeat(64);
 
@@ -37,6 +37,53 @@ export class AuditLedger {
     this.storage.append(record);
     this.recordsStore.push(record);
     return record;
+  }
+
+  /**
+   * Persist a legacy audit record and its KEL outbox payload in the same storage
+   * transaction. This deliberately fails for adapters without transactional support.
+   */
+  public appendWithOutbox(
+    event: AuditEvent,
+    createOutbox: (record: AuditRecord) => AuditOutboxItem,
+  ): AuditRecord {
+    const append = this.storage.appendWithOutbox;
+    if (!append) {
+      throw new ValidationError("transactional KEL outbox requires an outbox-capable audit storage adapter");
+    }
+    const previousHash = this.recordsStore.at(-1)?.hash ?? GENESIS_HASH;
+    const sequence = this.recordsStore.length + 1;
+    const record: AuditRecord = Object.freeze({
+      sequence,
+      previousHash,
+      event: deepFreeze(event),
+      hash: hashRecord(sequence, previousHash, event),
+    });
+    const outbox = createOutbox(record);
+    append.call(this.storage, record, outbox);
+    this.recordsStore.push(record);
+    return record;
+  }
+
+  public pendingOutbox(limit = 100): readonly AuditOutboxRecord[] {
+    if (!this.storage.loadPendingOutbox) {
+      throw new ValidationError("audit storage does not support a durable KEL outbox");
+    }
+    return this.storage.loadPendingOutbox(limit);
+  }
+
+  public markOutboxDelivered(eventId: string, receiptJson: string): void {
+    if (!this.storage.markOutboxDelivered) {
+      throw new ValidationError("audit storage does not support a durable KEL outbox");
+    }
+    this.storage.markOutboxDelivered(eventId, receiptJson);
+  }
+
+  public markOutboxFailure(eventId: string, errorMessage: string): void {
+    if (!this.storage.markOutboxFailure) {
+      throw new ValidationError("audit storage does not support a durable KEL outbox");
+    }
+    this.storage.markOutboxFailure(eventId, errorMessage);
   }
 
   public headHash(): string {
