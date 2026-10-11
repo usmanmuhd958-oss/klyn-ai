@@ -7,6 +7,7 @@
 use crate::{CapabilityScope, Result, SandboxError};
 use std::{
     ffi::CString,
+    fs,
     io,
     os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd},
 };
@@ -17,7 +18,6 @@ const LANDLOCK_ACCESS_NET_BIND_TCP: u64 = 1 << 0;
 const LANDLOCK_ACCESS_NET_CONNECT_TCP: u64 = 1 << 1;
 const LANDLOCK_ACCESS_NET_BIND_UDP: u64 = 1 << 2;
 const LANDLOCK_ACCESS_NET_CONNECT_SEND_UDP: u64 = 1 << 3;
-const LANDLOCK_RULE_NET_PORT: u32 = 2;
 const LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET: u64 = 1 << 0;
 const LANDLOCK_SCOPE_SIGNAL: u64 = 1 << 1;
 const LANDLOCK_ACCESS_FS_EXECUTE: u64 = 1 << 0;
@@ -223,9 +223,31 @@ pub fn open_beneath(root: BorrowedFd<'_>, relative_path: &str, flags: i32, mode:
     }
 }
 
+/// Landlock restrictions are per-thread and inherited by children. Installing the
+/// ruleset in a multi-threaded launcher would leave sibling threads without that restriction.
+/// Production callers must use a dedicated single-thread worker between fork and exec.
+fn ensure_single_threaded() -> Result<()> {
+    let tasks = fs::read_dir("/proc/self/task")?;
+    let mut count = 0usize;
+    for task in tasks {
+        task?;
+        count += 1;
+        if count > 1 {
+            return Err(SandboxError::Denied(
+                "Landlock must be installed by a single-threaded launcher before worker threads start".into(),
+            ));
+        }
+    }
+    if count != 1 {
+        return Err(SandboxError::Denied("cannot confirm a single-threaded launcher".into()));
+    }
+    Ok(())
+}
+
 /// Enforce a deny-by-default filesystem policy. Every intended readable/writable baseline
 /// path must be an explicit LandlockPathRule; an empty rule list denies all handled FS rights.
 pub fn apply_landlock_rules(rules: &[LandlockPathRule]) -> Result<i32> {
+    ensure_single_threaded()?;
     let abi = query_landlock_abi()?;
     // Production OCap workers require both TCP port controls and Landlock domain
     // scoping for abstract Unix sockets/signals. Direct networking remains prohibited;
@@ -417,13 +439,31 @@ pub fn seccomp_program() -> Result<Vec<SockFilter>> {
 pub fn install_agent_seccomp() -> Result<()> {
     let program = seccomp_program()?;
     let prog = SockFprog { len: program.len() as u16, filter: program.as_ptr() };
+
     if unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } != 0 {
         return Err(io::Error::last_os_error().into());
     }
-    // SAFETY: program storage remains alive until prctl returns; the kernel copies the
-    // BPF instructions when installing the filter.
-    if unsafe { libc::prctl(libc::PR_SET_SECCOMP, libc::SECCOMP_MODE_FILTER, &prog) } != 0 {
+
+    // SECCOMP_FILTER_FLAG_TSYNC applies this filter to every thread in the thread group.
+    // Without TSYNC, one unfiltered sibling thread can bypass the syscall policy.
+    const SECCOMP_SET_MODE_FILTER: libc::c_uint = 1;
+    const SECCOMP_FILTER_FLAG_TSYNC: libc::c_ulong = 1;
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_seccomp,
+            SECCOMP_SET_MODE_FILTER,
+            SECCOMP_FILTER_FLAG_TSYNC,
+            &prog,
+        )
+    };
+    if result < 0 {
         return Err(io::Error::last_os_error().into());
+    }
+    if result > 0 {
+        return Err(SandboxError::Denied(format!(
+            "seccomp TSYNC failed to synchronize thread {}",
+            result
+        )));
     }
     Ok(())
 }
