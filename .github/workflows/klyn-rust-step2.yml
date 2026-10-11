@@ -14,7 +14,7 @@ on:
       - .github/workflows/klyn-rust-step2.yml
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: klyn-rust-step2-${{ github.ref }}
@@ -29,21 +29,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Apply rustfmt
-        run: cargo fmt --package klyn-fs --package klyn-protocol --package klyn-daemon
-      - name: Persist formatted Rust sources
-        if: github.event_name == 'push' && github.ref == 'refs/heads/feat/klyn-step2-transactional-fs'
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! git diff --quiet; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add crates/klyn-fs/src/lib.rs crates/klyn-protocol/src/lib.rs crates/klyn-daemon/src/lib.rs crates/klyn-daemon/src/policy.rs crates/klyn-daemon/src/fs_service.rs
-            git commit -m "style(rust): apply rustfmt to Step 2 implementation"
-            git push origin "HEAD:${GITHUB_REF_NAME}"
-          fi
-      - name: Verify formatting
+      - name: Format
         run: cargo fmt --package klyn-fs --package klyn-protocol --package klyn-daemon -- --check
       - name: Unit and integration tests
         run: cargo test --package klyn-fs --package klyn-protocol --package klyn-daemon
