@@ -697,6 +697,7 @@ function validateRelativePathPrefix(path: string): void {
   if (typeof path !== "string" || path.startsWith("/") || path.includes("\\") || path.includes("\0")) {
     throw new CapabilitySecurityError("scope_invalid", "filesystem path must be a canonical relative path");
   }
+  if (path === "") return;
   const segments = path.split("/");
   if (segments.some((segment) => segment === "." || segment === ".." || segment === "")) {
     throw new CapabilitySecurityError("scope_invalid", "filesystem path traversal segments are forbidden");
