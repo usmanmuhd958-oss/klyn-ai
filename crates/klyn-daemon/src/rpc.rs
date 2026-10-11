@@ -246,8 +246,8 @@ extern "C" fn shutdown_signal_handler(_: libc::c_int) {
 fn install_shutdown_handlers() {
     // The signal handler only flips an atomic flag. Cleanup happens on the main thread.
     unsafe {
-        libc::signal(libc::SIGTERM, shutdown_signal_handler as libc::sighandler_t);
-        libc::signal(libc::SIGINT, shutdown_signal_handler as libc::sighandler_t);
+        libc::signal(libc::SIGTERM, shutdown_signal_handler as *const () as libc::sighandler_t);
+        libc::signal(libc::SIGINT, shutdown_signal_handler as *const () as libc::sighandler_t);
     }
 }
 
