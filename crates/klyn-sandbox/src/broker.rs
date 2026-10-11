@@ -30,7 +30,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     path_is_within_grant, validate_relative_path, CapabilityClaims, FileAccess, FileGrant,
-    NetworkGrant, SandboxError, SignedCapability, MAX_BROKER_FRAME_BYTES,
+    NetworkGrant, SandboxError, SignedCapability, CANDIDATE_ROOT_ID,
+    MAX_BROKER_FRAME_BYTES, MAX_MUTATION_BYTES,
 };
 
 pub trait CapabilityVerifier: Send + Sync + 'static {
@@ -41,6 +42,19 @@ pub trait CapabilityVerifier: Send + Sync + 'static {
 pub trait RevocationOracle: Send + Sync + 'static {
     /// Return true only when the token is revoked. Errors are fail-closed.
     fn is_revoked(&self, token_id: &str) -> Result<bool, String>;
+}
+
+/// The broker can never write candidate paths itself. The daemon implements
+/// this callback by forwarding to klyn-fs, which checks transaction state and
+/// exact old-content preconditions before writing.
+pub trait CandidateMutationHandler: Send + Sync + 'static {
+    fn write_candidate_file(
+        &self,
+        transaction_id: &str,
+        relative_path: &str,
+        expected_old_content: Option<&str>,
+        content: &str,
+    ) -> Result<(), String>;
 }
 
 pub struct Ed25519CapabilityVerifier {
@@ -68,6 +82,7 @@ pub struct BrokerConfig {
     pub roots: BTreeMap<String, PathBuf>,
     pub verifier: Arc<dyn CapabilityVerifier>,
     pub revocations: Arc<dyn RevocationOracle>,
+    pub mutation_handler: Arc<dyn CandidateMutationHandler>,
     pub max_workers: usize,
     pub queue_capacity: usize,
 }
@@ -81,6 +96,7 @@ struct BrokerInner {
     roots: BTreeMap<String, RootHandle>,
     verifier: Arc<dyn CapabilityVerifier>,
     revocations: Arc<dyn RevocationOracle>,
+    mutation_handler: Arc<dyn CandidateMutationHandler>,
 }
 
 pub struct ResourceBroker {
@@ -111,10 +127,26 @@ enum BrokerOperation {
     ConnectTcp {
         address: String,
     },
+    WriteCandidateFile {
+        transaction_id: String,
+        path: String,
+        #[serde(deserialize_with = "deserialize_required_option")]
+        expected_old_content: Option<String>,
+        content: String,
+    },
     /// Process execution is intentionally unavailable through the broker.
     Exec {
         program: String,
     },
+}
+
+
+fn deserialize_required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -209,6 +241,7 @@ impl ResourceBroker {
                 roots,
                 verifier: config.verifier,
                 revocations: config.revocations,
+                mutation_handler: config.mutation_handler,
             }),
             max_workers: config.max_workers,
             queue_capacity: config.queue_capacity,
@@ -370,6 +403,44 @@ fn execute_request(
             let _ = grant;
             Ok(Some(fd))
         }
+        BrokerOperation::WriteCandidateFile {
+            transaction_id,
+            path,
+            expected_old_content,
+            content,
+        } => {
+            validate_relative_path(&path, false)
+                .map_err(|_| "invalid relative mutation path".to_string())?;
+            if content.len() > MAX_MUTATION_BYTES
+                || expected_old_content
+                    .as_ref()
+                    .is_some_and(|old| old.len() > MAX_MUTATION_BYTES)
+            {
+                return Err("candidate mutation exceeds the size limit".into());
+            }
+            if !claims.candidate_write_enabled
+                || claims.candidate_transaction_id.as_deref() != Some(transaction_id.as_str())
+            {
+                return Err("candidate mutation capability is not bound to this transaction".into());
+            }
+            if !claims.file_grants.iter().any(|grant| {
+                grant.root_id == CANDIDATE_ROOT_ID
+                    && grant.prefix == transaction_id
+                    && grant.access == FileAccess::Read
+            }) {
+                return Err("candidate transaction is outside capability scope".into());
+            }
+            inner
+                .mutation_handler
+                .write_candidate_file(
+                    &transaction_id,
+                    &path,
+                    expected_old_content.as_deref(),
+                    &content,
+                )
+                .map_err(|_| "klyn-fs rejected the candidate mutation".to_string())?;
+            Ok(None)
+        }
         BrokerOperation::ConnectTcp { address } => {
             let requested: SocketAddr = address.parse().map_err(|_| "address must be a literal socket address".to_string())?;
             let allowed = claims.network_grants.iter().any(|grant: &NetworkGrant| {
@@ -517,6 +588,53 @@ impl BrokerClient {
         self.request_fd(capability, BrokerOperation::ConnectTcp { address: address.into() })
     }
 
+    /// Submit a candidate mutation through the daemon's transactional filesystem
+    /// engine. A missing preimage field is rejected during deserialization.
+    pub fn write_candidate_file(
+        &self,
+        capability: &SignedCapability,
+        transaction_id: impl Into<String>,
+        relative_path: impl Into<String>,
+        expected_old_content: Option<String>,
+        content: impl Into<String>,
+    ) -> Result<(), String> {
+        self.request_ack(
+            capability,
+            BrokerOperation::WriteCandidateFile {
+                transaction_id: transaction_id.into(),
+                path: relative_path.into(),
+                expected_old_content,
+                content: content.into(),
+            },
+        )
+    }
+
+    fn request_ack(
+        &self,
+        capability: &SignedCapability,
+        operation: BrokerOperation,
+    ) -> Result<(), String> {
+        let mut stream = self
+            .stream
+            .lock()
+            .map_err(|_| "broker client mutex poisoned".to_string())?;
+        let request = BrokerRequest {
+            capability: capability.clone(),
+            operation,
+        };
+        write_frame(&mut stream, &request).map_err(|e| e.to_string())?;
+        let bytes = read_frame(&mut stream)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "broker closed the channel".to_string())?;
+        let response: BrokerResponse =
+            serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+        if response.ok {
+            Ok(())
+        } else {
+            Err(response.error.unwrap_or_else(|| "broker denied request".into()))
+        }
+    }
+
     fn request_fd(
         &self,
         capability: &SignedCapability,
@@ -574,6 +692,19 @@ mod tests {
         fn is_revoked(&self, _: &str) -> Result<bool, String> { Ok(false) }
     }
 
+    struct DenyMutations;
+    impl CandidateMutationHandler for DenyMutations {
+        fn write_candidate_file(
+            &self,
+            _transaction_id: &str,
+            _relative_path: &str,
+            _expected_old_content: Option<&str>,
+            _content: &str,
+        ) -> Result<(), String> {
+            Err("test handler denies all writes".into())
+        }
+    }
+
     fn test_claims(uid: u32, gid: u32) -> CapabilityClaims {
         crate::CapabilityClaims {
             version: crate::OCAP_VERSION,
@@ -608,6 +739,7 @@ mod tests {
             roots: BTreeMap::new(),
             verifier: Arc::new(Ed25519CapabilityVerifier::new(key.verifying_key())),
             revocations: Arc::new(NeverRevoked),
+            mutation_handler: Arc::new(DenyMutations),
             max_workers: 1,
             queue_capacity: 1,
         };
@@ -660,6 +792,7 @@ mod tests {
             roots: BTreeMap::new(),
             verifier: Arc::new(Ed25519CapabilityVerifier::new(key.verifying_key())),
             revocations: Arc::new(Failing),
+            mutation_handler: Arc::new(DenyMutations),
         };
         let peer = PeerCredentials { uid: signed.claims.subject_uid, gid: signed.claims.subject_gid };
         assert!(authorize(&signed, peer, &inner).is_err());
@@ -681,6 +814,7 @@ mod tests {
             roots: BTreeMap::new(),
             verifier: Arc::new(Ed25519CapabilityVerifier::new(key.verifying_key())),
             revocations: Arc::new(Revoked),
+            mutation_handler: Arc::new(DenyMutations),
         };
         let peer = PeerCredentials { uid: signed.claims.subject_uid, gid: signed.claims.subject_gid };
         assert!(authorize(&signed, peer, &inner).is_err());
