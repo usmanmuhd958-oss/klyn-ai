@@ -496,6 +496,7 @@ pub struct SandboxManifest {
     pub capability: SignedCapability,
     pub roots: std::collections::BTreeMap<String, PathBuf>,
     pub broker_socket: PathBuf,
+    pub broker_uid: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -577,25 +578,45 @@ impl SandboxLauncher {
             }
         }
 
+        // Connect as the trusted daemon before dropping worker credentials. The
+        // connected channel is inherited as FD 3, so socket mode 0600 does not
+        // prevent the unprivileged worker from using the pre-authorized channel.
+        let socket_meta = fs::symlink_metadata(&self.config.broker_socket)?;
+        if !socket_meta.file_type().is_socket() || socket_meta.mode() & 0o077 != 0 {
+            return Err(SandboxError::InvalidConfig(
+                "broker endpoint is not a private Unix-domain socket".into(),
+            ));
+        }
+        let broker_stream = std::os::unix::net::UnixStream::connect(&self.config.broker_socket)?;
+        let broker_uid = socket_peer_uid(broker_stream.as_raw_fd())?;
+        if broker_uid != socket_meta.uid() {
+            return Err(SandboxError::Enforcement(
+                "broker peer UID does not match the socket owner".into(),
+            ));
+        }
+
         // Build and seal the manifest before starting any worker process.
         let manifest = SandboxManifest {
             capability: capability.clone(),
             roots: self.config.roots.clone(),
             broker_socket: self.config.broker_socket.clone(),
+            broker_uid,
         };
         let mut manifest_file = create_sealed_manifest(&manifest)?;
         manifest_file.seek(SeekFrom::Start(0))?;
 
-        // O_CLOEXEC on both ends prevents accidental descriptor inheritance.
-        // pre_exec duplicates only the read end to fixed FD 5.
+        // O_CLOEXEC on all source descriptors prevents ambient inheritance.
+        // The trusted pre_exec trampoline duplicates only FD 3 (broker), FD 4
+        // (sealed manifest), and FD 5 (start gate) to their fixed child numbers.
         let mut pipe = [-1; 2];
         if unsafe { libc::pipe2(pipe.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
             return Err(SandboxError::Io(std::io::Error::last_os_error()));
         }
         let gate_read = unsafe { OwnedFd::from_raw_fd(pipe[0]) };
         let gate_write = unsafe { OwnedFd::from_raw_fd(pipe[1]) };
-        let gate_for_child = duplicate_cloexec(gate_read.as_raw_fd(), 10)?;
-        let manifest_for_child = duplicate_cloexec(manifest_file.as_raw_fd(), 11)?;
+        let broker_for_child = duplicate_cloexec(broker_stream.as_raw_fd(), 10)?;
+        let gate_for_child = duplicate_cloexec(gate_read.as_raw_fd(), 11)?;
+        let manifest_for_child = duplicate_cloexec(manifest_file.as_raw_fd(), 12)?;
 
         let mut cgroup = CgroupV2::create(
             &self.config.delegated_cgroup_root,
@@ -618,6 +639,9 @@ impl SandboxLauncher {
         // in pre_exec: it only duplicates already-open descriptors.
         unsafe {
             command.pre_exec(move || {
+                if libc::dup2(broker_for_child.as_raw_fd(), BROKER_FD) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
                 if libc::dup2(gate_for_child.as_raw_fd(), 5) < 0 {
                     return Err(std::io::Error::last_os_error());
                 }
@@ -630,6 +654,7 @@ impl SandboxLauncher {
 
         let mut child = command.spawn()?;
         drop(command);
+        drop(broker_stream);
         drop(gate_read);
 
         if let Err(error) = cgroup.attach_pid(child.id()) {
@@ -775,8 +800,8 @@ pub fn read_sealed_manifest(fd: RawFd) -> Result<SandboxManifest, SandboxError> 
 /// On any error the caller must terminate the process immediately.
 pub fn bootstrap_worker() -> Result<broker::BrokerClient, SandboxError> {
     let manifest = read_sealed_manifest(MANIFEST_FD)?;
-    let client = broker::BrokerClient::connect_reserved(&manifest.broker_socket)
-        .map_err(|e| SandboxError::Enforcement(format!("broker connection failed: {e}")))?;
+    let client = broker::BrokerClient::from_inherited_reserved(manifest.broker_uid)
+        .map_err(|e| SandboxError::Enforcement(format!("inherited broker FD verification failed: {e}")))?;
     if unsafe { libc::close(MANIFEST_FD) } != 0 {
         return Err(SandboxError::Enforcement(format!(
             "closing manifest FD failed: {}",
@@ -789,4 +814,26 @@ pub fn bootstrap_worker() -> Result<broker::BrokerClient, SandboxError> {
         BROKER_FD,
     )?;
     Ok(client)
+}
+
+
+fn socket_peer_uid(fd: RawFd) -> Result<u32, SandboxError> {
+    let mut cred = std::mem::MaybeUninit::<libc::ucred>::zeroed();
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let rc = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            cred.as_mut_ptr().cast(),
+            &mut len,
+        )
+    };
+    if rc != 0 {
+        return Err(SandboxError::Io(std::io::Error::last_os_error()));
+    }
+    if len as usize != std::mem::size_of::<libc::ucred>() {
+        return Err(SandboxError::Enforcement("invalid broker peer credentials".into()));
+    }
+    Ok(unsafe { cred.assume_init() }.uid)
 }
