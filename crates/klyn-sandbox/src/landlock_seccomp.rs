@@ -340,8 +340,9 @@ mod tests {
             let duplicated = unsafe { libc::dup2(raw_fd, BROKER_FD) };
             assert_eq!(duplicated, BROKER_FD);
         }
-        drop(harmless_fd);
-
+        // Keep the original file alive through filter installation. If it
+        // was opened directly as FD 3, dropping it here would invalidate the
+        // required broker descriptor before the filter checks it.
         apply_worker_seccomp(BROKER_FD).expect("seccomp must install or fail the child test");
 
         for domain in [libc::AF_INET, libc::AF_UNIX] {
