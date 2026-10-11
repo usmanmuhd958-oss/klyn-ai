@@ -285,6 +285,7 @@ export interface CapabilityInvocationCounter {
     readonly tokenId: string;
     readonly tokenDigest: string;
     readonly invocationId: string;
+    readonly requestDigest: string;
     readonly maxInvocations: number;
     readonly maxConcurrentInvocations: number;
     readonly nowEpochMs: number;
@@ -1353,6 +1354,7 @@ export class CapabilityInvocationPipelineV1 implements CapabilityInvocationPipel
         tokenId: request.token.payload.tokenId,
         tokenDigest,
         invocationId: request.invocationId,
+        requestDigest,
         maxInvocations: request.token.payload.budget.maxInvocations,
         maxConcurrentInvocations: request.token.payload.budget.maxConcurrentInvocations,
         nowEpochMs: now,
