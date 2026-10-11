@@ -13,7 +13,7 @@ use std::{
     net::{SocketAddr, TcpStream},
     os::{
         fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
-        unix::{fs::{FileTypeExt, MetadataExt, OpenOptionsExt}, net::{UnixListener, UnixStream}},
+        unix::{fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt}, net::{UnixListener, UnixStream}},
     },
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -166,7 +166,7 @@ impl ResourceBroker {
         }
 
         let listener = UnixListener::bind(&socket_path)?;
-        fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
+        fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o666))?;
 
         let mut roots = BTreeMap::new();
         for (id, path) in config.roots {
