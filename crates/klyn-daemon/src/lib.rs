@@ -6,16 +6,19 @@
 
 #![forbid(unsafe_code)]
 
+pub mod fs_service;
 pub mod lifecycle;
 pub mod policy;
 pub mod server;
 
 use std::sync::Arc;
 
+use klyn_fs::FsError;
 use klyn_protocol::{Method, ProtocolError, Request, Response, RpcErrorCode};
 use serde_json::json;
 
 use crate::{
+    fs_service::{FsService, FsServiceError},
     lifecycle::{Lifecycle, LifecycleError, RequestLease},
     policy::{PeerIdentity, PolicyEnforcer, PolicyError},
 };
@@ -23,11 +26,20 @@ use crate::{
 pub struct Router {
     lifecycle: Lifecycle,
     policy: Arc<dyn PolicyEnforcer>,
+    fs: Option<Arc<FsService>>,
 }
 
 impl Router {
     pub fn new(lifecycle: Lifecycle, policy: Arc<dyn PolicyEnforcer>) -> Self {
-        Self { lifecycle, policy }
+        Self { lifecycle, policy, fs: None }
+    }
+
+    pub fn with_fs(
+        lifecycle: Lifecycle,
+        policy: Arc<dyn PolicyEnforcer>,
+        fs: Arc<FsService>,
+    ) -> Self {
+        Self { lifecycle, policy, fs: Some(fs) }
     }
 
     pub fn lifecycle(&self) -> Lifecycle {
@@ -120,9 +132,75 @@ impl Router {
                 Ok(()) => Response::success(request_id, json!({"state": "draining"})),
                 Err(error) => lifecycle_error_response(Some(request_id), error),
             },
+            Method::FsBegin
+            | Method::FsWriteFile
+            | Method::FsStage
+            | Method::FsValidate
+            | Method::FsCommit
+            | Method::FsAbort => match &self.fs {
+                None => Response::failure(
+                    Some(request_id),
+                    RpcErrorCode::FilesystemUnavailable,
+                    "filesystem transaction service is unavailable",
+                ),
+                Some(service) => match service.execute(request.method, &request.params) {
+                    Ok(result) => Response::success(request_id, result),
+                    Err(error) => filesystem_error_response(Some(request_id), error),
+                },
+            },
         };
 
         (response, Some(lease))
+    }
+}
+
+
+fn filesystem_error_response(request_id: Option<u64>, error: FsServiceError) -> Response {
+    match error {
+        FsServiceError::NotFound | FsServiceError::InvalidParameters => Response::failure(
+            request_id,
+            RpcErrorCode::InvalidState,
+            "filesystem transaction or parameters are invalid",
+        ),
+        FsServiceError::RegistryUnavailable => Response::failure(
+            request_id,
+            RpcErrorCode::FilesystemUnavailable,
+            "filesystem transaction registry is unavailable",
+        ),
+        FsServiceError::Engine(error) => match error {
+            FsError::Conflict { .. } | FsError::WriteConflict => Response::failure(
+                request_id,
+                RpcErrorCode::Conflict,
+                "revision or file precondition conflict",
+            ),
+            FsError::PathEscape
+            | FsError::SymlinkRejected
+            | FsError::InvalidPathType
+            | FsError::MutationTooLarge => Response::failure(
+                request_id,
+                RpcErrorCode::InvalidPath,
+                "candidate path or mutation rejected",
+            ),
+            FsError::WrongState { .. }
+            | FsError::InvalidTransition { .. }
+            | FsError::EmptyTransaction
+            | FsError::LinkOrSubmoduleChange => Response::failure(
+                request_id,
+                RpcErrorCode::InvalidState,
+                "filesystem transaction state or staged content is invalid",
+            ),
+            FsError::PublishedButJournalIncomplete { .. }
+            | FsError::PublishedCleanupPending { .. } => Response::failure(
+                request_id,
+                RpcErrorCode::FilesystemUnavailable,
+                "publication succeeded; journal reconciliation or candidate cleanup is required",
+            ),
+            _ => Response::failure(
+                request_id,
+                RpcErrorCode::FilesystemUnavailable,
+                "filesystem transaction failed closed",
+            ),
+        },
     }
 }
 
