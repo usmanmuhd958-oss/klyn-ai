@@ -435,7 +435,7 @@ test("invocation rejects a bad request digest before sandbox setup or execution"
       resolvePrincipalId: (keyId) => keyId === "test-key-v1" ? "root-authority" : undefined,
     },
     evidence: new TestEvidenceSink(),
-    broker: { async perform() { return null; } },
+    broker: { async perform() { throw new Error("unused broker fixture"); } },
     now: () => 2000,
   });
   await assert.rejects(pipeline.invoke(request, {
