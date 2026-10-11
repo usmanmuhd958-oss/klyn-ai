@@ -1988,6 +1988,165 @@ mod tests {
         assert_eq!(value, "restricted capability data");
     }
 
+    struct TestKeyResolver(HashMap<String, crate::TrustedCapabilityKey>);
+
+    impl CapabilityKeyResolver for TestKeyResolver {
+        fn resolve(&self, key_id: &str) -> Option<crate::TrustedCapabilityKey> {
+            self.0.get(key_id).cloned()
+        }
+    }
+
+    #[test]
+    fn client_verifies_signed_attestation_and_kel_receipt_before_exposing_fd() {
+        use ed25519_dalek::{Signer, SigningKey};
+
+        let issuer_key = SigningKey::from_bytes(&[11u8; 32]);
+        let collector_key = SigningKey::from_bytes(&[22u8; 32]);
+        let now = current_epoch_ms().unwrap();
+        let budget = CapabilityBudget {
+            max_invocations: 10,
+            max_concurrent_invocations: 2,
+            max_wall_clock_ms_per_invocation: 60_000,
+            max_cpu_ms_per_invocation: 30_000,
+            max_memory_bytes: 64 * 1024 * 1024,
+            max_network_bytes: 4096,
+            max_output_bytes: 4096,
+            max_processes: 1,
+            max_financial_spend_minor_units: 0,
+        };
+        let scope = CapabilityScope::Filesystem {
+            handle_id: "fs-handle-1".into(),
+            resource_id: "workspace-1".into(),
+            operations: vec!["fs.read".into()],
+            relative_path_prefix: "repo/src".into(),
+            max_bytes_per_invocation: 4096,
+        };
+        let payload = crate::CapabilityTokenV1 {
+            schema: crate::CAPABILITY_TOKEN_SCHEMA.into(),
+            token_id: "token-1".into(),
+            issuer_principal_id: "issuer-a".into(),
+            subject_principal_id: "agent-a".into(),
+            mission_id: "mission-1".into(),
+            audience: "runtime-a".into(),
+            nonce: "nonce-1".into(),
+            issued_at_epoch_ms: now,
+            not_before_epoch_ms: now,
+            expires_at_epoch_ms: now + 60_000,
+            parent_token_digest: None,
+            delegation_depth: 0,
+            delegation: crate::CapabilityDelegationPolicy {
+                enabled: false,
+                max_depth: 0,
+                allowed_delegate_principal_ids: vec![],
+            },
+            scopes: vec![scope.clone()],
+            budget,
+            policy_digest: "f".repeat(64),
+        };
+        let token = crate::CapabilityToken {
+            signature: crate::CapabilitySignatureV1 {
+                algorithm: "Ed25519".into(),
+                key_id: "issuer-key".into(),
+                signature_base64: BASE64.encode(issuer_key.sign(&jcs_bytes(&payload).unwrap()).to_bytes()),
+            },
+            payload,
+        };
+        let mut operation = CapabilityResourceRequest {
+            kind: "filesystem".into(),
+            handle_id: "fs-handle-1".into(),
+            operation: "fs.read".into(),
+            request_digest: String::new(),
+            resource_selector: json!({"relativePath":"repo/src/main.rs","maxBytes":32})
+                .as_object().unwrap().clone(),
+            requested_budgets: RequestedBudget { max_output_bytes: Some(32), ..Default::default() },
+        };
+        operation.request_digest = operation.canonical_digest().unwrap();
+        let request = CapabilityInvocationRequest {
+            invocation_id: "invoke-1".into(),
+            mission_id: "mission-1".into(),
+            principal_id: "agent-a".into(),
+            runtime_instance_id: "runtime-a".into(),
+            audience: "runtime-a".into(),
+            token: token.clone(),
+            operation: operation.clone(),
+            deadline_epoch_ms: now + 30_000,
+            sandbox_profile_digest: "d".repeat(64),
+        };
+        let token_digest = token.digest().unwrap();
+        let scope_digest = digest_jcs(&scope).unwrap();
+        let attestation_payload = PreExecutionAttestationPayloadV1 {
+            schema: CAPABILITY_ATTESTATION_SCHEMA.into(),
+            collector_principal_id: "runtime-collector".into(),
+            invocation_id: request.invocation_id.clone(),
+            token_id: token.payload.token_id.clone(),
+            token_digest: token_digest.clone(),
+            principal_id: request.principal_id.clone(),
+            mission_id: request.mission_id.clone(),
+            runtime_instance_id: request.runtime_instance_id.clone(),
+            audience: request.audience.clone(),
+            request_digest: operation.request_digest.clone(),
+            scope_digest,
+            policy_digest: token.payload.policy_digest.clone(),
+            sandbox_profile_digest: request.sandbox_profile_digest.clone(),
+            reservation_id: "reservation-1".into(),
+            issued_at_epoch_ms: now,
+            expires_at_epoch_ms: request.deadline_epoch_ms,
+        };
+        let attestation = PreExecutionAttestationV1 {
+            signature: crate::CapabilitySignatureV1 {
+                algorithm: "Ed25519".into(),
+                key_id: "collector-key".into(),
+                signature_base64: BASE64.encode(collector_key.sign(&jcs_bytes(&attestation_payload).unwrap()).to_bytes()),
+            },
+            payload: attestation_payload,
+        };
+        let response = BrokerResponse {
+            schema: BROKER_RESPONSE_SCHEMA.into(),
+            invocation_id: request.invocation_id.clone(),
+            allowed: true,
+            reason_code: "capability_authorized".into(),
+            token_digest: Some(token_digest),
+            request_digest: Some(operation.request_digest.clone()),
+            fd_count: 1,
+            attestation: Some(attestation),
+            authorization_evidence: Some(EvidenceReceipt {
+                ledger_id: "kel-ledger-1".into(),
+                evidence_id: "invoke-1:authorized".into(),
+                statement_digest: "c".repeat(64),
+                committed_at_epoch_ms: now,
+            }),
+            error: None,
+        };
+        let resolver = TestKeyResolver(HashMap::from([
+            ("issuer-key".into(), crate::TrustedCapabilityKey {
+                principal_id: "issuer-a".into(),
+                public_key: issuer_key.verifying_key().to_bytes(),
+            }),
+            ("collector-key".into(), crate::TrustedCapabilityKey {
+                principal_id: "runtime-collector".into(),
+                public_key: collector_key.verifying_key().to_bytes(),
+            }),
+        ]));
+        let client = BrokerClient::new(Arc::new(resolver), "runtime-collector".into(), 100).unwrap();
+        let (mut client_stream, mut server_stream) = UnixStream::pair().unwrap();
+        let server = thread::spawn(move || {
+            let bytes = read_frame(&mut server_stream).unwrap();
+            let received: BrokerRequestEnvelope = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(received.schema, BROKER_PROTOCOL_SCHEMA);
+            assert_eq!(received.invocation.invocation_id, "invoke-1");
+            let fd = memfd_snapshot(b"authorized file snapshot").unwrap();
+            send_frame_with_fd(&mut server_stream, &response, fd.as_raw_fd()).unwrap();
+        });
+
+        let grant = client.invoke(&mut client_stream, &request).unwrap();
+        server.join().unwrap();
+        let mut fd = File::from(grant.fd.expect("verified descriptor should be returned"));
+        let mut bytes = String::new();
+        fd.read_to_string(&mut bytes).unwrap();
+        assert_eq!(bytes, "authorized file snapshot");
+        assert_eq!(grant.response.authorization_evidence.unwrap().evidence_id, "invoke-1:authorized");
+    }
+
     #[test]
     fn peer_credentials_require_kernel_socket_metadata() {
         let (left, _right) = UnixStream::pair().unwrap();
