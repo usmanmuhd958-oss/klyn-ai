@@ -1,6 +1,13 @@
 [workspace]
 members = [
-    "crates/klyn-vault",
     "crates/klyn-sandbox",
+    "crates/klyn-protocol",
+    "crates/klyn-daemon",
+]
+# These manifests currently have no Rust target and are intentionally kept out
+# of the buildable workspace until their implementation phase.
+exclude = [
+    "crates/klyn-vault",
+    "crates/klyn-types",
 ]
 resolver = "2"
