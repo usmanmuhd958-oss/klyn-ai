@@ -826,8 +826,8 @@ fn scope_matches_selector(scope: &CapabilityScope, operation: &CapabilityResourc
     match scope {
         CapabilityScope::Filesystem { relative_path_prefix, max_bytes_per_invocation, .. } => {
             let allowed: &[&str] = match operation.operation.as_str() {
-                "fs.delete" => &["relativePath", "directory"],
-                "fs.metadata" => &["relativePath"],
+                "fs.delete" | "fs.metadata" => &["relativePath"],
+                "fs.write" | "fs.create" => &["relativePath", "maxBytes", "contentDigest"],
                 _ => &["relativePath", "maxBytes"],
             };
             reject_selector_keys(selector, allowed)?;
@@ -842,6 +842,13 @@ fn scope_matches_selector(scope: &CapabilityScope, operation: &CapabilityResourc
                 let max = selector.get("maxBytes").and_then(Value::as_u64)
                     .ok_or_else(|| SandboxError::Denied("filesystem operation requires maxBytes".into()))?;
                 if max == 0 || max > *max_bytes_per_invocation || max > MAX_FD_PAYLOAD_BYTES { return Ok(false); }
+            }
+            if matches!(operation.operation.as_str(), "fs.write" | "fs.create") {
+                let digest = selector.get("contentDigest").and_then(Value::as_str)
+                    .ok_or_else(|| SandboxError::Denied("filesystem write requires contentDigest".into()))?;
+                if !is_digest(digest) { return Ok(false); }
+            } else if selector.contains_key("contentDigest") {
+                return Ok(false);
             }
             Ok(true)
         }
