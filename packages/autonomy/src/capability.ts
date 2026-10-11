@@ -392,23 +392,30 @@ export interface CapabilitySandboxEnforcer {
   terminate(lease: CapabilitySandboxLease, reasonCode: string): Promise<void>;
 }
 
-export interface IsolatedCapabilityExecutor<T> {
+export type CapabilityExecutionResult =
+  | string
+  | number
+  | boolean
+  | null
+  | Readonly<Record<string, unknown>>
+  | readonly unknown[];
+
+export interface IsolatedCapabilityExecutor {
   /**
-   * Execute inside an isolated worker. Implementations MUST NOT evaluate untrusted
-   * agent code in the authority process or hand it ambient process.env/fs/net APIs.
+   * Trusted dispatcher backed by a separate OS-isolated worker. The public invocation
+   * request cannot provide executable callbacks or choose a worker implementation.
    */
-  execute(context: CapabilityInvocationContext): Promise<T>;
+  execute(context: CapabilityInvocationContext): Promise<CapabilityExecutionResult>;
 }
 
 export interface CapabilityInvocationPipeline {
   /**
    * Normative order: validate signature/audience/time -> check revocation -> atomically
    * reserve quota -> resolve exact scope -> install sandbox -> obtain collector signature
-   * -> append authorization evidence to KEL -> assert sandbox -> dispatch isolated code.
-   * On any failure, execution MUST NOT start; reservations are finalized and denial evidence
-   * is appended where the evidence subsystem is available.
+   * -> append authorization evidence to KEL -> assert sandbox -> dispatch the configured
+   * isolated executor. On any failure, execution MUST NOT start.
    */
-  invoke<T>(request: CapabilityInvocationRequest, executor: IsolatedCapabilityExecutor<T>): Promise<T>;
+  invoke(request: CapabilityInvocationRequest): Promise<CapabilityExecutionResult>;
 }
 
 export interface AttenuatedCapabilityBuilder {
@@ -1026,6 +1033,8 @@ export interface CapabilityInvocationPipelineV1Dependencies {
   readonly collectorKeys: CapabilityKeyResolver;
   readonly evidence: CapabilityEvidenceSink;
   readonly broker: CapabilityResourceBroker;
+  /** Trusted executor configured at runtime startup; never supplied by an invocation caller. */
+  readonly executor: IsolatedCapabilityExecutor;
   readonly now?: () => number;
   readonly makeId?: () => string;
 }
@@ -1281,10 +1290,9 @@ export class CapabilityInvocationPipelineV1 implements CapabilityInvocationPipel
     this.makeId = dependencies.makeId ?? randomUUID;
   }
 
-  public async invoke<T>(
+  public async invoke(
     request: CapabilityInvocationRequest,
-    executor: IsolatedCapabilityExecutor<T>,
-  ): Promise<T> {
+  ): Promise<CapabilityExecutionResult> {
     let tokenDigest = "";
     let requestDigest = "";
     let reservation: CapabilityInvocationReservation | undefined;
@@ -1456,7 +1464,7 @@ export class CapabilityInvocationPipelineV1 implements CapabilityInvocationPipel
       });
 
       dispatchStarted = true;
-      const result = await Promise.race([executor.execute(context), abortWaiter.promise]);
+      const result = await Promise.race([this.dependencies.executor.execute(context), abortWaiter.promise]);
       if (this.now() >= effectiveDeadlineEpochMs || abortController.signal.aborted) {
         throw new CapabilitySecurityError("invocation_timeout", "capability invocation exceeded its wall-clock deadline");
       }
