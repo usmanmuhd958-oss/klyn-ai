@@ -263,6 +263,8 @@ mod tests {
             subject_gid: unsafe { libc::getegid() } as u32,
             expires_at_unix: u64::MAX,
             file_grants: vec![],
+            candidate_transaction_id: None,
+            candidate_write_enabled: false,
             network_grants: vec![],
             budget: ResourceBudget {
                 memory_max_bytes: 16 * 1024 * 1024,
