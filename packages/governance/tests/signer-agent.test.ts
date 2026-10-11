@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { connect } from 'node:net';
 import test from 'node:test';
+import { canonicalizeJcs, dssePreAuthEncoding, KEL_TREE_HEAD_PAYLOAD_TYPE, KEL_TREE_HEAD_SCHEMA } from '../src/kel.js';
 import {
   Pkcs11Ed25519Driver,
   UnixSignerAgent,
@@ -66,7 +67,19 @@ test('external signer agent protocol keeps private material behind injected HSM 
     assert.equal(info.result.keyEpoch, '7');
     assert.equal(info.result.publicKeyHex.length, 64);
 
-    const message = Buffer.from('KEL DSSE signer integration test');
+    const treeHead = {
+      schema: KEL_TREE_HEAD_SCHEMA,
+      ledgerId: 'ledger-signer-test',
+      hashAlgorithm: 'sha256',
+      treeAlgorithm: 'rfc9162-sha256',
+      treeSize: '0',
+      rootHash: 'sha256:' + 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+      previousCheckpointDigest: null,
+      keyEpoch: '7',
+      issuedAtEpochMs: '10',
+    };
+    const payload = Buffer.from(canonicalizeJcs(treeHead), 'utf8');
+    const message = Buffer.from(dssePreAuthEncoding(KEL_TREE_HEAD_PAYLOAD_TYPE, payload));
     const signed = await signerRequest(socketPath, {
       version: 1,
       token,
@@ -75,6 +88,15 @@ test('external signer agent protocol keeps private material behind injected HSM 
     }) as { result: { signatureBase64: string } };
     const signature = Buffer.from(signed.result.signatureBase64, 'base64');
     assert.equal(verify(null, message, pair.publicKey, signature), true);
+
+    const arbitraryMessage = Buffer.from('this key must not sign arbitrary content');
+    const denied = await signerRequest(socketPath, {
+      version: 1,
+      token,
+      method: 'signer.sign',
+      params: { keyId: 'hsm-key-1', payloadBase64: arbitraryMessage.toString('base64') },
+    }) as { error?: { code: string } };
+    assert.equal(denied.error?.code, 'signing_policy_violation');
 
     const rejected = await signerRequest(socketPath, {
       version: 1,
