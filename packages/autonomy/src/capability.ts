@@ -322,6 +322,7 @@ export interface CapabilityInvocationRequest {
 
 export interface PreExecutionAttestationPayloadV1 {
   readonly schema: typeof CAPABILITY_ATTESTATION_SCHEMA;
+  readonly collectorPrincipalId: string;
   readonly invocationId: string;
   readonly tokenId: string;
   readonly tokenDigest: string;
@@ -344,6 +345,8 @@ export interface PreExecutionAttestationV1 {
 }
 
 export interface ExecutionRuntimeCollector {
+  /** Principal ID bound to the collector's key by the trusted key registry. */
+  readonly principalId: string;
   /**
    * Signs a pre-execution decision using a runtime-controlled Ed25519 key. The key
    * MUST never be exposed to the agent or tool. This attestation is authorization
