@@ -9,9 +9,9 @@
 use std::{
     env,
     error::Error,
-    fs::{self, File, OpenOptions},
+    fs::{self, OpenOptions},
     io::{self, Read},
-    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
     process::ExitCode,
     sync::Arc,
