@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-import { createServer, type Server as HttpsServer } from 'node:https';
+import { createServer, request as httpsRequest, type Server as HttpsServer } from 'node:https';
 import { createHash, timingSafeEqual, verify, type KeyObject } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { DatabaseSync as DatabaseSyncType } from 'node:sqlite';
@@ -46,6 +46,7 @@ export interface WitnessNetworkWorkerOptions {
   readonly quorumVerifier: WitnessQuorumVerifier;
   readonly receiptStore: DurableWitnessReceiptStore;
   readonly peers?: readonly WitnessPeer[];
+  readonly maxConcurrentRequests?: number;
 }
 interface WorkerMessageV1 {
   readonly schema: typeof NETWORK_SCHEMA;
@@ -192,6 +193,8 @@ export class SqliteWitnessReceiptStore implements DurableWitnessReceiptStore {
 export class WitnessNetworkWorker {
   private server: HttpsServer | undefined;
   private readonly peers: readonly WitnessPeer[];
+  private readonly maxConcurrentRequests: number;
+  private activeRequests = 0;
 
   public constructor(private readonly options: WitnessNetworkWorkerOptions) {
     if (!options.bindHost || !Number.isInteger(options.port) || options.port < 1 || options.port > 65535) {
@@ -199,6 +202,10 @@ export class WitnessNetworkWorker {
     }
     if (!options.authToken || options.authToken.length < 32) throw new TypeError('witness API token must be at least 32 characters');
     this.peers = options.peers ?? [];
+    this.maxConcurrentRequests = options.maxConcurrentRequests ?? 16;
+    if (!Number.isSafeInteger(this.maxConcurrentRequests) || this.maxConcurrentRequests < 1 || this.maxConcurrentRequests > 128) {
+      throw new RangeError('maxConcurrentRequests must be in 1..128');
+    }
     if (this.peers.length > MAX_PEERS) throw new RangeError('witness peer list exceeds maximum');
     for (const peer of this.peers) {
       const parsed = new URL(peer.url);
@@ -220,10 +227,18 @@ export class WitnessNetworkWorker {
       requestCert: true,
       rejectUnauthorized: true,
       minVersion: 'TLSv1.2',
+      maxConnections: this.maxConcurrentRequests,
     }, (request, response) => {
+      if (this.activeRequests >= this.maxConcurrentRequests) {
+        sendJson(response, 503, { error: 'capacity_exhausted' });
+        return;
+      }
+      this.activeRequests += 1;
       void this.handle(request, response).catch(() => {
         if (!response.headersSent) sendJson(response, 500, { error: 'internal_error' });
         else response.destroy();
+      }).finally(() => {
+        this.activeRequests = Math.max(0, this.activeRequests - 1);
       });
     });
     this.server = server;
@@ -380,23 +395,55 @@ export class WitnessNetworkWorker {
   }
 
   private async postPeer(peer: WitnessPeer, path: string, payload: WorkerMessageV1): Promise<WorkerResponseV1> {
-    const response = await fetch(new URL(path, peer.url), {
-      method: 'POST',
-      signal: AbortSignal.timeout(peer.timeoutMs ?? 2_000),
-      headers: {
-        authorization: 'Bearer ' + peer.authToken,
-        'content-type': 'application/json',
-        accept: 'application/json',
-      },
-      body: JSON.stringify(payload),
+    const url = new URL(path, peer.url);
+    const body = Buffer.from(JSON.stringify(payload), 'utf8');
+    if (body.length > MAX_BODY_BYTES) throw new RangeError('gossip body exceeds configured size limit');
+    return await new Promise<WorkerResponseV1>((resolve, reject) => {
+      const request = httpsRequest(url, {
+        method: 'POST',
+        key: this.options.tls.key,
+        cert: this.options.tls.cert,
+        ca: this.options.tls.ca,
+        rejectUnauthorized: true,
+        timeout: peer.timeoutMs ?? 2_000,
+        headers: {
+          authorization: 'Bearer ' + peer.authToken,
+          'content-type': 'application/json',
+          accept: 'application/json',
+          'content-length': String(body.length),
+        },
+      }, (response) => {
+        let size = 0;
+        const chunks: Buffer[] = [];
+        response.on('data', (chunk: Buffer) => {
+          size += chunk.length;
+          if (size > MAX_BODY_BYTES) {
+            request.destroy(new RangeError('witness peer response exceeded body limit'));
+            return;
+          }
+          chunks.push(Buffer.from(chunk));
+        });
+        response.once('error', reject);
+        response.once('end', () => {
+          if ((response.statusCode ?? 500) < 200 || (response.statusCode ?? 500) >= 300) {
+            reject(new Error('witness peer returned HTTP ' + response.statusCode));
+            return;
+          }
+          let value: unknown;
+          try { value = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown; }
+          catch { reject(new Error('witness peer response is not valid JSON')); return; }
+          if (typeof value !== 'object' || value === null ||
+              (value as Record<string, unknown>).schema !== NETWORK_SCHEMA ||
+              !Array.isArray((value as Record<string, unknown>).signatures)) {
+            reject(new Error('witness peer response schema is invalid'));
+            return;
+          }
+          resolve(value as unknown as WorkerResponseV1);
+        });
+      });
+      request.once('timeout', () => request.destroy(new Error('witness peer request timed out')));
+      request.once('error', reject);
+      request.end(body);
     });
-    if (!response.ok) throw new Error('witness peer returned HTTP ' + response.status);
-    const value: unknown = await response.json();
-    if (typeof value !== 'object' || value === null ||
-        (value as Record<string, unknown>).schema !== NETWORK_SCHEMA ||
-        !Array.isArray((value as Record<string, unknown>).signatures)) {
-      throw new Error('witness peer response schema is invalid');
-    }
-    return value as unknown as WorkerResponseV1;
   }
 }
