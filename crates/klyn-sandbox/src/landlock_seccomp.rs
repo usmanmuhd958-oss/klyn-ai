@@ -354,7 +354,7 @@ pub fn allowed_syscalls() -> Result<Vec<u32>> {
     let values: &[u32] = &[
         19, 20, 21, 22, 23, 24, 25, 57, 62, 63, 64, 65, 66, 67, 72, 73, 80,
         85, 86, 87, 93, 94, 96, 98, 99, 101, 113, 115, 124, 128, 132, 134, 135,
-        139, 160, 172, 174, 175, 176, 177, 178, 211, 212, 214, 215, 216, 222,
+        139, 160, 172, 174, 175, 176, 177, 178, 212, 214, 215, 216, 222,
         226, 233, 261, 278, 293, 441,
     ];
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -410,6 +410,24 @@ mod tests {
         assert_eq!(program[0].k, SECCOMP_ARCH_OFFSET);
         assert_eq!(program[2].k, SECCOMP_RET_KILL_PROCESS);
         assert_eq!(program.last().unwrap().k, SECCOMP_RET_ERRNO | (libc::EPERM as u32));
+    }
+
+    #[test]
+    fn explicit_allow_list_excludes_path_open_socket_and_execution() {
+        let allowed = allowed_syscalls().unwrap();
+        #[cfg(target_arch = "x86_64")]
+        {
+            assert!(!allowed.contains(&2));   // open
+            assert!(!allowed.contains(&257)); // openat
+            assert!(!allowed.contains(&41));  // socket
+            assert!(!allowed.contains(&59));  // execve
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            assert!(!allowed.contains(&56));  // openat
+            assert!(!allowed.contains(&198)); // socket
+            assert!(!allowed.contains(&221)); // execve
+        }
     }
 
     #[test]
