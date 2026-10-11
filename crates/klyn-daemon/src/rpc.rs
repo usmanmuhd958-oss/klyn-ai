@@ -12,7 +12,7 @@ use serde_json::Value;
 use std::{
     fs,
     io::{self, Read, Write},
-    os::unix::{fs::{FileTypeExt, PermissionsExt}, net::{UnixListener, UnixStream}},
+    os::unix::{fs::{DirBuilderExt, FileTypeExt, PermissionsExt}, net::{UnixListener, UnixStream}},
     path::Path,
     sync::{atomic::{AtomicBool, AtomicUsize, Ordering}, Arc, Mutex},
     thread,
@@ -344,7 +344,7 @@ pub fn serve(
     }
     let socket_path = socket_path.as_ref();
     if let Some(parent) = socket_path.parent() {
-        fs::create_dir_all(parent)?;
+        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(parent)?;
         // A private parent directory prevents another local user from replacing the
         // socket path between startup checks and bind. It is created only if absent.
         if let Ok(metadata) = fs::metadata(parent) {
@@ -493,6 +493,25 @@ mod framing_tests {
         let result = accepted.result.expect("health result");
         assert_eq!(result["ledgerId"], "rpc-test-ledger");
         assert_eq!(result["treeSize"], "0");
+    }
+
+    #[test]
+    fn active_connection_pool_enforces_hard_capacity() {
+        let active = AtomicUsize::new(0);
+        assert!(try_acquire_connection(&active, 2));
+        assert!(try_acquire_connection(&active, 2));
+        assert!(!try_acquire_connection(&active, 2));
+        assert_eq!(active.load(Ordering::Acquire), 2);
+        active.fetch_sub(1, Ordering::Release);
+        assert!(try_acquire_connection(&active, 2));
+        assert_eq!(active.load(Ordering::Acquire), 2);
+    }
+
+    #[test]
+    fn peer_uid_matches_socket_peer_credentials() {
+        use std::os::unix::net::UnixStream;
+        let (left, _right) = UnixStream::pair().expect("socket pair");
+        assert_eq!(peer_uid(&left).expect("SO_PEERCRED"), unsafe { libc::geteuid() });
     }
 
     #[test]
