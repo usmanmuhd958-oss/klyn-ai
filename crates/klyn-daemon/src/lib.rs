@@ -17,7 +17,7 @@ use klyn_evidence::{
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, path::Path, sync::Arc};
+use std::{collections::{BTreeMap, HashSet}, path::Path, sync::Arc};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -86,6 +86,54 @@ impl CheckpointSigner for LocalEd25519Signer {
     fn sign_pae(&self, pre_auth_encoding: &[u8]) -> std::result::Result<[u8; 64], SigningProviderError> {
         Ok(self.signing_key.sign(pre_auth_encoding).to_bytes())
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WitnessKeyConfigV1 {
+    pub key_id: String,
+    pub witness_id: String,
+    pub key_epoch: String,
+    pub public_key_hex: String,
+    pub not_before_epoch_ms: String,
+    pub not_after_epoch_ms: String,
+    #[serde(default)]
+    pub revoked_at_epoch_ms: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WitnessSignatureV1 {
+    pub witness_id: String,
+    pub key_id: String,
+    pub key_epoch: String,
+    pub signature_base64: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WitnessQuorumStatusV1 {
+    pub checkpoint_digest: String,
+    pub ledger_id: String,
+    pub tree_size: String,
+    pub root_hash: String,
+    pub threshold: u8,
+    pub valid_witness_count: u32,
+    pub valid_witness_ids: Vec<String>,
+    pub accepted: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WitnessStatementV1 {
+    schema: &'static str,
+    witness_id: String,
+    ledger_id: String,
+    tree_size: String,
+    root_hash: String,
+    tree_head_digest: String,
+    checkpoint_key_epoch: String,
+    issued_at_epoch_ms: String,
 }
 
 pub struct EvidenceStore {
@@ -176,6 +224,47 @@ impl EvidenceStore {
                 envelope_json TEXT NOT NULL,
                 issued_at_epoch_ms TEXT NOT NULL
              ) STRICT;
+             CREATE TABLE IF NOT EXISTS witness_keys (
+                key_id TEXT PRIMARY KEY,
+                witness_id TEXT NOT NULL,
+                key_epoch TEXT NOT NULL,
+                public_key_hex TEXT NOT NULL CHECK(length(public_key_hex) = 64),
+                not_before_epoch_ms TEXT NOT NULL,
+                not_after_epoch_ms TEXT NOT NULL,
+                revoked_at_epoch_ms TEXT,
+                UNIQUE(witness_id, key_epoch)
+             ) STRICT;
+             CREATE TABLE IF NOT EXISTS witness_checkpoint_quorums (
+                checkpoint_digest TEXT PRIMARY KEY,
+                ledger_id TEXT NOT NULL,
+                tree_size INTEGER NOT NULL CHECK(tree_size >= 0),
+                root_hash TEXT NOT NULL CHECK(length(root_hash) = 71),
+                threshold INTEGER NOT NULL CHECK(threshold IN (2,3)),
+                status TEXT NOT NULL CHECK(status IN ('collecting', 'quorum_met')),
+                created_at_epoch_ms TEXT NOT NULL
+             ) STRICT;
+             CREATE TABLE IF NOT EXISTS witness_receipts (
+                checkpoint_digest TEXT NOT NULL REFERENCES witness_checkpoint_quorums(checkpoint_digest),
+                witness_id TEXT NOT NULL,
+                key_id TEXT NOT NULL REFERENCES witness_keys(key_id),
+                key_epoch TEXT NOT NULL,
+                statement_json TEXT NOT NULL,
+                signature_base64 TEXT NOT NULL,
+                received_at_epoch_ms TEXT NOT NULL,
+                PRIMARY KEY(checkpoint_digest, witness_id)
+             ) STRICT;
+             CREATE TRIGGER IF NOT EXISTS witness_receipts_no_update
+             BEFORE UPDATE ON witness_receipts BEGIN
+                SELECT RAISE(ABORT, 'witness receipts are append-only');
+             END;
+             CREATE TRIGGER IF NOT EXISTS witness_receipts_no_delete
+             BEFORE DELETE ON witness_receipts BEGIN
+                SELECT RAISE(ABORT, 'witness receipts are append-only');
+             END;
+             CREATE TRIGGER IF NOT EXISTS witness_checkpoint_quorums_immutable_binding
+             BEFORE UPDATE OF checkpoint_digest, ledger_id, tree_size, root_hash, threshold, created_at_epoch_ms ON witness_checkpoint_quorums BEGIN
+                SELECT RAISE(ABORT, 'witness quorum checkpoint binding is immutable');
+             END;
              CREATE TRIGGER IF NOT EXISTS ledger_leaves_no_update
              BEFORE UPDATE ON ledger_leaves BEGIN
                 SELECT RAISE(ABORT, 'KEL leaves are append-only');
@@ -432,6 +521,221 @@ impl EvidenceStore {
             "SELECT tree_size FROM ledger_meta WHERE ledger_id=?1", params![self.ledger_id], |r| r.get(0)
         )?;
         Ok(size as u64)
+    }
+
+    /// Configure a witness verification key. Key IDs and (witness, epoch) pairs are never reused.
+    /// Public keys are immutable; revocation can only transition from absent to a timestamp.
+    pub fn configure_witness_key(&mut self, config: &WitnessKeyConfigV1) -> Result<()> {
+        if config.key_id.trim().is_empty() || config.witness_id.trim().is_empty() ||
+            config.key_epoch.parse::<u64>().is_err() ||
+            config.not_before_epoch_ms.parse::<u64>().is_err() ||
+            config.not_after_epoch_ms.parse::<u64>().is_err() ||
+            config.not_before_epoch_ms.parse::<u64>().unwrap() >= config.not_after_epoch_ms.parse::<u64>().unwrap() {
+            return Err(LedgerError::Invariant("invalid witness key metadata".into()));
+        }
+        if let Some(revoked) = &config.revoked_at_epoch_ms {
+            if revoked.parse::<u64>().is_err() {
+                return Err(LedgerError::Invariant("invalid witness key revocation timestamp".into()));
+            }
+        }
+        if config.public_key_hex.len() != 64 || !config.public_key_hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(LedgerError::Invariant("witness public key must be 32 bytes of hex".into()));
+        }
+        let public_bytes: [u8; 32] = hex::decode(&config.public_key_hex)?.try_into()
+            .map_err(|_| LedgerError::Invariant("witness public key must be 32 bytes".into()))?;
+        VerifyingKey::from_bytes(&public_bytes)
+            .map_err(|_| LedgerError::Invariant("invalid Ed25519 witness public key".into()))?;
+
+        let existing: Option<(String, String, String, String, String, Option<String>)> = self.connection.query_row(
+            "SELECT witness_id, key_epoch, public_key_hex, not_before_epoch_ms, not_after_epoch_ms, revoked_at_epoch_ms
+             FROM witness_keys WHERE key_id=?1",
+            params![config.key_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+        ).optional()?;
+        if let Some((witness_id, epoch, public_key, not_before, not_after, revoked)) = existing {
+            if witness_id != config.witness_id || epoch != config.key_epoch ||
+                public_key != config.public_key_hex.to_ascii_lowercase() ||
+                not_before != config.not_before_epoch_ms || not_after != config.not_after_epoch_ms {
+                return Err(LedgerError::Invariant("witness key IDs are immutable and cannot be reused".into()));
+            }
+            if let Some(new_revoked) = &config.revoked_at_epoch_ms {
+                if revoked.as_deref().is_some_and(|prior| prior != new_revoked) {
+                    return Err(LedgerError::Invariant("witness key was already revoked at another time".into()));
+                }
+                self.connection.execute(
+                    "UPDATE witness_keys SET revoked_at_epoch_ms=?1 WHERE key_id=?2 AND revoked_at_epoch_ms IS NULL",
+                    params![new_revoked, config.key_id],
+                )?;
+            }
+            return Ok(());
+        }
+
+        self.connection.execute(
+            "INSERT INTO witness_keys(key_id,witness_id,key_epoch,public_key_hex,not_before_epoch_ms,not_after_epoch_ms,revoked_at_epoch_ms)
+             VALUES(?1,?2,?3,?4,?5,?6,?7)",
+            params![
+                config.key_id, config.witness_id, config.key_epoch,
+                config.public_key_hex.to_ascii_lowercase(), config.not_before_epoch_ms,
+                config.not_after_epoch_ms, config.revoked_at_epoch_ms
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Verify and durably store independently signed witness receipts. A partial valid set
+    /// is persisted as collecting; accepted is true only once the configured threshold is met.
+    pub fn submit_witness_receipts(
+        &mut self,
+        checkpoint_envelope: &DsseEnvelopeV1,
+        signatures: &[WitnessSignatureV1],
+        threshold: u8,
+        now_epoch_ms: u64,
+    ) -> Result<WitnessQuorumStatusV1> {
+        if !(2..=3).contains(&threshold) {
+            return Err(LedgerError::Invariant("witness threshold must be 2 or 3".into()));
+        }
+        let checkpoint_keys = BTreeMap::from([(
+            self.checkpoint_signer.key_id().to_owned(),
+            *self.checkpoint_signer.verifying_key(),
+        )]);
+        let tree_head: TreeHeadV1 =
+            verify_envelope(checkpoint_envelope, TREE_HEAD_PAYLOAD_TYPE, &checkpoint_keys)?;
+        if tree_head.ledger_id != self.ledger_id ||
+            tree_head.key_epoch != self.checkpoint_signer.key_epoch() ||
+            tree_head.tree_size.parse::<u64>().is_err() ||
+            tree_head.issued_at_epoch_ms.parse::<u64>().is_err() {
+            return Err(LedgerError::Invariant("checkpoint metadata does not match active ledger key".into()));
+        }
+        let checkpoint_digest = digest_json(checkpoint_envelope)?;
+        let stored: Option<(i64, String, String)> = self.connection.query_row(
+            "SELECT tree_size, root_hash, ledger_id FROM signed_tree_heads WHERE checkpoint_digest=?1",
+            params![checkpoint_digest],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).optional()?;
+        let (stored_size, stored_root, stored_ledger) = stored
+            .ok_or_else(|| LedgerError::Invariant("witness checkpoint is not a committed signed tree head".into()))?;
+        if stored_size.to_string() != tree_head.tree_size ||
+            format!("sha256:{stored_root}") != tree_head.root_hash ||
+            stored_ledger != tree_head.ledger_id {
+            return Err(LedgerError::Invariant("witness checkpoint does not match persisted tree head".into()));
+        }
+
+        let mut seen = HashSet::new();
+        let mut verified: Vec<(WitnessSignatureV1, String)> = Vec::new();
+        for witness in signatures {
+            if witness.witness_id.trim().is_empty() || !seen.insert(witness.witness_id.clone()) {
+                return Err(LedgerError::Invariant("duplicate or empty witness identity".into()));
+            }
+            let key_row: Option<(String, String, String, String, Option<String>)> = self.connection.query_row(
+                "SELECT witness_id, key_epoch, public_key_hex, not_before_epoch_ms, revoked_at_epoch_ms
+                 FROM witness_keys WHERE key_id=?1 AND not_after_epoch_ms > ?2",
+                params![witness.key_id, now_epoch_ms.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            ).optional()?;
+            let (registered_witness, registered_epoch, public_hex, not_before, revoked) = key_row
+                .ok_or_else(|| LedgerError::Invariant("unknown, expired, or revoked witness key".into()))?;
+            if registered_witness != witness.witness_id || registered_epoch != witness.key_epoch ||
+                revoked.is_some() || not_before.parse::<u64>().unwrap_or(u64::MAX) > now_epoch_ms {
+                return Err(LedgerError::Invariant("witness identity, epoch or validity check failed".into()));
+            }
+            let public_bytes: [u8; 32] = hex::decode(public_hex)?.try_into()
+                .map_err(|_| LedgerError::Invariant("invalid registered witness key".into()))?;
+            let verifying_key = VerifyingKey::from_bytes(&public_bytes)
+                .map_err(|_| LedgerError::Invariant("invalid registered witness key".into()))?;
+            let statement = WitnessStatementV1 {
+                schema: "urn:klyn:witness-statement:v1",
+                witness_id: witness.witness_id.clone(),
+                ledger_id: tree_head.ledger_id.clone(),
+                tree_size: tree_head.tree_size.clone(),
+                root_hash: tree_head.root_hash.clone(),
+                tree_head_digest: checkpoint_digest.clone(),
+                checkpoint_key_epoch: tree_head.key_epoch.clone(),
+                issued_at_epoch_ms: tree_head.issued_at_epoch_ms.clone(),
+            };
+            let signature_bytes = BASE64.decode(&witness.signature_base64)
+                .map_err(|_| LedgerError::Invariant("witness signature is not valid Base64".into()))?;
+            if signature_bytes.len() != 64 || BASE64.encode(&signature_bytes) != witness.signature_base64 {
+                return Err(LedgerError::Invariant("witness signature must be canonical Base64 Ed25519".into()));
+            }
+            let signature_array: [u8; 64] = signature_bytes.try_into()
+                .map_err(|_| LedgerError::Invariant("invalid witness signature size".into()))?;
+            let canonical_statement = canonicalize(&statement)?;
+            verifying_key.verify(&canonical_statement, &Signature::from_bytes(&signature_array))
+                .map_err(|_| LedgerError::Invariant("witness signature verification failed".into()))?;
+            let statement_json = String::from_utf8(canonical_statement)
+                .map_err(|error| LedgerError::Invariant(error.to_string()))?;
+            verified.push((witness.clone(), statement_json));
+        }
+
+        let tx = self.connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute(
+            "INSERT OR IGNORE INTO witness_checkpoint_quorums
+             (checkpoint_digest,ledger_id,tree_size,root_hash,threshold,status,created_at_epoch_ms)
+             VALUES(?1,?2,?3,?4,?5,'collecting',?6)",
+            params![
+                checkpoint_digest, tree_head.ledger_id,
+                stored_size, tree_head.root_hash, threshold, now_epoch_ms.to_string()
+            ],
+        )?;
+        let (existing_ledger, existing_size, existing_root, existing_threshold): (String, i64, String, i64) = tx.query_row(
+            "SELECT ledger_id,tree_size,root_hash,threshold FROM witness_checkpoint_quorums WHERE checkpoint_digest=?1",
+            params![checkpoint_digest],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        if existing_ledger != tree_head.ledger_id || existing_size != stored_size ||
+            existing_root != tree_head.root_hash || existing_threshold != threshold as i64 {
+            return Err(LedgerError::Invariant("witness quorum metadata conflict".into()));
+        }
+
+        for (witness, statement_json) in verified {
+            let previous: Option<(String, String)> = tx.query_row(
+                "SELECT key_id, signature_base64 FROM witness_receipts
+                 WHERE checkpoint_digest=?1 AND witness_id=?2",
+                params![checkpoint_digest, witness.witness_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            ).optional()?;
+            if let Some((key_id, signature)) = previous {
+                if key_id != witness.key_id || signature != witness.signature_base64 {
+                    return Err(LedgerError::Invariant("conflicting receipt already stored for witness/checkpoint".into()));
+                }
+            } else {
+                tx.execute(
+                    "INSERT INTO witness_receipts
+                     (checkpoint_digest,witness_id,key_id,key_epoch,statement_json,signature_base64,received_at_epoch_ms)
+                     VALUES(?1,?2,?3,?4,?5,?6,?7)",
+                    params![
+                        checkpoint_digest, witness.witness_id, witness.key_id, witness.key_epoch,
+                        statement_json, witness.signature_base64, now_epoch_ms.to_string()
+                    ],
+                )?;
+            }
+        }
+        let ids: Vec<String> = {
+            let mut statement = tx.prepare(
+                "SELECT witness_id FROM witness_receipts WHERE checkpoint_digest=?1 ORDER BY witness_id",
+            )?;
+            let rows = statement.query_map(params![checkpoint_digest], |row| row.get::<_, String>(0))?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        let accepted = ids.len() >= threshold as usize;
+        if accepted {
+            tx.execute(
+                "UPDATE witness_checkpoint_quorums SET status='quorum_met' WHERE checkpoint_digest=?1",
+                params![checkpoint_digest],
+            )?;
+        }
+        tx.commit()?;
+
+        Ok(WitnessQuorumStatusV1 {
+            checkpoint_digest,
+            ledger_id: tree_head.ledger_id,
+            tree_size: tree_head.tree_size,
+            root_hash: tree_head.root_hash,
+            threshold,
+            valid_witness_count: ids.len() as u32,
+            valid_witness_ids: ids,
+            accepted,
+        })
     }
 
     /// Retrieve a stored leaf together with an inclusion path against the latest checkpoint.
