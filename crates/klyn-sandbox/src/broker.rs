@@ -1159,6 +1159,34 @@ mod tests {
     }
 
     #[test]
+    fn scm_rights_transfers_only_the_authorized_descriptor() {
+        let (mut sender, mut receiver) = UnixStream::pair().unwrap();
+        let fd = memfd_snapshot(b"restricted capability data").unwrap();
+        let response = BrokerResponse {
+            schema: BROKER_RESPONSE_SCHEMA.into(),
+            invocation_id: "invoke-fd-test".into(),
+            allowed: true,
+            reason_code: "capability_authorized".into(),
+            token_digest: Some("a".repeat(64)),
+            request_digest: Some("b".repeat(64)),
+            fd_count: 1,
+            attestation: None,
+            authorization_evidence: None,
+            error: None,
+        };
+        send_frame_with_fd(&mut sender, &response, fd.as_raw_fd()).unwrap();
+        let (body, received_fd) = receive_frame_with_fd(&mut receiver).unwrap();
+        let decoded: BrokerResponse = serde_json::from_slice(&body).unwrap();
+        assert!(decoded.allowed);
+        assert_eq!(decoded.fd_count, 1);
+        let received_fd = received_fd.expect("SCM_RIGHTS descriptor expected");
+        let mut file = File::from(received_fd);
+        let mut value = String::new();
+        file.read_to_string(&mut value).unwrap();
+        assert_eq!(value, "restricted capability data");
+    }
+
+    #[test]
     fn peer_credentials_require_kernel_socket_metadata() {
         let (left, _right) = UnixStream::pair().unwrap();
         assert_eq!(peer_uid(left.as_raw_fd()).unwrap(), unsafe { libc::geteuid() });
