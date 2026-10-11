@@ -76,11 +76,23 @@ pub fn apply_landlock(
             )));
         }
 
-        let access = match grant.access {
-            FileAccess::Read => make_bitflags!(AccessFs::{ReadFile | ReadDir}),
-            FileAccess::Write => make_bitflags!(AccessFs::{WriteFile}),
-            FileAccess::ReadWrite => {
+        let metadata = std::fs::metadata(&canonical)?;
+        if !metadata.is_file() && !metadata.is_dir() {
+            return Err(SandboxError::InvalidConfig(format!(
+                "Landlock grant target must be a regular file or directory: {}",
+                canonical.display()
+            )));
+        }
+        let is_directory = metadata.is_dir();
+        let access = match (grant.access, is_directory) {
+            (FileAccess::Read, true) => make_bitflags!(AccessFs::{ReadFile | ReadDir}),
+            (FileAccess::Read, false) => make_bitflags!(AccessFs::{ReadFile}),
+            (FileAccess::Write, _) => make_bitflags!(AccessFs::{WriteFile}),
+            (FileAccess::ReadWrite, true) => {
                 make_bitflags!(AccessFs::{ReadFile | ReadDir | WriteFile})
+            }
+            (FileAccess::ReadWrite, false) => {
+                make_bitflags!(AccessFs::{ReadFile | WriteFile})
             }
         };
         ruleset = ruleset
