@@ -112,6 +112,8 @@ export interface CapabilityTokenV1 {
   readonly tokenId: string;
   readonly issuerPrincipalId: string;
   readonly subjectPrincipalId: string;
+  /** Capability is mission-bound and cannot be replayed in another mission. */
+  readonly missionId: string;
   /** Exact runtime/tenant audience; token cannot be replayed against another audience. */
   readonly audience: string;
   readonly nonce: string;
@@ -202,6 +204,7 @@ export interface CapabilityVerificationExpectation {
   readonly nowEpochMs?: number;
   readonly subjectPrincipalId?: string;
   readonly audience?: string;
+  readonly missionId?: string;
   readonly maxClockSkewMs?: number;
 }
 
@@ -561,6 +564,9 @@ export class Ed25519CapabilityTokenVerifier implements CapabilityTokenVerifier {
     if (expectation.audience && expectation.audience !== token.payload.audience) {
       throw new CapabilitySecurityError("audience_mismatch", "capability audience does not match this runtime");
     }
+    if (expectation.missionId && expectation.missionId !== token.payload.missionId) {
+      throw new CapabilitySecurityError("mission_mismatch", "capability is bound to another mission");
+    }
   }
 }
 
@@ -784,6 +790,7 @@ export function validateCapabilityPayload(payload: CapabilityTokenV1): void {
   validId(payload.tokenId, "tokenId");
   validId(payload.issuerPrincipalId, "issuerPrincipalId");
   validId(payload.subjectPrincipalId, "subjectPrincipalId");
+  validId(payload.missionId, "missionId");
   validId(payload.audience, "audience");
   validId(payload.nonce, "nonce");
   validId(payload.policyDigest, "policyDigest");
@@ -941,6 +948,7 @@ export class AttenuatedCapabilityBuilderV1 implements AttenuatedCapabilityBuilde
       tokenId: this.makeId(),
       issuerPrincipalId: parent.issuerPrincipalId,
       subjectPrincipalId: rule.subjectPrincipalId,
+      missionId: parent.missionId,
       audience: parent.audience,
       nonce: this.makeId(),
       issuedAtEpochMs: now,
