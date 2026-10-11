@@ -18,6 +18,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     ffi::CString,
@@ -557,21 +558,20 @@ impl CapabilityBroker {
         let selector = &operation.resource_selector;
         let relative = selector.get("relativePath").and_then(Value::as_str)
             .ok_or_else(|| SandboxError::Denied("filesystem resource selector requires relativePath".into()))?;
-        if relative.starts_with('/') || relative.contains('\0') ||
+        if relative.is_empty() || relative.starts_with('/') || relative.contains('\0') ||
             relative.split('/').any(|part| part.is_empty() || part == "." || part == "..") {
             return Err(SandboxError::Denied("filesystem path is not canonical relative syntax".into()));
         }
         let max_bytes = match selector.get("maxBytes") {
             Some(value) => value.as_u64().ok_or_else(|| SandboxError::Denied("maxBytes must be an unsigned integer".into()))?,
-            None if operation.operation == "fs.delete" => 0,
+            None if operation.operation == "fs.delete" || operation.operation == "fs.metadata" => 0,
             None => return Err(SandboxError::Denied("filesystem operation requires explicit maxBytes".into())),
         };
         if max_bytes > *scope_max_bytes || max_bytes > budget.max_output_bytes || max_bytes > MAX_FD_PAYLOAD_BYTES {
             return Err(SandboxError::BudgetExceeded("filesystem byte limit exceeds scope, output budget or broker maximum".into()));
         }
         let handle_id = &operation.handle_id;
-        let resource_registry = self.deps.resources.clone();
-        resource_registry.with_directory(handle_id, resource_id, |root| {
+        self.deps.resources.with_directory(handle_id, resource_id, |root| {
             match operation.operation.as_str() {
                 "fs.read" => {
                     reject_selector_keys(selector, &["relativePath", "maxBytes"])?;
@@ -579,7 +579,10 @@ impl CapabilityBroker {
                     let fd = open_beneath(root, relative, libc::O_RDONLY, 0)?;
                     let file = File::from(fd);
                     let mut bytes = Vec::with_capacity(max_bytes.min(64 * 1024) as usize);
-                    file.take(max_bytes).read_to_end(&mut bytes)?;
+                    file.take(max_bytes.saturating_add(1)).read_to_end(&mut bytes)?;
+                    if bytes.len() as u64 > max_bytes {
+                        return Err(SandboxError::BudgetExceeded("file content exceeds requested read ceiling".into()));
+                    }
                     Ok(PreparedResource { fd: Some(memfd_snapshot(&bytes)?), completion: None })
                 }
                 "fs.list" => {
@@ -591,33 +594,35 @@ impl CapabilityBroker {
                 }
                 "fs.metadata" => {
                     reject_selector_keys(selector, &["relativePath"])?;
-                    let fd = open_beneath(root, relative, 0x200000, 0)?; // O_PATH: no read/write permission
+                    let fd = open_beneath(root, relative, 0x200000, 0)?;
                     Ok(PreparedResource { fd: Some(fd), completion: None })
                 }
                 "fs.write" | "fs.create" => {
-                    reject_selector_keys(selector, &["relativePath", "maxBytes"])?;
+                    reject_selector_keys(selector, &["relativePath", "maxBytes", "contentDigest"])?;
                     if max_bytes == 0 { return Err(SandboxError::Denied("write byte budget must be positive".into())); }
-                    let flags = if operation.operation == "fs.create" {
-                        libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL
-                    } else {
-                        libc::O_WRONLY
-                    };
-                    let target = open_beneath(root, relative, flags, 0o600)?;
+                    let expected_digest = selector.get("contentDigest").and_then(Value::as_str)
+                        .ok_or_else(|| SandboxError::Denied("writes require contentDigest".into()))?.to_owned();
+                    if !is_digest(&expected_digest) {
+                        return Err(SandboxError::Denied("contentDigest must be lowercase SHA-256 hex".into()));
+                    }
+                    let root_copy = duplicate_fd(root.as_raw_fd())?;
                     let (read_end, write_end) = make_pipe()?;
                     let max = max_bytes;
+                    let operation_name = operation.operation.clone();
+                    let relative_path = relative.to_owned();
                     let worker = thread::Builder::new().name("klyn-fs-write-guard".into()).spawn(move || {
-                        pump_bounded_file_write(read_end, target, max)
+                        pump_bounded_file_write(
+                            read_end, root_copy, relative_path, operation_name, max, expected_digest,
+                        )
                     }).map_err(SandboxError::Io)?;
                     Ok(PreparedResource { fd: Some(write_end), completion: Some(worker) })
                 }
                 "fs.delete" => {
-                    reject_selector_keys(selector, &["relativePath", "directory"])?;
-                    let directory = selector.get("directory").and_then(Value::as_bool).unwrap_or(false);
+                    reject_selector_keys(selector, &["relativePath"])?;
                     let (parent, name) = split_parent_path(relative);
                     let parent_fd = open_scoped_directory(root, parent)?;
                     let name = CString::new(name).map_err(|_| SandboxError::Denied("filename contains NUL".into()))?;
-                    let flags = if directory { libc::AT_REMOVEDIR } else { 0 };
-                    if unsafe { libc::unlinkat(parent_fd.as_raw_fd(), name.as_ptr(), flags) } != 0 {
+                    if unsafe { libc::unlinkat(parent_fd.as_raw_fd(), name.as_ptr(), 0) } != 0 {
                         return Err(io::Error::last_os_error().into());
                     }
                     Ok(PreparedResource { fd: None, completion: None })
@@ -1040,9 +1045,35 @@ fn make_pipe() -> Result<(OwnedFd, OwnedFd)> {
     })
 }
 
-fn pump_bounded_file_write(read_fd: OwnedFd, target_fd: OwnedFd, maximum: u64) -> Result<()> {
+fn duplicate_fd(fd: RawFd) -> Result<OwnedFd> {
+    let duplicated = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 3) };
+    if duplicated < 0 { return Err(io::Error::last_os_error().into()); }
+    Ok(unsafe { OwnedFd::from_raw_fd(duplicated) })
+}
+
+fn create_staging_memfd() -> Result<File> {
+    let name = CString::new("klyn-write-staging").map_err(|e| SandboxError::Protocol(e.to_string()))?;
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    return Err(SandboxError::UnsupportedKernel("memfd_create is not configured for this architecture".into()));
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    {
+        let fd = unsafe { libc::syscall(libc::SYS_memfd_create, name.as_ptr(), MEMFD_CLOEXEC | MFD_ALLOW_SEALING) };
+        if fd < 0 { return Err(io::Error::last_os_error().into()); }
+        Ok(File::from(unsafe { OwnedFd::from_raw_fd(fd as RawFd) }))
+    }
+}
+
+fn pump_bounded_file_write(
+    read_fd: OwnedFd,
+    root_fd: OwnedFd,
+    relative_path: String,
+    operation: String,
+    maximum: u64,
+    expected_digest: String,
+) -> Result<()> {
     let mut source = File::from(read_fd);
-    let mut target = File::from(target_fd);
+    let mut staging = create_staging_memfd()?;
+    let mut hasher = Sha256::new();
     let mut written = 0u64;
     let mut chunk = [0u8; 8192];
     loop {
@@ -1050,12 +1081,31 @@ fn pump_bounded_file_write(read_fd: OwnedFd, target_fd: OwnedFd, maximum: u64) -
         if count == 0 { break; }
         let next = written.saturating_add(count as u64);
         if next > maximum {
-            return Err(SandboxError::BudgetExceeded("file write pipe exceeded the signed byte ceiling".into()));
+            return Err(SandboxError::BudgetExceeded("write pipe exceeded byte ceiling; target was not modified".into()));
         }
-        target.write_all(&chunk[..count])?;
+        hasher.update(&chunk[..count]);
+        staging.write_all(&chunk[..count])?;
         written = next;
     }
+    staging.flush()?;
+    if hex::encode(hasher.finalize()) != expected_digest {
+        return Err(SandboxError::Denied("write payload digest mismatch; target was not modified".into()));
+    }
+    if unsafe { libc::lseek(staging.as_raw_fd(), 0, libc::SEEK_SET) } < 0 {
+        return Err(io::Error::last_os_error().into());
+    }
+
+    let root = root_fd.as_fd();
+    let flags = if operation == "fs.create" {
+        libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL
+    } else {
+        libc::O_WRONLY | libc::O_TRUNC
+    };
+    let target_fd = open_beneath(root, &relative_path, flags, 0o600)?;
+    let mut target = File::from(target_fd);
+    io::copy(&mut staging, &mut target)?;
     target.flush()?;
+    target.sync_data()?;
     Ok(())
 }
 
@@ -1100,7 +1150,11 @@ fn list_directory_snapshot(fd: RawFd, maximum: u64) -> Result<Vec<u8>> {
         names.push(name);
     }
     names.sort();
-    serde_json::to_vec(&names).map_err(|e| SandboxError::Serialization(e.to_string()))
+    let encoded = serde_json::to_vec(&names).map_err(|e| SandboxError::Serialization(e.to_string()))?;
+    if encoded.len() as u64 > maximum || encoded.len() as u64 > MAX_FD_PAYLOAD_BYTES {
+        return Err(SandboxError::BudgetExceeded("serialized directory listing exceeds byte ceiling".into()));
+    }
+    Ok(encoded)
 }
 
 fn pump_bounded_network(proxy: UnixStream, remote: TcpStream, maximum: u64) -> Result<()> {
