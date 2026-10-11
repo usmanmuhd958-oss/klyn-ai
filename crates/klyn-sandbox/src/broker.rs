@@ -8,9 +8,9 @@
 
 use crate::{
     digest_jcs, jcs_bytes, path_is_within, CapabilityBudget, CapabilityEvidenceEvent,
-    CapabilityInvocationRequest, CapabilityKeyResolver, CapabilityResourceRequest,
-    CapabilityScope, EvidenceReceipt, PreExecutionAttestationPayloadV1,
-    PreExecutionAttestationV1, RequestedBudget, SandboxError, TokenExpectation, Result,
+    CapabilityInvocationRequest, CapabilityKeyResolver, CapabilityScope, EvidenceReceipt,
+    PreExecutionAttestationPayloadV1, PreExecutionAttestationV1, SandboxError,
+    TokenExpectation, Result,
     BROKER_PROTOCOL_SCHEMA, BROKER_RESPONSE_SCHEMA, CAPABILITY_ATTESTATION_SCHEMA,
     CAPABILITY_EVIDENCE_SCHEMA, MAX_BROKER_FRAME_BYTES, MAX_FD_PAYLOAD_BYTES,
 };
@@ -20,8 +20,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::{
     collections::HashMap,
-    ffi::{CStr, CString},
-    fs::{self, File, OpenOptions},
+    ffi::CString,
+    fs::{self, File},
     io::{self, Read, Write},
     net::{SocketAddr, TcpStream, ToSocketAddrs},
     os::{
@@ -43,6 +43,13 @@ const F_SEAL_SEAL: i32 = 0x0001;
 const F_SEAL_SHRINK: i32 = 0x0002;
 const F_SEAL_GROW: i32 = 0x0004;
 const F_SEAL_WRITE: i32 = 0x0008;
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrokerRequestEnvelope {
+    pub schema: String,
+    pub invocation: CapabilityInvocationRequest,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -227,16 +234,21 @@ impl CapabilityBroker {
         let principal = self.deps.peer_principals.principal_for_uid(uid)
             .ok_or_else(|| SandboxError::Denied("Unix peer UID has no configured principal".into()));
         let body = read_frame(stream);
-        let parsed = body.and_then(|bytes| serde_json::from_slice::<CapabilityInvocationRequest>(&bytes)
+        let parsed = body.and_then(|bytes| serde_json::from_slice::<BrokerRequestEnvelope>(&bytes)
             .map_err(|e| SandboxError::Protocol(e.to_string())));
-        let request = match parsed {
-            Ok(request) => request,
+        let envelope = match parsed {
+            Ok(envelope) if envelope.schema == BROKER_PROTOCOL_SCHEMA => envelope,
+            Ok(_) => {
+                write_frame(stream, &BrokerResponse::denied(invocation_id_hint, "protocol_schema_invalid", "unsupported broker request schema"))?;
+                return Ok(());
+            }
             Err(error) => {
                 let response = BrokerResponse::denied(invocation_id_hint, "malformed_request", error);
                 write_frame(stream, &response)?;
                 return Ok(());
             }
         };
+        let request = envelope.invocation;
         let invocation_id = request.invocation_id.clone();
         let principal = match principal {
             Ok(value) => value,
@@ -423,6 +435,14 @@ impl CapabilityBroker {
 
         // No resource is opened/created and no network/process side effect occurs before
         // the signed authorization statement has been accepted by KEL.
+        if self.deps.revocations.is_revoked(
+            &request.token.payload.token_id, &token_digest,
+            request.token.payload.parent_token_digest.as_deref(), (self.deps.now_epoch_ms)(),
+        )? {
+            let error = SandboxError::Denied("capability or an ancestor was revoked before resource dispatch".into());
+            let _ = self.finish(&state, "failed", "capability_revoked", Some(error.to_string()));
+            return Err(error);
+        }
         let prepared = match self.execute_resource(request, &scope, &effective_budget) {
             Ok(value) => value,
             Err(error) => {
@@ -672,17 +692,6 @@ impl CapabilityBroker {
         evidence_result.map_err(|e| SandboxError::KelEvidence(e.to_string()))?;
         quota_result
     }
-}
-
-struct InvocationState {
-    request: CapabilityInvocationRequest,
-    scope: CapabilityScope,
-    token_digest: String,
-    request_digest: String,
-    reservation: QuotaReservation,
-    effective_budget: CapabilityBudget,
-    attestation: PreExecutionAttestationV1,
-    authorization_evidence: EvidenceReceipt,
 }
 
 fn resolve_scope(scopes: &[CapabilityScope], operation: &CapabilityResourceRequest) -> Result<CapabilityScope> {
