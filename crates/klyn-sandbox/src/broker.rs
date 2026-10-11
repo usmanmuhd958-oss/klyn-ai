@@ -1729,6 +1729,75 @@ mod tests {
     }
 
     #[test]
+    fn network_scope_requires_payload_digest_and_combined_permissions_for_streams() {
+        let scope = CapabilityScope::Network {
+            handle_id: "net-handle-1".into(),
+            resource_id: "net-resource-1".into(),
+            operations: vec!["net.resolve".into(), "net.send".into(), "net.receive".into(), "net.connect".into()],
+            hosts: vec!["example.com".into()],
+            ports: vec![crate::PortRange { first: 443, last: 443 }],
+            max_bytes_per_invocation: 4096,
+        };
+        let send = CapabilityResourceRequest {
+            kind: "network".into(),
+            handle_id: "net-handle-1".into(),
+            operation: "net.send".into(),
+            request_digest: "a".repeat(64),
+            resource_selector: json!({
+                "host":"example.com", "port":443, "maxBytes":128, "payloadDigest":"b".repeat(64)
+            }).as_object().unwrap().clone(),
+            requested_budgets: RequestedBudget { max_network_bytes: Some(128), ..Default::default() },
+        };
+        assert!(scope_matches_selector(&scope, &send).unwrap());
+
+        let bad_send = CapabilityResourceRequest {
+            resource_selector: json!({
+                "host":"example.com", "port":443, "maxBytes":128, "payloadDigest":"not-a-digest"
+            }).as_object().unwrap().clone(),
+            ..send.clone()
+        };
+        assert!(!scope_matches_selector(&scope, &bad_send).unwrap());
+
+        let connect = CapabilityResourceRequest {
+            kind: "network".into(),
+            handle_id: "net-handle-1".into(),
+            operation: "net.connect".into(),
+            request_digest: "c".repeat(64),
+            resource_selector: json!({"host":"example.com","port":443,"maxBytes":512}).as_object().unwrap().clone(),
+            requested_budgets: RequestedBudget { max_network_bytes: Some(512), ..Default::default() },
+        };
+        assert!(scope_matches_selector(&scope, &connect).unwrap());
+
+        let scope_without_send = CapabilityScope::Network {
+            handle_id: "net-handle-1".into(),
+            resource_id: "net-resource-1".into(),
+            operations: vec!["net.connect".into(), "net.receive".into()],
+            hosts: vec!["example.com".into()],
+            ports: vec![crate::PortRange { first: 443, last: 443 }],
+            max_bytes_per_invocation: 4096,
+        };
+        assert!(!scope_matches_selector(&scope_without_send, &connect).unwrap());
+    }
+
+    #[test]
+    fn network_send_digest_mismatch_fails_before_any_connect_attempt() {
+        let (mut client, broker) = UnixStream::pair().unwrap();
+        client.write_all(b"must never reach network").unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+        let worker = thread::spawn(move || {
+            pump_verified_network_send(
+                broker,
+                Vec::new(),
+                "0".repeat(64),
+                4096,
+                Instant::now() + Duration::from_secs(2),
+            )
+        });
+        let result = worker.join().unwrap();
+        assert!(matches!(result, Err(SandboxError::Denied(message)) if message.contains("payload digest mismatch")));
+    }
+
+    #[test]
     fn selector_unknown_fields_are_rejected() {
         let selector = json!({"relativePath":"repo/src/a.rs","sudo":true}).as_object().unwrap().clone();
         assert!(reject_selector_keys(&selector, &["relativePath"]).is_err());
