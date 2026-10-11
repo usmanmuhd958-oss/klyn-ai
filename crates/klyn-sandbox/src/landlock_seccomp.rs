@@ -13,6 +13,13 @@ use std::{
 
 const LANDLOCK_CREATE_RULESET_VERSION: u32 = 1;
 const LANDLOCK_RULE_PATH_BENEATH: u32 = 1;
+const LANDLOCK_ACCESS_NET_BIND_TCP: u64 = 1 << 0;
+const LANDLOCK_ACCESS_NET_CONNECT_TCP: u64 = 1 << 1;
+const LANDLOCK_ACCESS_NET_BIND_UDP: u64 = 1 << 2;
+const LANDLOCK_ACCESS_NET_CONNECT_SEND_UDP: u64 = 1 << 3;
+const LANDLOCK_RULE_NET_PORT: u32 = 2;
+const LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET: u64 = 1 << 0;
+const LANDLOCK_SCOPE_SIGNAL: u64 = 1 << 1;
 const LANDLOCK_ACCESS_FS_EXECUTE: u64 = 1 << 0;
 const LANDLOCK_ACCESS_FS_WRITE_FILE: u64 = 1 << 1;
 const LANDLOCK_ACCESS_FS_READ_FILE: u64 = 1 << 2;
@@ -49,6 +56,8 @@ const SYS_OPENAT2_LINUX: libc::c_long = 437;
 #[derive(Clone, Copy, Default)]
 struct RulesetAttr {
     handled_access_fs: u64,
+    handled_access_net: u64,
+    scoped: u64,
 }
 
 #[repr(C)]
@@ -218,7 +227,15 @@ pub fn open_beneath(root: BorrowedFd<'_>, relative_path: &str, flags: i32, mode:
 /// path must be an explicit LandlockPathRule; an empty rule list denies all handled FS rights.
 pub fn apply_landlock_rules(rules: &[LandlockPathRule]) -> Result<i32> {
     let abi = query_landlock_abi()?;
+    // Production OCap workers require both TCP port controls and Landlock domain
+    // scoping for abstract Unix sockets/signals. Direct networking remains prohibited;
+    // authorized network streams are pre-opened by the broker and passed with SCM_RIGHTS.
+    if abi < 6 {
+        return Err(SandboxError::UnsupportedKernel("production Landlock profile requires ABI v6+ network/IPC scoping".into()));
+    }
     let handled = handled_fs_access(abi);
+    let handled_net = handled_network_access(abi);
+    let scoped = LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET | LANDLOCK_SCOPE_SIGNAL;
     if rules.iter().any(|rule| rule.directory_fd < 0 || rule.allowed_access & !handled != 0) {
         return Err(SandboxError::Denied("Landlock rule contains invalid FD or unsupported access rights".into()));
     }
@@ -226,7 +243,7 @@ pub fn apply_landlock_rules(rules: &[LandlockPathRule]) -> Result<i32> {
         return Err(SandboxError::UnsupportedKernel("write-capable scopes require Landlock ABI v3+ for truncate mediation".into()));
     }
 
-    let attr = RulesetAttr { handled_access_fs: handled };
+    let attr = RulesetAttr { handled_access_fs: handled, handled_access_net: handled_net, scoped };
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     return Err(SandboxError::UnsupportedKernel("Landlock syscall number is not configured for this architecture".into()));
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -270,6 +287,18 @@ pub fn scope_landlock_rule(
     }
     let rule = LandlockPathRule { directory_fd: directory.as_raw_fd(), allowed_access: mask };
     Ok((directory, rule))
+}
+
+/// Handle network operations at the kernel layer. No NET_PORT rules are added by
+/// this worker profile, so these operations are denied by default; network authority is
+/// provided only as an already-connected, byte-metered broker FD.
+fn handled_network_access(abi: i32) -> u64 {
+    if abi < 4 { return 0; }
+    let mut handled = LANDLOCK_ACCESS_NET_BIND_TCP | LANDLOCK_ACCESS_NET_CONNECT_TCP;
+    if abi >= 10 {
+        handled |= LANDLOCK_ACCESS_NET_BIND_UDP | LANDLOCK_ACCESS_NET_CONNECT_SEND_UDP;
+    }
+    handled
 }
 
 fn handled_fs_access(abi: i32) -> u64 {
