@@ -266,7 +266,7 @@ test("invocation appends a verified runtime attestation to KEL before dispatch",
     kind: "filesystem",
     handleId: "fs-handle-1",
     operation: "fs.read",
-    resourceSelector: { relativePath: "repo/src/main.ts" },
+    resourceSelector: { relativePath: "repo/src/main.ts", maxBytes: 1024 },
     requestedBudgets: { maxOutputBytes: 4096 },
   };
   const operation: CapabilityResourceRequest = {
@@ -395,7 +395,7 @@ test("invocation rejects a bad request digest before sandbox setup or execution"
     kind: "filesystem",
     handleId: "fs-handle-1",
     operation: "fs.read",
-    resourceSelector: { relativePath: "repo/src/main.ts" },
+    resourceSelector: { relativePath: "repo/src/main.ts", maxBytes: 1024 },
     requestedBudgets: {},
   };
   const request: CapabilityInvocationRequest = {
