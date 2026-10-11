@@ -77,17 +77,22 @@ Parameters: \`{ "evidenceId": "..." }\`. Result is \`EvidenceProofBundleV1\`: th
 
 ## 3. Daemon startup and secret inputs
 
-The \`klyn-daemon\` binary currently accepts configuration via environment variables:
+The `klyn-daemon` process accepts non-private configuration through environment variables:
 
-- \`KEL_SOCKET_PATH\`: socket path, preferably under a dedicated \`0700\` service directory.
-- \`KEL_DATABASE_PATH\`: SQLite database path on a persistent local filesystem.
-- \`KEL_LEDGER_ID\`: configured ledger identifier.
-- \`KEL_RPC_AUTH_TOKEN_HEX\`: 32 random bytes represented by 64 hex characters.
-- \`KEL_CHECKPOINT_KEY_ID\`, \`KEL_CHECKPOINT_KEY_EPOCH\`: checkpoint signing-key identity and decimal epoch.
-- \`KEL_CHECKPOINT_PRIVATE_KEY_HEX\`: raw 32-byte Ed25519 seed in hex.
-- \`KEL_PRODUCER_KEYS_JSON\`: JSON object mapping producer key IDs to 32-byte raw Ed25519 public keys in hex.
+- `KEL_SOCKET_PATH`: RPC socket under a dedicated private service directory.
+- `KEL_DATABASE_PATH`: SQLite database path on persistent local storage.
+- `KEL_LEDGER_ID`: ledger identifier.
+- `KEL_RPC_AUTH_TOKEN_HEX`: 32 random bytes encoded as 64 hexadecimal characters.
+- `KEL_SIGNER_SOCKET_PATH`: Unix socket for the isolated external signer.
+- `KEL_SIGNER_AUTH_TOKEN_FILE`: protected token file for the signer connection; it must be a regular file with mode `0600` or stricter.
+- `KEL_PRODUCER_KEYS_JSON`: object mapping producer key IDs to 32-byte raw Ed25519 public keys in hex.
+- `KEL_RPC_ALLOWED_UID`: Linux UID allowed to connect; defaults to the daemon's effective UID.
+- `KEL_RPC_MAX_CONNECTIONS`: active client limit; defaults to 64, with a hard maximum of 1024.
+- `KEL_WITNESS_KEYS_JSON`: optional array of witness public-key records (key ID, witness identity, epoch, public-key hex, validity interval and optional revocation time).
 
-**The private-key environment variable is a bootstrap mechanism, not an HSM/KMS integration.** A production rollout should replace it with a locked-down key provider, avoid secrets in process environments when the platform supports safer injection, and explicitly set process user/group, file-system permissions, resource limits, service restart policy and log redaction. The RPC server currently has process-supervisor lifecycle semantics rather than a full administrative control API.
+**The daemon does not load or receive the checkpoint private seed.** It connects to `ExternalSignerClient`, which gets checkpoint key metadata and signatures from an isolated signer agent. The `Ed25519HsmKmsDriver` interface can wrap a PKCS#11 session or cloud KMS signing API. The included PKCS#11/cloud adapters are provider-injection interfaces; the deployment must supply a concrete provider driver and validate its key policy, credentials, signature encoding and lifecycle using the actual vendor service.
+
+Use a dedicated socket parent directory owned by the service account with mode `0700`; do not place the socket directly under a world-writable directory such as `/tmp`. Service deployment should also enforce least-privilege user/group, filesystem policy, resource limits, secret redaction and restart policy.
 
 ## 4. Persistence and restart semantics
 
@@ -99,20 +104,47 @@ These properties protect against process crashes and ordinary application mistak
 
 ## 5. Witness quorum and key lifecycle
 
-The governance package supplies a 3-witness verification policy with configurable threshold 2 or 3 (default 2). Each accepted witness must be configured, unique, bound to the key registry's witness identity, and have a valid Ed25519 signature over a JCS witness statement that binds the ledger ID, tree size, root hash and signed checkpoint digest. Duplicate or unconfigured witness IDs do not count.
+The governance package supplies a three-witness policy with configurable threshold 2 or 3 (default 2). Each accepted witness must be configured, unique, bound to a registered witness identity, and have a valid Ed25519 signature over a JCS statement binding the ledger ID, tree size, root hash and signed checkpoint digest. Duplicate and unconfigured identities do not contribute to quorum.
 
-Key records contain key ID, subject, purpose, decimal epoch, Ed25519 public key, not-before/not-after timestamps and optional revocation timestamp. IDs are never reused. Rotations must preserve subject and purpose and increase epoch; revoked, expired, not-yet-valid, wrong-purpose or wrong-epoch keys fail closed. The JSON file adapter is intended for single-writer deployments: it uses mode 0600, an fsync + atomic rename, directory fsync and revision conflict detection. Multi-process/host deployments should replace it with a transactional database-backed adapter. Revocation is deliberately retroactive in the current verifier; historical verification semantics should be specified before using this for long-retention evidence.
+Key records contain a key ID, subject/witness identity, purpose, decimal epoch, Ed25519 public key, validity interval and optional revocation timestamp. Key IDs are never reused; rotations preserve identity and purpose and increase the epoch. Revoked, expired, not-yet-valid, wrong-purpose and wrong-epoch keys are rejected. The JSON registry adapter is for single-writer use and performs atomic fsync/rename with revision checks; use a transactional database adapter for multi-process/multi-host registry management.
 
-The control plane's \`verifyEvidence()\` reports a partial cryptographic result and deliberately leaves \`accepted=false\` when a witness quorum and domain evidence policy have not been supplied. \`verifyEvidenceWithWitnesses()\` only returns \`accepted=true\` after producer authentication, checkpoint authentication, Merkle inclusion, witness quorum and a caller-defined evidence policy all pass.
+The daemon additionally exposes `witness.receipts.submit` and persists public witness keys, immutable receipt rows and checkpoint quorum state in SQLite WAL. It verifies each receipt's signature, identity, epoch and validity interval itself. Valid partial receipt sets remain `collecting`; the checkpoint is marked `quorum_met` only after the configured threshold is reached.
 
-Witness signatures are currently supplied to the verifier by the control plane; daemon-side witness receipt persistence and an independently deployed witness network are not included in this change.
+The governance package now includes `WitnessNetworkWorker`, an independent HTTPS worker that requires mutual TLS and a separate bearer token. It uses durable SQLite receipt storage, asks a separate signer provider to sign the local witness statement, validates incoming gossip itself, applies body and concurrency limits, and gossips receipt sets to configured peers. A peer's claimed `accepted` flag is not trusted; each node recomputes the quorum from the individual signatures. Deploy three independently administered workers with distinct keys and trust boundaries.
+
+`verifyEvidence()` deliberately reports only a partial result and keeps `accepted=false` until a witness quorum and evidence policy are supplied. `verifyEvidenceWithWitnesses()` returns `accepted=true` only after producer authentication, checkpoint authentication, inclusion proof, witness quorum and caller-defined evidence policy all pass.
+
+The worker and daemon provide the network/persistence interfaces; deployment still needs real HSM/KMS drivers, independently provisioned certificates and trust roots, and externally anchored checkpoints. The local ledger and witness tables alone cannot prevent a privileged host operator from rewriting all local data.
 
 ## 6. Legacy governance migration
 
-\`LegacyGovernanceKelAdapter\` maps calls from \`AuditLedger\` and \`ArtifactAttestor\` into KEL v1 producer-signed statements. Deterministic evidence IDs preserve idempotency on transport retries. The adapter preserves the legacy return objects while adding KEL receipts; consumers can migrate gradually, then choose KEL proofs as their audit source of truth.
+`LegacyGovernanceKelAdapter` maps calls from `AuditLedger` and `ArtifactAttestor` into signed KEL v1 evidence statements. The durable path uses `SqliteAuditStorageAdapter`, which writes `audit_records` and `kel_outbox` inside the **same SQLite `BEGIN IMMEDIATE` transaction**. The outbox stores deterministic event IDs and the complete signed envelope(s), together with creation time, retry count and delivery status.
 
-A legacy in-memory/file/database append and the separate KEL daemon append are not one distributed ACID transaction. For a no-loss migration, callers need a durable transactional outbox and replay worker; only acknowledge a legacy operation after the outbox record itself is durable. The adapter included here provides the mapping facade, not that outbox implementation.
+The drain worker delivers events in order. Failed deliveries remain pending and are retried; partial remote success is safe to replay because KEL appends are idempotent by evidence ID. For an artifact attestation, both the legacy audit evidence and artifact evidence are stored in one outbox bundle before network delivery.
 
-## 7. Operational hardening still required before production certification
+Use SQLite storage for production outbox guarantees. The in-memory adapter exists for tests only; file-JSONL storage cannot atomically commit an audit record and an outbox row and therefore fails closed for `appendWithOutbox`. The local transaction is atomic, but delivery to the separate KEL daemon is not a distributed ACID transaction; correctness relies on durable retry and idempotent append. A `queued: true` result means the payload has been committed locally but not yet delivered; monitor pending count, age and failure count.
 
-This implementation is an operational integration milestone, not independent production security certification. Before claiming production grade, add and verify: HSM/KMS-backed private-key custody; a dedicated socket parent directory and peer-credential policy (in addition to token auth); graceful shutdown and bounded connection/concurrency controls; durable witness receipt/checkpoint anchoring; transactional outbox for legacy dual writes; cross-language RFC 8785/RFC 9162 golden vectors; property/fuzz tests; sustained-load and resource-exhaustion tests; restore drills and external backup verification; and an independent security review. Never use a signed claim as a substitute for validating what its claim says.
+## 7. RPC, concurrency and shutdown hardening
+
+The daemon requires Linux `SO_PEERCRED` UID equality and the bearer token, sets the socket to mode `0600`, refuses to replace a non-socket path, and requires a private parent directory. It bounds active RPC sessions (default 64; maximum 1024), applies five-second per-connection I/O timeouts, caps frames at 1 MiB, and rejects malformed or oversized frames. SIGTERM/SIGINT stops new accepts, drains active handlers and removes the socket. Capacity-rejected connections are closed without parsing attacker-controlled payloads. Tests cover authentication-before-dispatch, frame limits, peer credentials and the connection-cap primitive.
+
+The independent witness worker additionally limits inbound JSON bodies to 256 KiB, caps concurrent requests and configured peer count, uses TLS client certificates for node-to-node traffic, verifies a separate bearer token, and places deadlines on outbound peer requests.
+
+## 8. Test and operational checks
+
+The KEL conformance workflow runs Rust daemon/evidence tests and the governance TypeScript typecheck/test suite. Current harness coverage includes WAL crash/restart, append idempotency, witness receipt verification/quorum and persistence, signer-agent framing/signature validation, key lifecycle policies, transactional outbox replay/rollback, and RPC admission checks.
+
+Before rolling out the real HSM/KMS, add a deployment-level interoperability test against the chosen vendor service and certificate setup. Exercise capacity under sustained load, partial socket writes, worker termination, network partitions, witness equivocation, key revocation and database restore.
+
+## 9. Residual production-certification requirements
+
+The branch now includes these hardening interfaces and service modules, but it is **not independently security-certified or automatically production-ready**. Before high-assurance production use:
+
+- Bind the signer provider to a concrete HSM/cloud KMS key with least-privilege policies, rotation, audit logging, emergency revoke procedures and recovery drills. The provider adapters here are interfaces, not a tested vendor integration.
+- Deploy at least three independently administered witness workers with distinct signing keys and separate operator access. Provision trust roots/certificates out of band and anchor signed checkpoints outside the daemon database to detect privileged local rollback and split view.
+- Verify database and secret-file permissions, backup integrity, restore procedures, outbox/witness lag monitoring, and operational SLOs.
+- Add cross-language RFC 8785/RFC 9162 golden vectors, property-based/fuzz testing, long-duration/resource-exhaustion benchmarks, concurrent multi-process tests and an independent security review.
+- Specify historical verification behavior after key revocation/rotation; the current registry rejects currently revoked keys retroactively.
+
+A valid signature authenticates a statement, but does not prove the statement's claims are true. Evidence policy and independent verification remain mandatory.
+
