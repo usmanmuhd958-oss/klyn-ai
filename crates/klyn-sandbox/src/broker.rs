@@ -717,6 +717,8 @@ mod tests {
                 prefix: "allowed".into(),
                 access: FileAccess::Read,
             }],
+            candidate_transaction_id: None,
+            candidate_write_enabled: false,
             network_grants: vec![],
             budget: crate::ResourceBudget {
                 memory_max_bytes: 1024 * 1024,
@@ -829,13 +831,16 @@ mod tests {
         );
         claims.file_grants = vec![FileGrant {
             root_id: crate::CANDIDATE_ROOT_ID.into(),
-            prefix: "".into(),
-            access: FileAccess::ReadWrite,
+            prefix: "tx-a-1-1".into(),
+            access: FileAccess::Read,
         }];
+        claims.candidate_transaction_id = Some("tx-a-1-1".into());
+        claims.candidate_write_enabled = true;
         let inner = BrokerInner {
             roots: BTreeMap::new(),
             verifier: Arc::new(Ed25519CapabilityVerifier::new(key.verifying_key())),
             revocations: Arc::new(NeverRevoked),
+            mutation_handler: Arc::new(DenyMutations),
         };
         let result = execute_request(
             &claims,
