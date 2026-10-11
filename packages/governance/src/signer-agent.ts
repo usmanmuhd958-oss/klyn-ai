@@ -215,6 +215,7 @@ export class UnixSignerAgent {
     }
 
     const server = createServer((socket) => this.onConnection(socket));
+    server.maxConnections = this.maxConnections;
     this.server = server;
     await new Promise<void>((resolvePromise, reject) => {
       server.once('error', reject);
