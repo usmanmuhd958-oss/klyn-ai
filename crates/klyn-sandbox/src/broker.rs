@@ -1677,6 +1677,7 @@ mod tests {
                 op.to_owned(),
                 maximum,
                 digest,
+                Instant::now() + Duration::from_secs(2),
             )
         };
 
