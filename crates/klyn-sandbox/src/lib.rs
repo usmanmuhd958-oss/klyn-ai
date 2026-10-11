@@ -20,7 +20,7 @@ pub mod supervisor;
 use std::{
     collections::{BTreeMap, BTreeSet},
     env,
-    fs::{self, File, OpenOptions},
+    fs::{self, OpenOptions},
     io::{self, Read, Write},
     os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
@@ -35,6 +35,9 @@ pub const OCAP_VERSION: u32 = 1;
 pub const MAX_BROKER_FRAME_BYTES: usize = 64 * 1024;
 pub const BROKER_FD: i32 = 3;
 pub const MANIFEST_FD: i32 = 4;
+/// Reserved root ID for the candidate workspace. Workers may read through the
+/// broker, but writes must go through klyn-fs preimage-checked transactions.
+pub const CANDIDATE_ROOT_ID: &str = "candidate";
 
 #[derive(Debug, Error)]
 pub enum SandboxError {
@@ -208,6 +211,11 @@ impl CapabilityClaims {
                 ));
             }
             validate_relative_path(&grant.prefix, true)?;
+            if grant.root_id == CANDIDATE_ROOT_ID && grant.access != FileAccess::Read {
+                return Err(SandboxError::InvalidConfig(
+                    "candidate workspace grants must be read-only; mutations must use klyn-fs transactions".into(),
+                ));
+            }
         }
         for grant in &self.network_grants {
             grant.address.parse::<std::net::SocketAddr>().map_err(|_| {
@@ -239,9 +247,9 @@ pub fn validate_relative_path(path: &str, allow_empty: bool) -> Result<(), Sandb
         ));
     }
     for component in path.split('/') {
-        if component.is_empty() || component == "." || component == ".." {
+        if component.is_empty() || component == "." || component == ".." || component == ".git" {
             return Err(SandboxError::InvalidConfig(
-                "path contains an empty, dot, or parent component".into(),
+                "path contains an empty, dot, parent, or Git metadata component".into(),
             ));
         }
     }
