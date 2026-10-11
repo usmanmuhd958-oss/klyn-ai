@@ -459,6 +459,52 @@ pub struct BrokerClient {
 }
 
 impl BrokerClient {
+    /// Adopt the broker socket inherited from the trusted launcher as FD 3.
+    /// Verify the kernel-reported peer identity before taking ownership.
+    pub fn from_inherited_reserved(expected_peer_uid: u32) -> io::Result<Self> {
+        let raw = 3;
+        let mut cred = std::mem::MaybeUninit::<libc::ucred>::zeroed();
+        let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+        let rc = unsafe {
+            libc::getsockopt(
+                raw,
+                libc::SOL_SOCKET,
+                libc::SO_PEERCRED,
+                cred.as_mut_ptr().cast(),
+                &mut len,
+            )
+        };
+        if rc != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if len as usize != std::mem::size_of::<libc::ucred>() {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid broker peer credentials"));
+        }
+        let cred = unsafe { cred.assume_init() };
+        if cred.uid != expected_peer_uid {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "broker peer UID mismatch"));
+        }
+        let mut socket_type: libc::c_int = 0;
+        let mut type_len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+        let rc = unsafe {
+            libc::getsockopt(
+                raw,
+                libc::SOL_SOCKET,
+                libc::SO_TYPE,
+                (&mut socket_type as *mut libc::c_int).cast(),
+                &mut type_len,
+            )
+        };
+        if rc != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if socket_type != libc::SOCK_STREAM {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "broker FD is not a stream socket"));
+        }
+        let stream = unsafe { UnixStream::from_raw_fd(raw) };
+        Ok(Self { stream: Mutex::new(stream) })
+    }
+
     pub fn connect_reserved(path: impl AsRef<Path>) -> io::Result<Self> {
         let stream = UnixStream::connect(path)?;
         let raw = stream.as_raw_fd();
