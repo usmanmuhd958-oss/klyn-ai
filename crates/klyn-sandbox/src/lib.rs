@@ -65,7 +65,7 @@ pub fn digest_jcs<T: Serialize>(value: &T) -> Result<String> {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CapabilitySignatureV1 {
     pub algorithm: String,
     pub key_id: String,
@@ -73,13 +73,14 @@ pub struct CapabilitySignatureV1 {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct CapabilityToken {
     pub payload: CapabilityTokenV1,
     pub signature: CapabilitySignatureV1,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CapabilityTokenV1 {
     pub schema: String,
     pub token_id: String,
@@ -100,7 +101,7 @@ pub struct CapabilityTokenV1 {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CapabilityDelegationPolicy {
     pub enabled: bool,
     pub max_depth: u32,
@@ -108,7 +109,7 @@ pub struct CapabilityDelegationPolicy {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CapabilityBudget {
     pub max_invocations: u64,
     pub max_concurrent_invocations: u64,
@@ -167,7 +168,7 @@ impl CapabilityBudget {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RequestedBudget {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_invocations: Option<u64>,
@@ -212,13 +213,14 @@ impl RequestedBudget {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct PortRange {
     pub first: u16,
     pub last: u16,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(tag = "kind", rename_all = "lowercase")]
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 pub enum CapabilityScope {
     Filesystem {
         #[serde(rename = "handleId")]
@@ -562,7 +564,7 @@ impl CapabilityToken {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CapabilityResourceRequest {
     pub kind: String,
     pub handle_id: String,
@@ -586,7 +588,7 @@ impl CapabilityResourceRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CapabilityInvocationRequest {
     pub invocation_id: String,
     pub mission_id: String,
@@ -600,7 +602,7 @@ pub struct CapabilityInvocationRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PreExecutionAttestationPayloadV1 {
     pub schema: String,
     pub collector_principal_id: String,
@@ -621,14 +623,14 @@ pub struct PreExecutionAttestationPayloadV1 {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PreExecutionAttestationV1 {
     pub payload: PreExecutionAttestationPayloadV1,
     pub signature: CapabilitySignatureV1,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EvidenceReceipt {
     pub ledger_id: String,
     pub evidence_id: String,
@@ -637,7 +639,7 @@ pub struct EvidenceReceipt {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CapabilityEvidenceEvent {
     pub schema: String,
     pub event_id: String,
