@@ -1354,6 +1354,50 @@ mod tests {
     }
 
     #[test]
+    fn recovery_marks_candidate_committed_when_cas_preceded_terminal_record() {
+        let fixture = Fixture::new();
+        let engine = fixture.engine();
+        let mut tx = engine.begin_transaction().unwrap();
+        let id = tx.id().to_owned();
+        let base = tx.base_revision().to_owned();
+
+        tx.write_file("published.txt", None, "published\n").unwrap();
+        tx.stage().unwrap();
+        let revision = tx.validate().unwrap().to_owned();
+        let candidate = tx.candidate_path().to_owned();
+
+        // Simulate a process crash in the precise window after update-ref
+        // succeeds but before the terminal Committed journal record is durable.
+        raw_git(
+            &fixture.root,
+            &[
+                "update-ref",
+                DEFAULT_PUBLICATION_REF,
+                revision.as_str(),
+                base.as_str(),
+            ],
+        )
+        .unwrap();
+
+        drop(tx);
+        drop(engine);
+
+        let reopened = fixture.engine();
+        let published_state = {
+            let journal = reopened.inner.journal.lock().unwrap();
+            journal.latest_for(&id).unwrap().state
+        };
+
+        assert_eq!(published_state, TransactionState::Committed);
+        assert_eq!(
+            current_ref(&fixture.root, DEFAULT_PUBLICATION_REF).unwrap(),
+            revision
+        );
+        assert!(!candidate.exists());
+        assert!(!fixture.root.join("published.txt").exists());
+    }
+
+    #[test]
     fn second_engine_open_is_excluded_by_advisory_lock() {
         let fixture = Fixture::new();
         let engine = fixture.engine();
