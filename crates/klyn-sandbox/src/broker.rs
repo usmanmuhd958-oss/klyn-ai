@@ -1287,6 +1287,7 @@ fn pump_bounded_file_write(
     operation: String,
     maximum: u64,
     expected_digest: String,
+    deadline: Instant,
 ) -> Result<()> {
     let mut source = File::from(read_fd);
     let mut staging = create_staging_memfd()?;
@@ -1294,6 +1295,21 @@ fn pump_bounded_file_write(
     let mut written = 0u64;
     let mut chunk = [0u8; 8192];
     loop {
+        if Instant::now() >= deadline {
+            return Err(SandboxError::BudgetExceeded("file upload deadline elapsed; target was not modified".into()));
+        }
+        let mut wait = libc::pollfd { fd: source.as_raw_fd(), events: libc::POLLIN | libc::POLLHUP, revents: 0 };
+        let wait_ms = deadline.saturating_duration_since(Instant::now()).as_millis().clamp(1, 100) as i32;
+        let polled = unsafe { libc::poll(&mut wait, 1, wait_ms) };
+        if polled < 0 {
+            let error = io::Error::last_os_error();
+            if error.kind() == io::ErrorKind::Interrupted { continue; }
+            return Err(error.into());
+        }
+        if polled == 0 { continue; }
+        if wait.revents & libc::POLLNVAL != 0 {
+            return Err(SandboxError::Protocol("file upload pipe descriptor became invalid".into()));
+        }
         let count = source.read(&mut chunk)?;
         if count == 0 { break; }
         let next = written.saturating_add(count as u64);
