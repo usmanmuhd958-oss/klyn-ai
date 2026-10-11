@@ -12,7 +12,7 @@ import {
   type CapabilityBudget,
   type CapabilityEvidenceEvent,
   type CapabilityEvidenceSink,
-  type CapabilityScope,
+  type FileSystemCapabilityScope,
   type CapabilityTokenV1,
 } from "../src/capability.js";
 
@@ -34,7 +34,7 @@ const budget: CapabilityBudget = {
   maxFinancialSpendMinorUnits: 0,
 };
 
-const parentScope: CapabilityScope = {
+const parentScope: FileSystemCapabilityScope = {
   kind: "filesystem",
   handleId: "fs-handle-1",
   resourceId: "workspace-1",
@@ -68,7 +68,7 @@ function makeParentToken() {
   return signer.signToken(payload);
 }
 
-function childScope(): CapabilityScope {
+function childScope(): FileSystemCapabilityScope {
   return {
     kind: "filesystem",
     handleId: "fs-handle-1",
