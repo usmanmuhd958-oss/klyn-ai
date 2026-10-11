@@ -33,7 +33,7 @@ export interface CapabilityScopeBase<K extends CapabilityResourceKind, O extends
 export interface FileSystemCapabilityScope extends CapabilityScopeBase<
   "filesystem", "fs.read" | "fs.list" | "fs.metadata" | "fs.write" | "fs.create" | "fs.delete"
 > {
-  /** Canonical relative path prefix, resolved under rootHandleId by the broker. Empty means the granted root only. */
+  /** Canonical relative path prefix resolved beneath the registered root handle; empty grants its subtree. */
   readonly relativePathPrefix: string;
   readonly maxBytesPerInvocation: number;
 }
@@ -258,7 +258,10 @@ export interface CapabilityEvidenceReceipt {
 }
 
 export interface CapabilityRevocationRegistry {
-  /** Must be linearizable/durable across all runtime workers; fail closed on storage error. */
+  /**
+   * Must check the token and all ancestors by token digest, be linearizable/durable
+   * across workers, and fail closed on storage error.
+   */
   isRevoked(tokenId: string, tokenDigest: string, nowEpochMs: number): Promise<boolean>;
   /** Must atomically reject duplicate/conflicting revocations. */
   revoke(revocation: CapabilityRevocation): Promise<void>;
@@ -548,6 +551,72 @@ export class Ed25519CapabilityTokenVerifier implements CapabilityTokenVerifier {
   }
 }
 
+export interface PreExecutionAttestationExpectation {
+  readonly nowEpochMs?: number;
+  readonly invocationId?: string;
+  readonly tokenDigest?: string;
+  readonly requestDigest?: string;
+  readonly runtimeInstanceId?: string;
+}
+
+export function verifyPreExecutionAttestation(
+  attestation: PreExecutionAttestationV1,
+  keys: CapabilityKeyResolver,
+  expectation: PreExecutionAttestationExpectation = {},
+): void {
+  const payload = attestation?.payload;
+  if (!payload || payload.schema !== CAPABILITY_ATTESTATION_SCHEMA) {
+    throw new CapabilitySecurityError("attestation_schema_invalid", "pre-execution attestation schema is invalid");
+  }
+  for (const [field, value] of [
+    ["invocationId", payload.invocationId],
+    ["tokenId", payload.tokenId],
+    ["principalId", payload.principalId],
+    ["missionId", payload.missionId],
+    ["runtimeInstanceId", payload.runtimeInstanceId],
+    ["audience", payload.audience],
+    ["reservationId", payload.reservationId],
+  ] as const) validId(value, "attestation." + field);
+  for (const [field, value] of [
+    ["tokenDigest", payload.tokenDigest],
+    ["requestDigest", payload.requestDigest],
+    ["scopeDigest", payload.scopeDigest],
+    ["policyDigest", payload.policyDigest],
+    ["sandboxProfileDigest", payload.sandboxProfileDigest],
+  ] as const) {
+    if (!/^[a-f0-9]{64}$/.test(value)) {
+      throw new CapabilitySecurityError("attestation_schema_invalid", "attestation." + field + " must be SHA-256 hex");
+    }
+  }
+  assertSafeInteger(payload.issuedAtEpochMs, "attestation.issuedAtEpochMs");
+  assertSafeInteger(payload.expiresAtEpochMs, "attestation.expiresAtEpochMs", 1);
+  if (payload.expiresAtEpochMs <= payload.issuedAtEpochMs) {
+    throw new CapabilitySecurityError("attestation_time_invalid", "attestation time bounds are inconsistent");
+  }
+  const signature = attestation.signature;
+  if (!signature || signature.algorithm !== "Ed25519" || !signature.keyId ||
+      !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(signature.signatureBase64)) {
+    throw new CapabilitySecurityError("attestation_signature_invalid", "attestation signature metadata is malformed");
+  }
+  const key = keys.resolvePublicKey(signature.keyId);
+  const signatureBytes = Buffer.from(signature.signatureBase64, "base64");
+  if (!key || key.type !== "public" || key.asymmetricKeyType !== "ed25519" ||
+      signatureBytes.length !== 64 || signatureBytes.toString("base64") !== signature.signatureBase64 ||
+      !verify(null, Buffer.from(canonicalize(payload), "utf8"), key, signatureBytes)) {
+    throw new CapabilitySecurityError("attestation_signature_invalid", "runtime attestation signature is not trusted");
+  }
+  const now = expectation.nowEpochMs ?? Date.now();
+  if (!Number.isSafeInteger(now) || now < payload.issuedAtEpochMs || now >= payload.expiresAtEpochMs) {
+    throw new CapabilitySecurityError("attestation_expired", "pre-execution attestation is not currently valid");
+  }
+  if ((expectation.invocationId && expectation.invocationId !== payload.invocationId) ||
+      (expectation.tokenDigest && expectation.tokenDigest !== payload.tokenDigest) ||
+      (expectation.requestDigest && expectation.requestDigest !== payload.requestDigest) ||
+      (expectation.runtimeInstanceId && expectation.runtimeInstanceId !== payload.runtimeInstanceId)) {
+    throw new CapabilitySecurityError("attestation_binding_mismatch", "runtime attestation does not bind the expected invocation");
+  }
+}
+
 export class CapabilitySecurityError extends Error {
   public constructor(public readonly code: string, message: string) {
     super(message);
@@ -788,6 +857,7 @@ export class AttenuatedCapabilityBuilderV1 implements AttenuatedCapabilityBuilde
     private readonly verifier: CapabilityTokenVerifier,
     private readonly signer: Ed25519CapabilitySigner,
     private readonly evidence: CapabilityEvidenceSink,
+    private readonly revocations: CapabilityRevocationRegistry,
     private readonly now: () => number = Date.now,
     private readonly makeId: () => string = () => randomUUID(),
   ) {}
@@ -798,6 +868,10 @@ export class AttenuatedCapabilityBuilderV1 implements AttenuatedCapabilityBuilde
     validId(rule.runtimeInstanceId, "runtimeInstanceId");
     validId(rule.policyDigest, "policyDigest");
     this.verifier.verify(this.parent, { nowEpochMs: now, subjectPrincipalId: this.callerPrincipalId });
+    const parentDigest = digestCapabilityToken(this.parent);
+    if (await this.revocations.isRevoked(this.parent.payload.tokenId, parentDigest, now)) {
+      throw new CapabilitySecurityError("capability_revoked", "parent capability or an ancestor has been revoked");
+    }
     const parent = this.parent.payload;
     if (!parent.delegation.enabled || parent.delegationDepth >= parent.delegation.maxDepth) {
       throw new CapabilitySecurityError("delegation_forbidden", "parent capability cannot be delegated further");
@@ -842,7 +916,7 @@ export class AttenuatedCapabilityBuilderV1 implements AttenuatedCapabilityBuilde
       issuedAtEpochMs: now,
       notBeforeEpochMs: now,
       expiresAtEpochMs: rule.expiresAtEpochMs,
-      parentTokenDigest: digestCapabilityToken(this.parent),
+      parentTokenDigest: parentDigest,
       delegationDepth: parent.delegationDepth + 1,
       delegation: rule.delegation,
       scopes: rule.scopes,
