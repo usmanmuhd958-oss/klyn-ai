@@ -212,7 +212,7 @@ struct InvocationState {
     scope: CapabilityScope,
     token_digest: String,
     request_digest: String,
-    reservation: QuotaReservation,
+    quota_guard: QuotaReservationGuard,
     effective_budget: CapabilityBudget,
     attestation: PreExecutionAttestationV1,
     authorization_evidence: EvidenceReceipt,
@@ -223,6 +223,41 @@ pub struct BrokerGrant {
     pub fd: Option<OwnedFd>,
     pub completion: Option<JoinHandle<Result<()>>>,
     state: InvocationState,
+}
+
+struct QuotaReservationGuard {
+    store: Arc<dyn InvocationQuotaStore>,
+    reservation: QuotaReservation,
+    now_epoch_ms: Arc<dyn Fn() -> u64 + Send + Sync>,
+    finalized: AtomicBool,
+}
+
+impl QuotaReservationGuard {
+    fn new(
+        store: Arc<dyn InvocationQuotaStore>,
+        reservation: QuotaReservation,
+        now_epoch_ms: Arc<dyn Fn() -> u64 + Send + Sync>,
+    ) -> Self {
+        Self { store, reservation, now_epoch_ms, finalized: AtomicBool::new(false) }
+    }
+
+    fn reservation(&self) -> &QuotaReservation { &self.reservation }
+
+    fn finish(&self, outcome: &str, now_epoch_ms: u64) -> Result<()> {
+        if self.finalized.load(Ordering::Acquire) { return Ok(()); }
+        self.store.finish(&self.reservation.reservation_id, outcome, now_epoch_ms)?;
+        self.finalized.store(true, Ordering::Release);
+        Ok(())
+    }
+}
+
+impl Drop for QuotaReservationGuard {
+    fn drop(&mut self) {
+        if !self.finalized.load(Ordering::Acquire) {
+            let _ = self.store.finish(&self.reservation.reservation_id, "failed", (self.now_epoch_ms)());
+            self.finalized.store(true, Ordering::Release);
+        }
+    }
 }
 
 impl CapabilityBroker {
@@ -346,8 +381,12 @@ impl CapabilityBroker {
             &request.token.payload.token_id, &token_digest, &request.invocation_id, &canonical_digest,
             effective_budget.max_invocations, effective_budget.max_concurrent_invocations, now,
         )?;
-        if reservation.reservation_id.is_empty() || reservation.admitted_invocation_number == 0 ||
-            reservation.admitted_invocation_number > effective_budget.max_invocations {
+        let quota_guard = QuotaReservationGuard::new(
+            self.deps.quota.clone(), reservation, self.deps.now_epoch_ms.clone(),
+        );
+        if quota_guard.reservation().reservation_id.is_empty() ||
+            quota_guard.reservation().admitted_invocation_number == 0 ||
+            quota_guard.reservation().admitted_invocation_number > effective_budget.max_invocations {
             return Err(SandboxError::Protocol("quota store returned an invalid reservation".into()));
         }
 
@@ -355,7 +394,6 @@ impl CapabilityBroker {
             .min(request.token.payload.expires_at_epoch_ms)
             .min(now.saturating_add(effective_budget.max_wall_clock_ms_per_invocation));
         if effective_deadline <= now {
-            let _ = self.deps.quota.finish(&reservation.reservation_id, "failed", now);
             return Err(SandboxError::Denied("effective invocation deadline has elapsed".into()));
         }
         let scope_digest = digest_jcs(&scope)?;
@@ -373,13 +411,12 @@ impl CapabilityBroker {
             scope_digest: scope_digest.clone(),
             policy_digest: request.token.payload.policy_digest.clone(),
             sandbox_profile_digest: request.sandbox_profile_digest.clone(),
-            reservation_id: reservation.reservation_id.clone(),
+            reservation_id: quota_guard.reservation().reservation_id.clone(),
             issued_at_epoch_ms: now,
             expires_at_epoch_ms: effective_deadline,
         };
         let signature = self.deps.collector.sign_payload(&jcs_bytes(&payload)?)?;
         if signature.algorithm != "Ed25519" || signature.key_id != self.deps.collector.key_id() {
-            let _ = self.deps.quota.finish(&reservation.reservation_id, "failed", now);
             return Err(SandboxError::Denied("collector returned an unexpected signature algorithm/key".into()));
         }
         verify_detached_signature(
@@ -413,13 +450,11 @@ impl CapabilityBroker {
         let authorization_evidence = match self.deps.evidence.append(&event) {
             Ok(receipt) => receipt,
             Err(error) => {
-                let _ = self.deps.quota.finish(&reservation.reservation_id, "failed", now);
                 return Err(SandboxError::KelEvidence(error.to_string()));
             }
         };
         if !is_digest(&authorization_evidence.statement_digest) ||
             authorization_evidence.evidence_id.is_empty() || authorization_evidence.ledger_id.is_empty() {
-            let _ = self.deps.quota.finish(&reservation.reservation_id, "failed", now);
             return Err(SandboxError::KelEvidence("KEL returned an invalid authorization receipt".into()));
         }
         let state = InvocationState {
@@ -427,7 +462,7 @@ impl CapabilityBroker {
             scope: scope.clone(),
             token_digest: token_digest.clone(),
             request_digest: canonical_digest.clone(),
-            reservation,
+            quota_guard,
             effective_budget: effective_budget.clone(),
             attestation: attestation.clone(),
             authorization_evidence: authorization_evidence.clone(),
@@ -662,7 +697,7 @@ impl CapabilityBroker {
         let now = (self.deps.now_epoch_ms)();
         let mut details = json_map([
             ("authorizationEvidenceId", json!(state.authorization_evidence.evidence_id)),
-            ("reservationId", json!(state.reservation.reservation_id)),
+            ("reservationId", json!(state.quota_guard.reservation().reservation_id)),
             ("attestationDigest", json!(digest_jcs(&state.attestation)?)),
         ]);
         if let Some(message) = error { details.insert("error".into(), Value::String(message)); }
@@ -688,7 +723,7 @@ impl CapabilityBroker {
         // Quota is never refunded on failure. If evidence append fails, the quota record is
         // still finalized and the caller gets an error for operational reconciliation.
         let evidence_result = self.deps.evidence.append(&event);
-        let quota_result = self.deps.quota.finish(&state.reservation.reservation_id, outcome, now);
+        let quota_result = state.quota_guard.finish(outcome, now);
         evidence_result.map_err(|e| SandboxError::KelEvidence(e.to_string()))?;
         quota_result
     }
