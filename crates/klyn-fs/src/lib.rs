@@ -505,29 +505,55 @@ impl FsEngine {
                 continue;
             }
             let published = current_ref(&self.inner.repo_root, &record.target_ref)?;
-            let already_published = record.state == TransactionState::Validated
-                && record
-                    .candidate_revision
-                    .as_deref()
-                    .is_some_and(|rev| rev == published);
-            if already_published {
-                self.append(
-                    &record.transaction_id,
-                    TransactionState::Committed,
-                    &record.base_revision,
-                    record.candidate_revision.as_deref(),
-                    Some("recovered CAS that completed before daemon interruption"),
-                )?;
+            if record.state == TransactionState::Validated {
+                let candidate_revision = record.candidate_revision.as_deref().ok_or_else(|| {
+                    FsError::JournalCorrupt(
+                        "validated transaction has no candidate revision".into(),
+                    )
+                })?;
+
+                if published == candidate_revision
+                    || is_ancestor(&self.inner.repo_root, candidate_revision, &published)?
+                {
+                    // The CAS already took effect. Do not attempt to reverse it
+                    // even if the daemon died before writing the terminal record.
+                    self.append(
+                        &record.transaction_id,
+                        TransactionState::Committed,
+                        &record.base_revision,
+                        Some(candidate_revision),
+                        Some("reconciled published candidate during startup recovery"),
+                    )?;
+                    self.cleanup(&candidate)?;
+                } else if published == record.base_revision {
+                    self.append(
+                        &record.transaction_id,
+                        TransactionState::Aborted,
+                        &record.base_revision,
+                        Some(candidate_revision),
+                        Some("candidate had not been published at interruption"),
+                    )?;
+                    self.cleanup(&candidate)?;
+                } else {
+                    // Another revision is now visible, and the journal alone
+                    // cannot prove whether this candidate was published and
+                    // subsequently replaced. Stop recovery without rewriting
+                    // the ref or deleting the candidate evidence.
+                    return Err(FsError::Conflict {
+                        expected: candidate_revision.to_owned(),
+                        actual: published,
+                    });
+                }
             } else {
                 self.append(
                     &record.transaction_id,
                     TransactionState::Aborted,
                     &record.base_revision,
-                    record.candidate_revision.as_deref(),
+                    None,
                     Some("recovered unpublished candidate"),
                 )?;
+                self.cleanup(&candidate)?;
             }
-            self.cleanup(&candidate)?;
         }
         Ok(())
     }
@@ -1021,6 +1047,23 @@ fn current_ref(repo: &Path, target: &str) -> Result<String, FsError> {
     )
 }
 
+fn is_ancestor(repo: &Path, ancestor: &str, descendant: &str) -> Result<bool, FsError> {
+    let output = git_output(
+        repo,
+        vec![
+            arg("merge-base"),
+            arg("--is-ancestor"),
+            arg(ancestor),
+            arg(descendant),
+        ],
+    )?;
+    match output.status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        _ => Err(git_error("verify published revision ancestry", output)),
+    }
+}
+
 fn worktree_checks_out_ref(worktrees: &str, target: &str) -> bool {
     worktrees.lines().any(|line| {
         line.strip_prefix("branch ")
@@ -1280,12 +1323,29 @@ mod tests {
         tx.stage().unwrap();
         let candidate = tx.candidate_path().to_owned();
         drop(tx);
-        engine.recover_incomplete_transactions().unwrap();
+        drop(engine);
+
+        // Opening a fresh engine instance exercises the real startup recovery
+        // path, not just an in-memory re-scan of the same journal.
+        let reopened = FsEngine::open(
+            &fixture.root,
+            &fixture.state,
+            DEFAULT_PUBLICATION_REF,
+        )
+        .unwrap();
         assert_eq!(
             current_ref(&fixture.root, DEFAULT_PUBLICATION_REF).unwrap(),
             base
         );
         assert!(!candidate.exists());
+        assert!(reopened
+            .inner
+            .journal
+            .lock()
+            .unwrap()
+            .latest
+            .values()
+            .any(|record| record.state == TransactionState::Aborted && record.base_revision == base));
     }
 
     #[test]
