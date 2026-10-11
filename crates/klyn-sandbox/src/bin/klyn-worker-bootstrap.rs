@@ -17,9 +17,12 @@ use std::{
 
 use ed25519_dalek::VerifyingKey;
 use klyn_sandbox::{
-    broker::{BrokerClient, Ed25519CapabilityVerifier},
     bootstrap_worker_from_env,
-    namespace::{await_start_gate, create_pid_namespace_for_child, enter_worker_namespaces, require_pid_namespace_init},
+    broker::{BrokerClient, Ed25519CapabilityVerifier},
+    namespace::{
+        await_start_gate, create_pid_namespace_for_child, enter_worker_namespaces,
+        require_pid_namespace_init,
+    },
     FileAccess, SandboxError, SignedCapability, MAX_BROKER_FRAME_BYTES, MAX_MUTATION_BYTES,
 };
 use serde::Deserialize;
@@ -82,9 +85,8 @@ fn entrypoint() -> Result<u8, SandboxError> {
 }
 
 fn parent_stage() -> Result<u8, SandboxError> {
-    let gate = env::var_os("KLYN_START_GATE_PATH").ok_or_else(|| {
-        SandboxError::InvalidConfig("start gate path is missing".into())
-    })?;
+    let gate = env::var_os("KLYN_START_GATE_PATH")
+        .ok_or_else(|| SandboxError::InvalidConfig("start gate path is missing".into()))?;
 
     // The supervisor releases this process only after cgroup.procs contains
     // its PID. All namespace setup errors abort before a task is accepted.
@@ -104,7 +106,10 @@ fn parent_stage() -> Result<u8, SandboxError> {
 
     let mut child = command.spawn()?;
     let status = child.wait()?;
-    Ok(status.code().map(|code| code.clamp(0, 255) as u8).unwrap_or(EXIT_SANDBOX))
+    Ok(status
+        .code()
+        .map(|code| code.clamp(0, 255) as u8)
+        .unwrap_or(EXIT_SANDBOX))
 }
 
 fn child_stage() -> Result<u8, SandboxError> {
@@ -118,7 +123,9 @@ fn child_stage() -> Result<u8, SandboxError> {
 
     for (root_id, path) in &roots {
         if root_id.is_empty() || root_id.len() > 128 {
-            return Err(SandboxError::InvalidConfig("invalid root ID in roots manifest".into()));
+            return Err(SandboxError::InvalidConfig(
+                "invalid root ID in roots manifest".into(),
+            ));
         }
         let canonical = fs::canonicalize(path)?;
         if !canonical.is_dir() || canonical != *path {
@@ -137,8 +144,7 @@ fn child_stage() -> Result<u8, SandboxError> {
     }
 
     let verifier = Ed25519CapabilityVerifier::new(public_key);
-    let (broker, token) =
-        bootstrap_worker_from_env(&manifest, &broker_socket, &verifier, &roots)?;
+    let (broker, token) = bootstrap_worker_from_env(&manifest, &broker_socket, &verifier, &roots)?;
 
     // From this point, Landlock and seccomp are active. The only file operations
     // available to this process are via already-open stdio and descriptors
@@ -147,10 +153,7 @@ fn child_stage() -> Result<u8, SandboxError> {
     Ok(0)
 }
 
-fn worker_loop(
-    broker: &BrokerClient,
-    capability: &SignedCapability,
-) -> Result<(), SandboxError> {
+fn worker_loop(broker: &BrokerClient, capability: &SignedCapability) -> Result<(), SandboxError> {
     let stdin = io::stdin();
     let stdout = io::stdout();
     let mut reader = stdin.lock();
@@ -164,32 +167,46 @@ fn worker_loop(
             return Ok(());
         }
         if line.len() > MAX_BROKER_FRAME_BYTES {
-            write_response(&mut writer, &json!({"ok": false, "error": "request too large"}))?;
+            write_response(
+                &mut writer,
+                &json!({"ok": false, "error": "request too large"}),
+            )?;
             continue;
         }
 
         let command: WorkerCommand = match serde_json::from_str(&line) {
             Ok(command) => command,
             Err(_) => {
-                write_response(&mut writer, &json!({"ok": false, "error": "invalid worker command"}))?;
+                write_response(
+                    &mut writer,
+                    &json!({"ok": false, "error": "invalid worker command"}),
+                )?;
                 continue;
             }
         };
 
         match command {
             WorkerCommand::Ping => {
-                write_response(&mut writer, &json!({
-                    "ok": true,
-                    "pid": nix::unistd::getpid().as_raw(),
-                    "namespace_init": true,
-                    "sandbox": "landlock+seccomp+user+mount+network+ipc+uts+pid"
-                }))?;
+                write_response(
+                    &mut writer,
+                    &json!({
+                        "ok": true,
+                        "pid": nix::unistd::getpid().as_raw(),
+                        "namespace_init": true,
+                        "sandbox": "landlock+seccomp+user+mount+network+ipc+uts+pid"
+                    }),
+                )?;
             }
             WorkerCommand::ReadFile { root_id, path } => {
                 let result = broker_read_file(broker, capability, &root_id, &path);
                 match result {
-                    Ok(content) => write_response(&mut writer, &json!({"ok": true, "content": content}))?,
-                    Err(_) => write_response(&mut writer, &json!({"ok": false, "error": "broker denied file read"}))?,
+                    Ok(content) => {
+                        write_response(&mut writer, &json!({"ok": true, "content": content}))?
+                    }
+                    Err(_) => write_response(
+                        &mut writer,
+                        &json!({"ok": false, "error": "broker denied file read"}),
+                    )?,
                 }
             }
             WorkerCommand::WriteCandidateFile {
@@ -199,9 +216,14 @@ fn worker_loop(
                 content,
             } => {
                 if content.len() > MAX_MUTATION_BYTES
-                    || expected_old_content.as_ref().is_some_and(|old| old.len() > MAX_MUTATION_BYTES)
+                    || expected_old_content
+                        .as_ref()
+                        .is_some_and(|old| old.len() > MAX_MUTATION_BYTES)
                 {
-                    write_response(&mut writer, &json!({"ok": false, "error": "mutation too large"}))?;
+                    write_response(
+                        &mut writer,
+                        &json!({"ok": false, "error": "mutation too large"}),
+                    )?;
                     continue;
                 }
                 match broker.write_candidate_file(
@@ -212,7 +234,10 @@ fn worker_loop(
                     content,
                 ) {
                     Ok(()) => write_response(&mut writer, &json!({"ok": true}))?,
-                    Err(_) => write_response(&mut writer, &json!({"ok": false, "error": "transactional mutation denied"}))?,
+                    Err(_) => write_response(
+                        &mut writer,
+                        &json!({"ok": false, "error": "transactional mutation denied"}),
+                    )?,
                 }
             }
             WorkerCommand::Shutdown => {
@@ -231,7 +256,12 @@ fn broker_read_file(
     path: &str,
 ) -> Result<String, SandboxError> {
     let descriptor = broker
-        .open_file(capability, root_id.to_owned(), path.to_owned(), FileAccess::Read)
+        .open_file(
+            capability,
+            root_id.to_owned(),
+            path.to_owned(),
+            FileAccess::Read,
+        )
         .map_err(SandboxError::Enforcement)?;
     let mut file = File::from(descriptor);
     let mut bytes = Vec::new();
@@ -239,16 +269,17 @@ fn broker_read_file(
         .take((MAX_MUTATION_BYTES + 1) as u64)
         .read_to_end(&mut bytes)?;
     if bytes.len() > MAX_MUTATION_BYTES {
-        return Err(SandboxError::InvalidConfig("read exceeds the size limit".into()));
+        return Err(SandboxError::InvalidConfig(
+            "read exceeds the size limit".into(),
+        ));
     }
     String::from_utf8(bytes)
         .map_err(|_| SandboxError::InvalidConfig("file content is not UTF-8".into()))
 }
 
 fn read_public_key_from_env() -> Result<VerifyingKey, SandboxError> {
-    let encoded = env::var("KLYN_CAPABILITY_PUBLIC_KEY_HEX").map_err(|_| {
-        SandboxError::InvalidConfig("public verifying key is missing".into())
-    })?;
+    let encoded = env::var("KLYN_CAPABILITY_PUBLIC_KEY_HEX")
+        .map_err(|_| SandboxError::InvalidConfig("public verifying key is missing".into()))?;
     if encoded.len() != 64 || !encoded.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(SandboxError::InvalidConfig(
             "public verifying key must be exactly 64 hexadecimal characters".into(),
@@ -269,7 +300,9 @@ fn required_path(key: &str) -> Result<PathBuf, SandboxError> {
         .map(PathBuf::from)
         .ok_or_else(|| SandboxError::InvalidConfig(format!("{key} is missing")))?;
     if !path.is_absolute() {
-        return Err(SandboxError::InvalidConfig(format!("{key} must be absolute")));
+        return Err(SandboxError::InvalidConfig(format!(
+            "{key} must be absolute"
+        )));
     }
     Ok(path)
 }
@@ -318,11 +351,12 @@ fn read_private_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, San
 fn write_response(writer: &mut impl Write, response: &Value) -> Result<(), SandboxError> {
     let encoded = serde_json::to_vec(response)?;
     if encoded.len() > MAX_BROKER_FRAME_BYTES {
-        return Err(SandboxError::Enforcement("worker response is oversized".into()));
+        return Err(SandboxError::Enforcement(
+            "worker response is oversized".into(),
+        ));
     }
     writer.write_all(&encoded)?;
     writer.write_all(b"\n")?;
     writer.flush()?;
     Ok(())
 }
-

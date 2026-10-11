@@ -182,11 +182,20 @@ impl SandboxService {
         };
         let token = self.issuer.issue(claims)?;
         let public_key = self.issuer.verifying_key().to_bytes();
-        let public_key_hex = public_key.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+        let public_key_hex = public_key
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
 
         let stem = format!("worker-{sequence:x}-{}", std::process::id());
-        let capability_manifest = self.config.manifest_directory.join(format!("{stem}.cap.json"));
-        let roots_manifest = self.config.manifest_directory.join(format!("{stem}.roots.json"));
+        let capability_manifest = self
+            .config
+            .manifest_directory
+            .join(format!("{stem}.cap.json"));
+        let roots_manifest = self
+            .config
+            .manifest_directory
+            .join(format!("{stem}.roots.json"));
         let socket_path = self.config.broker_directory.join(format!("{stem}.sock"));
 
         write_private_json_new(&capability_manifest, &token)?;
@@ -275,10 +284,7 @@ impl ManagedSandboxedWorker {
             .ok_or(SandboxServiceError::WorkerFinished)
     }
 
-    pub fn send_command(
-        &mut self,
-        command: &serde_json::Value,
-    ) -> Result<(), SandboxServiceError> {
+    pub fn send_command(&mut self, command: &serde_json::Value) -> Result<(), SandboxServiceError> {
         self.worker
             .as_mut()
             .ok_or(SandboxServiceError::WorkerFinished)?
@@ -286,9 +292,7 @@ impl ManagedSandboxedWorker {
         Ok(())
     }
 
-    pub fn read_response(
-        &mut self,
-    ) -> Result<Option<serde_json::Value>, SandboxServiceError> {
+    pub fn read_response(&mut self) -> Result<Option<serde_json::Value>, SandboxServiceError> {
         Ok(self
             .worker
             .as_mut()
@@ -390,9 +394,9 @@ fn ensure_private_directory(path: &Path) -> Result<(), SandboxError> {
 }
 
 fn write_private_json_new(path: &Path, value: &impl Serialize) -> Result<(), SandboxError> {
-    let parent = path.parent().ok_or_else(|| {
-        SandboxError::InvalidConfig("manifest path has no parent".into())
-    })?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| SandboxError::InvalidConfig("manifest path has no parent".into()))?;
     let bytes = serde_json::to_vec(value)?;
     if bytes.is_empty() || bytes.len() > PRIVATE_MANIFEST_LIMIT {
         return Err(SandboxError::InvalidConfig(

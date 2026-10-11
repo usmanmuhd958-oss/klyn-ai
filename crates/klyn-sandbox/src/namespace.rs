@@ -82,32 +82,18 @@ pub fn enter_worker_namespaces() -> Result<(), SandboxError> {
     // caller writes a GID mapping. Any mapping failure aborts this worker.
     fs::write("/proc/self/setgroups", "deny\n")
         .map_err(|e| SandboxError::Enforcement(format!("disable setgroups failed: {e}")))?;
-    fs::write(
-        "/proc/self/uid_map",
-        format!("0 {host_uid} 1\n"),
-    )
-    .map_err(|e| SandboxError::Enforcement(format!("write UID map failed: {e}")))?;
-    fs::write(
-        "/proc/self/gid_map",
-        format!("0 {host_gid} 1\n"),
-    )
-    .map_err(|e| SandboxError::Enforcement(format!("write GID map failed: {e}")))?;
+    fs::write("/proc/self/uid_map", format!("0 {host_uid} 1\n"))
+        .map_err(|e| SandboxError::Enforcement(format!("write UID map failed: {e}")))?;
+    fs::write("/proc/self/gid_map", format!("0 {host_gid} 1\n"))
+        .map_err(|e| SandboxError::Enforcement(format!("write GID map failed: {e}")))?;
 
     // A UID/GID map alone does not change the running process credentials.
     // Drop all real/effective/saved IDs to the sole mapped identity before
     // creating further namespaces or opening any worker resource.
-    nix::unistd::setresgid(
-        Gid::from_raw(0),
-        Gid::from_raw(0),
-        Gid::from_raw(0),
-    )
-    .map_err(|e| SandboxError::Enforcement(format!("setresgid namespace root failed: {e}")))?;
-    nix::unistd::setresuid(
-        Uid::from_raw(0),
-        Uid::from_raw(0),
-        Uid::from_raw(0),
-    )
-    .map_err(|e| SandboxError::Enforcement(format!("setresuid namespace root failed: {e}")))?;
+    nix::unistd::setresgid(Gid::from_raw(0), Gid::from_raw(0), Gid::from_raw(0))
+        .map_err(|e| SandboxError::Enforcement(format!("setresgid namespace root failed: {e}")))?;
+    nix::unistd::setresuid(Uid::from_raw(0), Uid::from_raw(0), Uid::from_raw(0))
+        .map_err(|e| SandboxError::Enforcement(format!("setresuid namespace root failed: {e}")))?;
 
     unshare(
         CloneFlags::CLONE_NEWNS

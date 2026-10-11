@@ -162,12 +162,14 @@ pub fn launch_gated_worker(spec: WorkerLaunchSpec) -> Result<SandboxedChild, San
 
     // The FIFO is no longer required after the release marker has been sent.
     let _ = fs::remove_file(&gate_path);
-    let stdin = child.stdin.take().ok_or_else(|| {
-        SandboxError::Enforcement("worker stdin pipe was not created".into())
-    })?;
-    let stdout = child.stdout.take().ok_or_else(|| {
-        SandboxError::Enforcement("worker stdout pipe was not created".into())
-    })?;
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| SandboxError::Enforcement("worker stdin pipe was not created".into()))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| SandboxError::Enforcement("worker stdout pipe was not created".into()))?;
     Ok(SandboxedChild {
         child,
         stdin: Some(stdin),
@@ -184,12 +186,15 @@ impl SandboxedChild {
 
     /// Send one bounded line-delimited JSON command to the confined worker.
     pub fn send_json(&mut self, value: &serde_json::Value) -> Result<(), SandboxError> {
-        let writer = self.stdin.as_mut().ok_or_else(|| {
-            SandboxError::Enforcement("worker stdin is unavailable".into())
-        })?;
+        let writer = self
+            .stdin
+            .as_mut()
+            .ok_or_else(|| SandboxError::Enforcement("worker stdin is unavailable".into()))?;
         let encoded = serde_json::to_vec(value)?;
         if encoded.len() > crate::MAX_BROKER_FRAME_BYTES {
-            return Err(SandboxError::InvalidConfig("worker command exceeds the frame limit".into()));
+            return Err(SandboxError::InvalidConfig(
+                "worker command exceeds the frame limit".into(),
+            ));
         }
         writer.write_all(&encoded)?;
         writer.write_all(b"\n")?;
@@ -199,16 +204,19 @@ impl SandboxedChild {
 
     /// Read one JSON response line. The caller must enforce its own deadline.
     pub fn read_json_response(&mut self) -> Result<Option<serde_json::Value>, SandboxError> {
-        let reader = self.stdout.as_mut().ok_or_else(|| {
-            SandboxError::Enforcement("worker stdout is unavailable".into())
-        })?;
+        let reader = self
+            .stdout
+            .as_mut()
+            .ok_or_else(|| SandboxError::Enforcement("worker stdout is unavailable".into()))?;
         let mut line = String::new();
         let bytes = reader.read_line(&mut line)?;
         if bytes == 0 {
             return Ok(None);
         }
         if line.len() > crate::MAX_BROKER_FRAME_BYTES {
-            return Err(SandboxError::Enforcement("worker response exceeds the frame limit".into()));
+            return Err(SandboxError::Enforcement(
+                "worker response exceeds the frame limit".into(),
+            ));
         }
         Ok(Some(serde_json::from_str(&line)?))
     }
