@@ -20,7 +20,6 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, Write},
     os::{
-        fd::AsRawFd,
         unix::fs::{OpenOptionsExt, PermissionsExt},
     },
     path::{Component, Path, PathBuf},
@@ -32,7 +31,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use nix::fcntl::{flock, FlockArg};
+use nix::fcntl::{Flock, FlockArg};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -259,6 +258,8 @@ fn valid_transition(from: TransactionState, to: TransactionState) -> bool {
 pub enum FsError {
     #[error("filesystem I/O failed: {0}")]
     Io(#[from] io::Error),
+    #[error("journal serialization failed: {0}")]
+    Serialization(#[from] serde_json::Error),
     #[error("Git operation failed ({operation}, exit {code:?}): {stderr}")]
     GitCommand {
         operation: String,
@@ -325,7 +326,7 @@ struct EngineInner {
     candidates_root: PathBuf,
     target_ref: String,
     journal: Mutex<Journal>,
-    _lock_file: File,
+    _lock_file: Flock<File>,
 }
 
 #[derive(Clone)]
@@ -394,16 +395,16 @@ impl FsEngine {
             .mode(0o600)
             .open(&lock_path)?;
         fs::set_permissions(&lock_path, fs::Permissions::from_mode(0o600))?;
-        match flock(lock_file.as_raw_fd(), FlockArg::LockExclusiveNonblock) {
-            Ok(()) => {}
-            Err(error)
+        let lock_file = match Flock::lock(lock_file, FlockArg::LockExclusiveNonblock) {
+            Ok(locked) => locked,
+            Err((_file, error))
                 if error == nix::errno::Errno::EWOULDBLOCK
                     || error == nix::errno::Errno::EAGAIN =>
             {
                 return Err(FsError::EngineLocked)
             }
-            Err(_) => return Err(FsError::SynchronizationUnavailable),
-        }
+            Err((_file, _error)) => return Err(FsError::SynchronizationUnavailable),
+        };
 
         let worktrees = git_text(
             &repo_root,
