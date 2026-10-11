@@ -739,6 +739,9 @@ impl CapabilityBroker {
         budget: &CapabilityBudget,
         deadline: Instant,
     ) -> Result<PreparedResource> {
+        if Instant::now() >= deadline {
+            return Err(SandboxError::BudgetExceeded("network operation deadline elapsed".into()));
+        }
         let selector = &request.operation.resource_selector;
         reject_selector_keys(selector, &["host", "port", "maxBytes", "payloadDigest"])?;
         let host = selector.get("host").and_then(Value::as_str)
@@ -756,45 +759,69 @@ impl CapabilityBroker {
         if max_bytes == 0 || max_bytes > scope_max_bytes || max_bytes > budget.max_network_bytes {
             return Err(SandboxError::BudgetExceeded("network byte limit exceeds scope or token budget".into()));
         }
-        if request.operation.operation == "net.resolve" {
-            let resolved = (host, port).to_socket_addrs()?.filter(|address|
-                self.deps.network_policy.allow_destination(host, *address))
-                .map(|address| address.to_string()).collect::<Vec<_>>();
-            if resolved.is_empty() {
-                return Err(SandboxError::Denied("no resolved network address passed destination policy".into()));
-            }
-            let bytes = serde_json::to_vec(&resolved).map_err(|e| SandboxError::Serialization(e.to_string()))?;
-            if bytes.len() as u64 > max_bytes {
-                return Err(SandboxError::BudgetExceeded("DNS response exceeds the granted byte limit".into()));
-            }
-            return Ok(PreparedResource { fd: Some(memfd_snapshot(&bytes)?), completion: None });
-        }
-        if !matches!(request.operation.operation.as_str(), "net.connect" | "net.send" | "net.receive") {
-            return Err(SandboxError::Denied("unsupported network operation".into()));
-        }
-        if request.operation.operation == "net.send" &&
-            selector.get("payloadDigest").and_then(Value::as_str).is_none_or(|digest| !is_digest(digest)) {
-            return Err(SandboxError::Denied("network send must bind a payload digest".into()));
-        }
-        let resolved = (host, port).to_socket_addrs()?
+
+        let addresses = self.deps.network_policy.resolve_addresses(host, port, deadline)?
+            .into_iter()
             .filter(|address| self.deps.network_policy.allow_destination(host, *address))
             .collect::<Vec<_>>();
-        let mut connected = None;
-        for address in resolved {
-            match TcpStream::connect_timeout(&address, Duration::from_secs(3)) {
-                Ok(stream) => { connected = Some(stream); break; }
-                Err(_) => continue,
-            }
+        if addresses.is_empty() {
+            return Err(SandboxError::Denied("no destination address passed the configured network policy".into()));
         }
-        let remote = connected.ok_or_else(|| SandboxError::Denied("all permitted network addresses failed to connect".into()))?;
-        let (agent_side, broker_side) = UnixStream::pair()?;
-        let worker = thread::Builder::new().name("klyn-network-proxy".into())
-            .spawn(move || pump_bounded_network(broker_side, remote, max_bytes))
-            .map_err(SandboxError::Io)?;
-        Ok(PreparedResource {
-            fd: Some(unsafe { OwnedFd::from_raw_fd(agent_side.into_raw_fd()) }),
-            completion: Some(worker),
-        })
+
+        match request.operation.operation.as_str() {
+            "net.resolve" => {
+                let bytes = serde_json::to_vec(&addresses.iter().map(ToString::to_string).collect::<Vec<_>>())
+                    .map_err(|e| SandboxError::Serialization(e.to_string()))?;
+                if bytes.len() as u64 > max_bytes {
+                    return Err(SandboxError::BudgetExceeded("DNS response exceeds the granted byte limit".into()));
+                }
+                Ok(PreparedResource { fd: Some(memfd_snapshot(&bytes)?), completion: None })
+            }
+            "net.send" => {
+                let expected_digest = selector.get("payloadDigest").and_then(Value::as_str)
+                    .filter(|digest| is_digest(digest))
+                    .ok_or_else(|| SandboxError::Denied("net.send requires a SHA-256 payloadDigest".into()))?
+                    .to_owned();
+                if selector.get("payloadDigest").is_none_or(|value| value.as_str().is_none()) {
+                    return Err(SandboxError::Denied("net.send payloadDigest must be a string".into()));
+                }
+                if max_bytes > MAX_FD_PAYLOAD_BYTES {
+                    return Err(SandboxError::BudgetExceeded("net.send staging exceeds the maximum payload size".into()));
+                }
+                let (agent_side, broker_side) = UnixStream::pair()?;
+                let worker = thread::Builder::new().name("klyn-network-send-guard".into())
+                    .spawn(move || pump_verified_network_send(
+                        broker_side, addresses, expected_digest, max_bytes, deadline,
+                    )).map_err(SandboxError::Io)?;
+                Ok(PreparedResource {
+                    fd: Some(unsafe { OwnedFd::from_raw_fd(agent_side.into_raw_fd()) }),
+                    completion: Some(worker),
+                })
+            }
+            "net.receive" => {
+                if selector.contains_key("payloadDigest") {
+                    return Err(SandboxError::Denied("net.receive must not provide payloadDigest".into()));
+                }
+                let remote = connect_first_allowed(&addresses, deadline)?;
+                let bytes = read_network_snapshot(remote, max_bytes, deadline)?;
+                Ok(PreparedResource { fd: Some(memfd_snapshot(&bytes)?), completion: None })
+            }
+            "net.connect" => {
+                if selector.contains_key("payloadDigest") {
+                    return Err(SandboxError::Denied("net.connect must not provide payloadDigest".into()));
+                }
+                let remote = connect_first_allowed(&addresses, deadline)?;
+                let (agent_side, broker_side) = UnixStream::pair()?;
+                let worker = thread::Builder::new().name("klyn-network-proxy".into())
+                    .spawn(move || pump_bounded_network(broker_side, remote, max_bytes, deadline))
+                    .map_err(SandboxError::Io)?;
+                Ok(PreparedResource {
+                    fd: Some(unsafe { OwnedFd::from_raw_fd(agent_side.into_raw_fd()) }),
+                    completion: Some(worker),
+                })
+            }
+            _ => Err(SandboxError::Denied("unsupported network operation".into())),
+        }
     }
 
     fn finish(&self, state: &InvocationState, outcome: &str, reason_code: &str, error: Option<String>) -> Result<()> {
