@@ -339,21 +339,46 @@ pub fn denied_syscalls() -> Result<Vec<u32>> {
     Ok(values.to_vec())
 }
 
-/// Build a seccomp filter program. Unknown architectures are killed, denied syscalls return
-/// EPERM, and all other syscalls pass through the filter. All authority-sensitive operations
-/// are expected to be brokered over a pre-opened Unix stream.
+/// Minimal runtime syscall allow-list. The default action is EPERM, so newly added
+/// kernel syscalls are denied unless reviewed and added here. This profile is designed
+/// for a pre-initialized single-thread worker that communicates through inherited FDs.
+pub fn allowed_syscalls() -> Result<Vec<u32>> {
+    #[cfg(target_arch = "x86_64")]
+    let values: &[u32] = &[
+        0, 1, 3, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 19, 20, 23, 24, 25, 28,
+        35, 39, 60, 63, 72, 96, 102, 104, 107, 108, 131, 158, 186, 202, 204, 218,
+        219, 228, 230, 231, 232, 233, 234, 270, 271, 281, 283, 286, 287, 291, 302,
+        318, 334,
+    ];
+    #[cfg(target_arch = "aarch64")]
+    let values: &[u32] = &[
+        0, 1, 3, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 19, 20, 22, 23, 24, 25, 27,
+        29, 35, 39, 56, 57, 62, 63, 64, 65, 66, 67, 72, 73, 80, 93, 94, 96, 98, 99,
+        101, 113, 115, 124, 128, 132, 134, 135, 139, 160, 172, 174, 175, 176, 177,
+        178, 214, 215, 216, 222, 226, 233, 261, 278, 293, 441,
+    ];
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    return Err(SandboxError::UnsupportedKernel("seccomp allow-list is not configured for this architecture".into()));
+    #[allow(unreachable_code)]
+    Ok(values.to_vec())
+}
+
+/// Build an explicit-allow seccomp program. Architecture mismatch kills the process;
+/// known-safe syscalls return ALLOW; every other syscall, including new kernel syscalls,
+/// returns EPERM. This does not delegate authority merely by allowing a syscall number;
+/// inherited FDs still need to be capability-scoped by the launcher.
 pub fn seccomp_program() -> Result<Vec<SockFilter>> {
-    let denied = denied_syscalls()?;
-    let mut program = Vec::with_capacity(4 + denied.len() * 2);
+    let allowed = allowed_syscalls()?;
+    let mut program = Vec::with_capacity(5 + allowed.len() * 2);
     program.push(stmt(BPF_LD_W_ABS, SECCOMP_ARCH_OFFSET));
     program.push(jump(BPF_JMP_JEQ_K, AUDIT_ARCH_NATIVE, 1, 0));
     program.push(stmt(BPF_RET_K, SECCOMP_RET_KILL_PROCESS));
     program.push(stmt(BPF_LD_W_ABS, SECCOMP_NR_OFFSET));
-    for syscall in denied {
+    for syscall in allowed {
         program.push(jump(BPF_JMP_JEQ_K, syscall, 0, 1));
-        program.push(stmt(BPF_RET_K, SECCOMP_RET_ERRNO | (libc::EPERM as u32)));
+        program.push(stmt(BPF_RET_K, SECCOMP_RET_ALLOW));
     }
-    program.push(stmt(BPF_RET_K, SECCOMP_RET_ALLOW));
+    program.push(stmt(BPF_RET_K, SECCOMP_RET_ERRNO | (libc::EPERM as u32)));
     if program.len() > u16::MAX as usize {
         return Err(SandboxError::Protocol("seccomp program exceeds kernel instruction limit".into()));
     }
@@ -379,12 +404,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn seccomp_program_has_arch_kill_and_default_allow() {
+    fn seccomp_program_has_arch_kill_and_default_deny() {
         let program = seccomp_program().unwrap();
         assert_eq!(program[0].code, BPF_LD_W_ABS);
         assert_eq!(program[0].k, SECCOMP_ARCH_OFFSET);
         assert_eq!(program[2].k, SECCOMP_RET_KILL_PROCESS);
-        assert_eq!(program.last().unwrap().k, SECCOMP_RET_ALLOW);
+        assert_eq!(program.last().unwrap().k, SECCOMP_RET_ERRNO | (libc::EPERM as u32));
     }
 
     #[test]
