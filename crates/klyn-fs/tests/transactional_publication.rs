@@ -30,7 +30,10 @@ impl Fixture {
 
         fs::create_dir_all(&repository).unwrap();
         git(&repository, &["init", "-b", "main"]);
-        git(&repository, &["config", "user.name", "KLYN Integration Test"]);
+        git(
+            &repository,
+            &["config", "user.name", "KLYN Integration Test"],
+        );
         git(
             &repository,
             &["config", "user.email", "klyn-integration@invalid"],
