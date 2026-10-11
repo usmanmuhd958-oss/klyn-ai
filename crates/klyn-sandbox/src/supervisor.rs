@@ -9,10 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use nix::{
-    sys::stat::Mode,
-    unistd::mkfifo,
-};
+use nix::{sys::stat::Mode, unistd::mkfifo};
 
 use crate::{
     namespace::{is_no_reader, release_marker, set_private_fifo, write_release},
@@ -149,7 +146,11 @@ pub fn launch_gated_worker(spec: WorkerLaunchSpec) -> Result<SandboxedChild, San
 
     // The FIFO is no longer required after the release marker has been sent.
     let _ = fs::remove_file(&gate_path);
-    Ok(SandboxedChild { child, cgroup, gate_path })
+    Ok(SandboxedChild {
+        child,
+        cgroup,
+        gate_path,
+    })
 }
 
 impl SandboxedChild {

@@ -38,12 +38,24 @@ fn run() -> Result<(), String> {
         }
         match arg.to_str() {
             Some("--uid") => {
-                uid = Some(args.next().ok_or("missing uid")?.to_str()
-                    .ok_or("uid is not UTF-8")?.parse().map_err(|_| "invalid uid")?);
+                uid = Some(
+                    args.next()
+                        .ok_or("missing uid")?
+                        .to_str()
+                        .ok_or("uid is not UTF-8")?
+                        .parse()
+                        .map_err(|_| "invalid uid")?,
+                );
             }
             Some("--gid") => {
-                gid = Some(args.next().ok_or("missing gid")?.to_str()
-                    .ok_or("gid is not UTF-8")?.parse().map_err(|_| "invalid gid")?);
+                gid = Some(
+                    args.next()
+                        .ok_or("missing gid")?
+                        .to_str()
+                        .ok_or("gid is not UTF-8")?
+                        .parse()
+                        .map_err(|_| "invalid gid")?,
+                );
             }
             _ => return Err("unknown argument".into()),
         }
@@ -60,7 +72,8 @@ fn run() -> Result<(), String> {
 
     let mut gate = unsafe { std::fs::File::from_raw_fd(GATE_FD) };
     let mut signal = [0u8; 1];
-    gate.read_exact(&mut signal).map_err(|e| format!("waiting on cgroup start gate: {e}"))?;
+    gate.read_exact(&mut signal)
+        .map_err(|e| format!("waiting on cgroup start gate: {e}"))?;
     if signal[0] != GATE_RELEASE {
         return Err("invalid start gate signal".into());
     }
@@ -74,7 +87,10 @@ fn run() -> Result<(), String> {
         | libc::CLONE_NEWUTS
         | libc::CLONE_NEWPID;
     if unsafe { libc::unshare(namespace_flags) } != 0 {
-        return Err(format!("unshare namespaces failed: {}", std::io::Error::last_os_error()));
+        return Err(format!(
+            "unshare namespaces failed: {}",
+            std::io::Error::last_os_error()
+        ));
     }
     let slash = CString::new("/").unwrap();
     if unsafe {
@@ -85,28 +101,42 @@ fn run() -> Result<(), String> {
             (libc::MS_REC | libc::MS_PRIVATE) as libc::c_ulong,
             std::ptr::null(),
         )
-    } != 0 {
-        return Err(format!("making mounts private failed: {}", std::io::Error::last_os_error()));
+    } != 0
+    {
+        return Err(format!(
+            "making mounts private failed: {}",
+            std::io::Error::last_os_error()
+        ));
     }
 
     // unshare(CLONE_NEWPID) takes effect for children; this trusted helper stays
     // outside that PID namespace while its child becomes PID 1 inside it.
     let pid = unsafe { libc::fork() };
     if pid < 0 {
-        return Err(format!("fork for PID namespace failed: {}", std::io::Error::last_os_error()));
+        return Err(format!(
+            "fork for PID namespace failed: {}",
+            std::io::Error::last_os_error()
+        ));
     }
     if pid > 0 {
-        unsafe { libc::close(MANIFEST_FD); }
+        unsafe {
+            libc::close(MANIFEST_FD);
+        }
         let mut status: libc::c_int = 0;
         loop {
             let result = unsafe { libc::waitpid(pid, &mut status, 0) };
             if result == pid {
                 break;
             }
-            if result < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+            if result < 0
+                && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
+            {
                 continue;
             }
-            return Err(format!("waitpid failed: {}", std::io::Error::last_os_error()));
+            return Err(format!(
+                "waitpid failed: {}",
+                std::io::Error::last_os_error()
+            ));
         }
         if libc::WIFEXITED(status) {
             std::process::exit(libc::WEXITSTATUS(status));
@@ -119,13 +149,16 @@ fn run() -> Result<(), String> {
 
     // Child branch: a minimal PID-namespace init, no shell, no inherited
     // supplemental groups or capabilities, and no privilege regain after exec.
-    if unsafe { libc::mount(
-        CString::new("proc").unwrap().as_ptr(),
-        CString::new("/proc").unwrap().as_ptr(),
-        CString::new("proc").unwrap().as_ptr(),
-        (libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC) as libc::c_ulong,
-        std::ptr::null(),
-    ) } != 0 {
+    if unsafe {
+        libc::mount(
+            CString::new("proc").unwrap().as_ptr(),
+            CString::new("/proc").unwrap().as_ptr(),
+            CString::new("proc").unwrap().as_ptr(),
+            (libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC) as libc::c_ulong,
+            std::ptr::null(),
+        )
+    } != 0
+    {
         child_fail("mounting isolated procfs failed");
     }
     if unsafe { libc::setgroups(0, std::ptr::null()) } != 0 {
@@ -137,7 +170,9 @@ fn run() -> Result<(), String> {
     if unsafe { libc::setresuid(uid, uid, uid) } != 0 {
         child_fail("setresuid failed");
     }
-    unsafe { libc::umask(0o077); }
+    unsafe {
+        libc::umask(0o077);
+    }
     if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) } != 0 {
         child_fail("PR_SET_DUMPABLE failed");
     }
@@ -151,16 +186,19 @@ fn run() -> Result<(), String> {
     process.env_clear();
     process.env("PATH", "/usr/bin:/bin");
     process.env("LANG", "C");
-    let error = unsafe { process.pre_exec(|| {
-        // Keep FD 4 for the trusted worker bootstrap to read the sealed
-        // manifest, but remove ambient descriptors from this exec boundary.
-        for fd in 3..1024 {
-            if fd != MANIFEST_FD {
-                libc::close(fd);
+    let error = unsafe {
+        process.pre_exec(|| {
+            // Keep FD 4 for the trusted worker bootstrap to read the sealed
+            // manifest, but remove ambient descriptors from this exec boundary.
+            for fd in 3..1024 {
+                if fd != MANIFEST_FD {
+                    libc::close(fd);
+                }
             }
-        }
-        Ok(())
-    }) }.exec();
+            Ok(())
+        })
+    }
+    .exec();
     child_fail(&format!("exec trusted worker failed: {error}"));
 }
 

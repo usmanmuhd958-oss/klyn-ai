@@ -28,10 +28,7 @@ pub fn await_start_gate(path: impl AsRef<Path>) -> Result<(), SandboxError> {
     let path = path.as_ref();
     let before = fs::symlink_metadata(path)?;
     let euid = Uid::current().as_raw();
-    if !before.file_type().is_fifo()
-        || before.uid() != euid
-        || before.mode() & 0o077 != 0
-    {
+    if !before.file_type().is_fifo() || before.uid() != euid || before.mode() & 0o077 != 0 {
         return Err(SandboxError::InvalidConfig(
             "start gate must be a private owner-controlled FIFO".into(),
         ));
@@ -69,9 +66,8 @@ pub fn enter_worker_namespaces() -> Result<(), SandboxError> {
     let host_uid = Uid::current().as_raw();
     let host_gid = Gid::current().as_raw();
 
-    unshare(CloneFlags::CLONE_NEWUSER).map_err(|e| {
-        SandboxError::Enforcement(format!("unshare user namespace failed: {e}"))
-    })?;
+    unshare(CloneFlags::CLONE_NEWUSER)
+        .map_err(|e| SandboxError::Enforcement(format!("unshare user namespace failed: {e}")))?;
 
     // The kernel requires setgroups to be disabled before an unprivileged
     // caller writes a GID mapping. Any mapping failure aborts this worker.

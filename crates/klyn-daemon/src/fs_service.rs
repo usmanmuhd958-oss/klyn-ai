@@ -165,7 +165,6 @@ impl FsService {
     }
 }
 
-
 impl klyn_sandbox::broker::CandidateMutationHandler for FsService {
     fn write_candidate_file(
         &self,

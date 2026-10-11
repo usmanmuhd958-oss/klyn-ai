@@ -146,9 +146,7 @@ impl ResourceBudget {
                 "memory_max_bytes must be greater than zero".into(),
             ));
         }
-        if self.cpu_quota_micros == 0
-            || !(1_000..=1_000_000).contains(&self.cpu_period_micros)
-        {
+        if self.cpu_quota_micros == 0 || !(1_000..=1_000_000).contains(&self.cpu_period_micros) {
             return Err(SandboxError::InvalidConfig(
                 "cpu quota must be positive and cpu period must be in 1000..=1000000 microseconds"
                     .into(),
@@ -235,7 +233,8 @@ impl CapabilityClaims {
                 }
                 if self.candidate_transaction_id.as_deref() != Some(grant.prefix.as_str()) {
                     return Err(SandboxError::InvalidConfig(
-                        "candidate file grant must be bound to the exact candidate transaction".into(),
+                        "candidate file grant must be bound to the exact candidate transaction"
+                            .into(),
                     ));
                 }
             }
@@ -349,14 +348,18 @@ impl CgroupV2 {
                 || !enabled.split_whitespace().any(|c| c == "io"))
         {
             return Err(SandboxError::InvalidConfig(
-                "I/O budget requested but cgroup-v2 io controller is unavailable or disabled".into(),
+                "I/O budget requested but cgroup-v2 io controller is unavailable or disabled"
+                    .into(),
             ));
         }
 
         let path = root.join(id);
         fs::create_dir(&path)?;
         let result = (|| -> Result<(), SandboxError> {
-            write_control(&path.join("memory.max"), &budget.memory_max_bytes.to_string())?;
+            write_control(
+                &path.join("memory.max"),
+                &budget.memory_max_bytes.to_string(),
+            )?;
             write_control(&path.join("memory.oom.group"), "1")?;
             write_control(&path.join("memory.swap.max"), "0")?;
             write_control(
@@ -476,8 +479,6 @@ pub fn validate_trusted_executable(path: impl AsRef<Path>) -> Result<PathBuf, Sa
     Ok(canonical)
 }
 
-
-
 /// Daemon-owned capability signer. Keep the signing key in the daemon's
 /// protected secret store; workers receive only the signed claims.
 pub struct CapabilityIssuer {
@@ -566,8 +567,7 @@ pub fn bootstrap_worker_from_env(
 
     // Establish the only permitted socket before Landlock and seccomp make
     // pathname socket creation and connect unavailable.
-    let broker = broker::BrokerClient::connect_reserved(broker_socket)
-        .map_err(SandboxError::Io)?;
+    let broker = broker::BrokerClient::connect_reserved(broker_socket).map_err(SandboxError::Io)?;
     landlock_seccomp::enforce_worker(&token.claims, roots, BROKER_FD)?;
     Ok((broker, token))
 }
@@ -578,9 +578,15 @@ mod tests {
 
     #[test]
     fn path_scope_is_component_aware() {
-        assert!(path_is_within_grant("workspace/src/main.rs", "workspace/src"));
+        assert!(path_is_within_grant(
+            "workspace/src/main.rs",
+            "workspace/src"
+        ));
         assert!(path_is_within_grant("workspace/src", "workspace/src"));
-        assert!(!path_is_within_grant("workspace/src2/main.rs", "workspace/src"));
+        assert!(!path_is_within_grant(
+            "workspace/src2/main.rs",
+            "workspace/src"
+        ));
         assert!(!path_is_within_grant("../etc/passwd", ""));
     }
 
