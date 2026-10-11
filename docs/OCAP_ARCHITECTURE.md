@@ -2,13 +2,15 @@
 
 ## Status and scope
 
-This document specifies the signed capability format and the runtime contracts in
-`packages/autonomy/src/capability.ts`. The module implements Ed25519 token signing
-and verification, scope/budget attenuation checks, and a fail-closed child-token
-builder. It is **not**, by itself, an operating-system sandbox. A deployment is
-not production-qualified until its native resource broker, durable quota/revocation
-stores, runtime collector, KEL adapter, and adversarial tests satisfy the contracts
-below.
+This document specifies the signed capability format and runtime contracts in
+`packages/autonomy/src/capability.ts`, with the concrete KEL bridge in
+`packages/autonomy/src/kel-evidence-sink.ts`. The implementation includes Ed25519
+token signing/verification, attenuations, pre-execution attestation verification,
+the fail-closed invocation coordinator, and an adapter that emits canonical KEL v1
+DSSE EvidenceStatementV1 records. It is **not**, by itself, an operating-system
+sandbox. Production qualification still requires deployment-specific native broker,
+durable store, collector, signing and context resolver implementations, plus
+adversarial tests.
 
 ## Security model
 
@@ -92,11 +94,13 @@ The child token uses the parent subject as the delegating principal, references 
 digest of the complete parent token including its signature, increments delegation
 depth, preserves audience, and narrows time, scopes, budgets, and delegation rights.
 `AttenuatedCapabilityBuilderV1` refuses to return the child until the attenuation
-event is durably appended through `CapabilityEvidenceSink`. The sink must adapt this
-event to the existing KEL v1 `EvidenceStatementV1`; it must not invent a separate
-unverifiable log format. The adapter should use the KEL `authorization-decision`
-kind and carry event schema, token/parent digests, mission/runtime IDs, decision,
-policy digest, and request digest in the structured evidence/extensions fields.
+event is durably appended through `CapabilityEvidenceSink`. The concrete
+`CapabilityKelEvidenceSink` adapts these events to KEL v1 `EvidenceStatementV1`,
+creates canonical JCS/DSSE envelopes, submits them through `KelBridge`, and returns
+only after the bridge reports acceptance. It uses the `authorization-decision` kind
+for grant/attenuation/revocation/authorization events and an execution-completion
+kind for invocation outcomes. Token/parent digests, mission/runtime IDs, decision,
+policy digest, and request digest are carried in extensions.
 
 ### Revocation
 
@@ -124,8 +128,12 @@ filesystem/network clients, ambient credentials, or raw OS handles to the agent.
 
 ## Required deployment adapters
 
-- `CapabilityEvidenceSink`: transactionally append a standard KEL v1 evidence
-  statement and return only after durable ledger acceptance.
+- `CapabilityKelEvidenceSink` implements `CapabilityEvidenceSink` against the
+  existing KEL v1 `KelBridge`; it signs canonical DSSE, validates the returned
+  receipt, and fails closed unless configured KEL verification accepts the statement.
+  Its producer signer, durable sequence allocator, authoritative mission-context
+  resolver, subject resolver, trusted producer key, and live KEL transport are
+  deployment-provided integrations and must be independently qualified.
 - `CapabilityRevocationRegistry`: durable, multi-worker consistent state keyed by
   token ID and digest; fail closed on read/write errors.
 - `CapabilityInvocationCounter`: atomic admission reservation that enforces total
@@ -136,6 +144,10 @@ filesystem/network clients, ambient credentials, or raw OS handles to the agent.
   resources on cancellation/timeout, and never fall back to unsandboxed execution.
 - `CapabilityResourceBroker`: resolve resource handles only from the trusted registry,
   intersect token scope with policy, and check every resource operation.
+- `CapabilityInvocationPipelineV1`: centralizes signature, mission/audience, policy,
+  revocation, quota, scope, sandbox, runtime-attestation and KEL checks before invoking
+  a dispatcher configured at trusted runtime startup. Invocation callers cannot supply
+  an ad-hoc JavaScript executor callback.
 - A native supervisor: namespaces and seccomp where applicable, cgroups v2/rlimits,
   restricted mounts, no inherited descriptors, minimal environment, network policy,
   bounded IPC, and process-tree cleanup.
