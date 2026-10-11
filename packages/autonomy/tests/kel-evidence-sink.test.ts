@@ -61,7 +61,7 @@ function testEvent(): CapabilityEvidenceEvent {
     parentTokenDigest: null,
     invocationId: "invoke-1",
     requestDigest: "b".repeat(64),
-    policyDigest: "policy-v1",
+    policyDigest: "f".repeat(64),
     outcome: "allowed",
     reasonCode: "pre_execution_attestation_verified",
     details: {
