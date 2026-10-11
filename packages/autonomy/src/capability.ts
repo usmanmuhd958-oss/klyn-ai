@@ -794,7 +794,9 @@ export function validateCapabilityPayload(payload: CapabilityTokenV1): void {
   validId(payload.missionId, "missionId");
   validId(payload.audience, "audience");
   validId(payload.nonce, "nonce");
-  validId(payload.policyDigest, "policyDigest");
+  if (!/^[a-f0-9]{64}$/.test(payload.policyDigest)) {
+    throw new CapabilitySecurityError("token_schema_invalid", "policyDigest must be lowercase SHA-256 hex");
+  }
   assertSafeInteger(payload.issuedAtEpochMs, "issuedAtEpochMs");
   assertSafeInteger(payload.notBeforeEpochMs, "notBeforeEpochMs");
   assertSafeInteger(payload.expiresAtEpochMs, "expiresAtEpochMs", 1);
@@ -900,7 +902,9 @@ export class AttenuatedCapabilityBuilderV1 implements AttenuatedCapabilityBuilde
     const now = this.now();
     validId(rule.missionId, "missionId");
     validId(rule.runtimeInstanceId, "runtimeInstanceId");
-    validId(rule.policyDigest, "policyDigest");
+    if (!/^[a-f0-9]{64}$/.test(rule.policyDigest)) {
+      throw new CapabilitySecurityError("policy_digest_invalid", "delegation policyDigest must be lowercase SHA-256 hex");
+    }
     this.verifier.verify(this.parent, { nowEpochMs: now, subjectPrincipalId: this.callerPrincipalId });
     const parentDigest = digestCapabilityToken(this.parent);
     if (await this.revocations.isRevoked(this.parent.payload.tokenId, parentDigest, now)) {
