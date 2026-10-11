@@ -604,6 +604,7 @@ export function verifyPreExecutionAttestation(
     throw new CapabilitySecurityError("attestation_schema_invalid", "pre-execution attestation schema is invalid");
   }
   for (const [field, value] of [
+    ["collectorPrincipalId", payload.collectorPrincipalId],
     ["invocationId", payload.invocationId],
     ["tokenId", payload.tokenId],
     ["principalId", payload.principalId],
@@ -634,8 +635,10 @@ export function verifyPreExecutionAttestation(
     throw new CapabilitySecurityError("attestation_signature_invalid", "attestation signature metadata is malformed");
   }
   const key = keys.resolvePublicKey(signature.keyId);
+  const keyPrincipalId = keys.resolvePrincipalId(signature.keyId);
   const signatureBytes = Buffer.from(signature.signatureBase64, "base64");
   if (!key || key.type !== "public" || key.asymmetricKeyType !== "ed25519" ||
+      keyPrincipalId !== payload.collectorPrincipalId ||
       signatureBytes.length !== 64 || signatureBytes.toString("base64") !== signature.signatureBase64 ||
       !verify(null, Buffer.from(canonicalize(payload), "utf8"), key, signatureBytes)) {
     throw new CapabilitySecurityError("attestation_signature_invalid", "runtime attestation signature is not trusted");
@@ -1383,6 +1386,7 @@ export class CapabilityInvocationPipelineV1 implements CapabilityInvocationPipel
       const scopeDigest = digestCapabilityPayload(scope);
       const attestationPayload: PreExecutionAttestationPayloadV1 = Object.freeze({
         schema: CAPABILITY_ATTESTATION_SCHEMA,
+        collectorPrincipalId: this.dependencies.collector.principalId,
         invocationId: request.invocationId,
         tokenId: request.token.payload.tokenId,
         tokenDigest,
