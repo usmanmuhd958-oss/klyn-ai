@@ -32,6 +32,23 @@ impl FsService {
         }
     }
 
+    /// Resolve an active transaction to its private candidate workspace.
+    /// The returned path is only used by trusted broker setup; workers never
+    /// receive host filesystem paths or canonical-workspace descriptors.
+    pub fn candidate_path_for_transaction(
+        &self,
+        transaction_id: &str,
+    ) -> Result<std::path::PathBuf, FsServiceError> {
+        let registry = self
+            .transactions
+            .lock()
+            .map_err(|_| FsServiceError::RegistryUnavailable)?;
+        registry
+            .get(transaction_id)
+            .map(|transaction| transaction.candidate_path().to_path_buf())
+            .ok_or(FsServiceError::NotFound)
+    }
+
     pub fn execute(&self, method: Method, params: &Value) -> Result<Value, FsServiceError> {
         match method {
             Method::FsBegin => {
