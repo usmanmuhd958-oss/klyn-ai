@@ -8,6 +8,7 @@ import {
   CAPABILITY_ATTESTATION_SCHEMA,
   Ed25519CapabilitySigner,
   Ed25519CapabilityTokenVerifier,
+  ExternalCapabilityTokenSigner,
   digestCapabilityRequest,
   digestCapabilityToken,
   isBudgetAttenuation,
@@ -137,6 +138,28 @@ test("Ed25519 token signatures bind the complete capability payload", () => {
   assert.throws(() => verifier.verify(forged, { nowEpochMs: 2000 }), /signature verification failed/);
 });
 
+
+test("external capability signer delegates signing without exposing private key bytes", async () => {
+  let calls = 0;
+  const external = new ExternalCapabilityTokenSigner(
+    "external-key-v1",
+    "root-authority",
+    async (payloadBytes) => {
+      calls += 1;
+      assert.ok(payloadBytes instanceof Uint8Array);
+      return sign(null, Buffer.from(payloadBytes), privateKey).toString("base64");
+    },
+  );
+  const payload = makeParentToken().payload;
+  const token = await external.signToken(payload);
+  const externalVerifier = new Ed25519CapabilityTokenVerifier({
+    resolvePublicKey: (keyId) => keyId === "external-key-v1" ? publicKey : undefined,
+    resolvePrincipalId: (keyId) => keyId === "external-key-v1" ? "root-authority" : undefined,
+  });
+  externalVerifier.verify(token, { nowEpochMs: 2000, subjectPrincipalId: "agent-a", audience: "runtime-a", missionId: "mission-1" });
+  assert.equal(calls, 1);
+  assert.equal(token.signature.keyId, "external-key-v1");
+});
 
 test("pre-execution attestation is signed and bound to a specific invocation", () => {
   const payload: PreExecutionAttestationPayloadV1 = {
