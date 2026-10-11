@@ -1658,6 +1658,7 @@ fn relay_limited_until<R: Read, W: Write>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::RequestedBudget;
 
     #[test]
     fn byte_meter_rejects_excess_before_forwarding_the_overflowing_chunk() {
