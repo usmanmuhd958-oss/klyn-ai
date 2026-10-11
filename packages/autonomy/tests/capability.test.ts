@@ -79,7 +79,7 @@ function makeParentToken() {
     },
     scopes: [parentScope],
     budget,
-    policyDigest: "policy-v1",
+    policyDigest: "f".repeat(64),
   };
   return signer.signToken(payload);
 }
@@ -207,7 +207,7 @@ test("attenuation signs the child, binds its parent digest and appends KEL evide
     expiresAtEpochMs: 9000,
     delegation: { enabled: false, maxDepth: 1, allowedDelegatePrincipalIds: [] },
     reason: "Read source files for one mission",
-    policyDigest: "policy-v1",
+    policyDigest: "f".repeat(64),
     missionId: "mission-1",
     runtimeInstanceId: "runtime-a",
   });
@@ -235,7 +235,7 @@ test("attenuation fails closed on scope escalation and unauthorized delegate", a
     expiresAtEpochMs: 9000,
     delegation: { enabled: false, maxDepth: 1, allowedDelegatePrincipalIds: [] },
     reason: "must fail",
-    policyDigest: "policy-v1",
+    policyDigest: "f".repeat(64),
     missionId: "mission-1",
     runtimeInstanceId: "runtime-a",
   }), /child scopes must be strict subsets/);
@@ -248,7 +248,7 @@ test("attenuation fails closed on scope escalation and unauthorized delegate", a
     expiresAtEpochMs: 9000,
     delegation: { enabled: false, maxDepth: 1, allowedDelegatePrincipalIds: [] },
     reason: "must fail",
-    policyDigest: "policy-v1",
+    policyDigest: "f".repeat(64),
     missionId: "mission-1",
     runtimeInstanceId: "runtime-a",
   }), /recipient principal is not authorized/);
@@ -333,7 +333,7 @@ test("invocation appends a verified runtime attestation to KEL before dispatch",
     verifier,
     policyGate: {
       async assertCurrent(actualToken, actualRequest) {
-        assert.equal(actualToken.payload.policyDigest, "policy-v1");
+        assert.equal(actualToken.payload.policyDigest, "f".repeat(64));
         assert.equal(actualRequest.missionId, "mission-1");
         order.push("policy-checked");
       },
