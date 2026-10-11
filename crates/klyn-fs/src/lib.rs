@@ -1327,12 +1327,8 @@ mod tests {
 
         // Opening a fresh engine instance exercises the real startup recovery
         // path, not just an in-memory re-scan of the same journal.
-        let reopened = FsEngine::open(
-            &fixture.root,
-            &fixture.state,
-            DEFAULT_PUBLICATION_REF,
-        )
-        .unwrap();
+        let reopened =
+            FsEngine::open(&fixture.root, &fixture.state, DEFAULT_PUBLICATION_REF).unwrap();
         assert_eq!(
             current_ref(&fixture.root, DEFAULT_PUBLICATION_REF).unwrap(),
             base
@@ -1345,7 +1341,9 @@ mod tests {
             .unwrap()
             .latest
             .values()
-            .any(|record| record.state == TransactionState::Aborted && record.base_revision == base));
+            .any(
+                |record| record.state == TransactionState::Aborted && record.base_revision == base
+            ));
     }
 
     #[test]
