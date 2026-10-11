@@ -937,6 +937,64 @@ fn send_frame_with_fd<T: Serialize>(stream: &mut UnixStream, value: &T, fd: RawF
     Ok(())
 }
 
+/// Receive a broker frame and at most one descriptor sent via SCM_RIGHTS. The returned
+/// descriptor is close-on-exec. The broker protocol uses one request/response per connection.
+pub fn receive_frame_with_fd(stream: &mut UnixStream) -> Result<(Vec<u8>, Option<OwnedFd>)> {
+    let alignment = std::mem::size_of::<usize>();
+    let header_size = std::mem::size_of::<libc::cmsghdr>();
+    let data_offset = (header_size + alignment - 1) & !(alignment - 1);
+    let control_size = (data_offset + std::mem::size_of::<RawFd>() + alignment - 1) & !(alignment - 1);
+    let mut data = vec![0u8; MAX_BROKER_FRAME_BYTES + 4];
+    let mut control = vec![0u8; control_size];
+    let mut iov = libc::iovec { iov_base: data.as_mut_ptr().cast(), iov_len: data.len() };
+    let mut message: libc::msghdr = unsafe { std::mem::zeroed() };
+    message.msg_iov = &mut iov;
+    message.msg_iovlen = 1;
+    message.msg_control = control.as_mut_ptr().cast();
+    message.msg_controllen = control.len();
+    let received = unsafe { libc::recvmsg(stream.as_raw_fd(), &mut message, libc::MSG_CMSG_CLOEXEC) };
+    if received < 0 { return Err(io::Error::last_os_error().into()); }
+    if received == 0 { return Err(SandboxError::Protocol("broker closed before sending a frame".into())); }
+    if message.msg_flags & libc::MSG_CTRUNC != 0 {
+        return Err(SandboxError::Protocol("SCM_RIGHTS control message was truncated".into()));
+    }
+    let mut received_fd: Option<OwnedFd> = None;
+    let mut header = message.msg_control.cast::<libc::cmsghdr>();
+    if !header.is_null() && message.msg_controllen >= header_size {
+        unsafe {
+            if (*header).cmsg_level == libc::SOL_SOCKET && (*header).cmsg_type == libc::SCM_RIGHTS {
+                let cmsg_len = (*header).cmsg_len;
+                if cmsg_len < data_offset + std::mem::size_of::<RawFd>() || cmsg_len > message.msg_controllen {
+                    return Err(SandboxError::Protocol("SCM_RIGHTS control message length is invalid".into()));
+                }
+                let fd = std::ptr::read_unaligned(control.as_ptr().add(data_offset).cast::<RawFd>());
+                if fd < 0 { return Err(SandboxError::Protocol("SCM_RIGHTS supplied an invalid descriptor".into())); }
+                received_fd = Some(OwnedFd::from_raw_fd(fd));
+            } else {
+                return Err(SandboxError::Protocol("unexpected ancillary control message".into()));
+            }
+        }
+    }
+
+    let mut used = received as usize;
+    if used < 4 {
+        stream.read_exact(&mut data[used..4])?;
+        used = 4;
+    }
+    let length = u32::from_be_bytes(data[..4].try_into().expect("four-byte frame header")) as usize;
+    if length == 0 || length > MAX_BROKER_FRAME_BYTES {
+        return Err(SandboxError::Protocol("broker response length is invalid".into()));
+    }
+    let expected = 4 + length;
+    if used > expected {
+        return Err(SandboxError::Protocol("unexpected extra bytes in one-response broker connection".into()));
+    }
+    if used < expected {
+        stream.read_exact(&mut data[used..expected])?;
+    }
+    Ok((data[4..expected].to_vec(), received_fd))
+}
+
 fn make_pipe() -> Result<(OwnedFd, OwnedFd)> {
     let mut descriptors = [-1; 2];
     if unsafe { libc::pipe2(descriptors.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
