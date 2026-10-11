@@ -202,7 +202,8 @@ pub fn open_scoped_directory(root: BorrowedFd<'_>, relative_path: &str) -> Resul
 /// and canonical; symlinks and magic links are denied by the kernel's openat2 resolver.
 pub fn open_beneath(root: BorrowedFd<'_>, relative_path: &str, flags: i32, mode: u32) -> Result<OwnedFd> {
     if relative_path.is_empty() || relative_path.starts_with('/') || relative_path.contains('\0') ||
-        relative_path.split('/').any(|part| part.is_empty() || part == "." || part == "..") {
+        (relative_path != "." &&
+            relative_path.split('/').any(|part| part.is_empty() || part == "." || part == "..")) {
         return Err(SandboxError::Denied("resource path must be canonical relative syntax".into()));
     }
     let c_path = CString::new(relative_path).map_err(|_| SandboxError::Denied("resource path contains NUL".into()))?;
