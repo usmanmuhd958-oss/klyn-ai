@@ -12,6 +12,7 @@ import {
 } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { createServer, type Server, type Socket } from 'node:net';
+import { canonicalizeJcs, KEL_TREE_HEAD_PAYLOAD_TYPE, KEL_TREE_HEAD_SCHEMA } from './kel.js';
 
 const PROTOCOL_VERSION = 1;
 const MAX_FRAME_BYTES = 64 * 1024;
@@ -94,6 +95,68 @@ function requestShape(value: unknown): SignerRequest | undefined {
   return row as unknown as SignerRequest;
 }
 
+interface ParsedPae {
+  readonly payloadType: string;
+  readonly payload: Buffer;
+}
+
+/** Strictly parse the DSSE v1 PAE at byte boundaries (lengths count bytes, not JS characters). */
+function parsePae(value: Buffer): ParsedPae | undefined {
+  const prefix = Buffer.from('DSSEv1 ', 'ascii');
+  if (value.length < prefix.length || !value.subarray(0, prefix.length).equals(prefix)) return undefined;
+  let offset = prefix.length;
+  const readLength = (): number | undefined => {
+    const separator = value.indexOf(0x20, offset);
+    if (separator < 0) return undefined;
+    const digits = value.subarray(offset, separator).toString('ascii');
+    if (!/^(0|[1-9][0-9]*)$/.test(digits)) return undefined;
+    const parsed = Number(digits);
+    if (!Number.isSafeInteger(parsed) || parsed < 0) return undefined;
+    offset = separator + 1;
+    return parsed;
+  };
+
+  const typeLength = readLength();
+  if (typeLength === undefined || typeLength > 512 || offset + typeLength >= value.length) return undefined;
+  const typeBytes = value.subarray(offset, offset + typeLength);
+  const payloadType = typeBytes.toString('utf8');
+  if (!Buffer.from(payloadType, 'utf8').equals(typeBytes)) return undefined;
+  offset += typeLength;
+  if (value[offset] !== 0x20) return undefined;
+  offset += 1;
+
+  const payloadLength = readLength();
+  if (payloadLength === undefined || payloadLength > MAX_FRAME_BYTES || value.length - offset !== payloadLength) {
+    return undefined;
+  }
+  return { payloadType, payload: value.subarray(offset) };
+}
+
+/** The checkpoint key is deliberately scoped to signing canonical KEL tree heads only. */
+function isAuthorizedCheckpointPae(value: Buffer): boolean {
+  const parsed = parsePae(value);
+  if (!parsed || parsed.payloadType !== KEL_TREE_HEAD_PAYLOAD_TYPE) return false;
+  let payload: unknown;
+  try { payload = JSON.parse(parsed.payload.toString('utf8')) as unknown; }
+  catch { return false; }
+  try {
+    if (!Buffer.from(canonicalizeJcs(payload), 'utf8').equals(parsed.payload)) return false;
+  } catch {
+    return false;
+  }
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return false;
+  const head = payload as Record<string, unknown>;
+  return head.schema === KEL_TREE_HEAD_SCHEMA &&
+    typeof head.ledgerId === 'string' && head.ledgerId.length > 0 &&
+    head.hashAlgorithm === 'sha256' && head.treeAlgorithm === 'rfc9162-sha256' &&
+    typeof head.treeSize === 'string' && /^(0|[1-9][0-9]*)$/.test(head.treeSize) &&
+    typeof head.keyEpoch === 'string' && /^(0|[1-9][0-9]*)$/.test(head.keyEpoch) &&
+    typeof head.issuedAtEpochMs === 'string' && /^(0|[1-9][0-9]*)$/.test(head.issuedAtEpochMs) &&
+    typeof head.rootHash === 'string' && /^sha256:[a-f0-9]{64}$/.test(head.rootHash) &&
+    (head.previousCheckpointDigest === null ||
+      (typeof head.previousCheckpointDigest === 'string' && /^sha256:[a-f0-9]{64}$/.test(head.previousCheckpointDigest)));
+}
+
 function responseFrame(response: SignerResponse, maximum: number): Buffer {
   const body = Buffer.from(JSON.stringify(response), 'utf8');
   if (!body.length || body.length > maximum) throw new Error('signer response exceeds frame limit');
@@ -143,8 +206,10 @@ export class UnixSignerAgent {
     }
     try {
       const current = lstatSync(this.socketPath);
-      if (!current.isSocket() || current.isSymbolicLink()) throw new Error('refusing to replace non-socket signer path');
-      rmSync(this.socketPath);
+      if (current.isSymbolicLink() || !current.isSocket()) {
+        throw new Error('refusing to replace non-socket signer path');
+      }
+      throw new Error('signer socket path already exists; verify the old signer is stopped before cleaning stale socket files');
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
@@ -242,6 +307,15 @@ export class UnixSignerAgent {
       const payload = Buffer.from(params.payloadBase64, 'base64');
       if (payload.toString('base64') !== params.payloadBase64) {
         return { version: PROTOCOL_VERSION, error: { code: 'invalid_payload', message: 'payload is not canonical Base64' } };
+      }
+      if (!isAuthorizedCheckpointPae(payload)) {
+        return {
+          version: PROTOCOL_VERSION,
+          error: {
+            code: 'signing_policy_violation',
+            message: 'checkpoint keys only sign canonical KEL v1 tree-head DSSE PAE payloads',
+          },
+        };
       }
       const signature = Buffer.from(await this.backend.signEd25519(payload));
       if (signature.length !== 64) {
