@@ -5,7 +5,7 @@
 //! hex token; socket permissions are 0600. Never expose this socket outside a protected
 //! local service boundary or reuse the token across trust domains.
 
-use crate::{EvidenceStore, LedgerError};
+use crate::{EvidenceStore, LedgerError, WitnessSignatureV1};
 use klyn_evidence::DsseEnvelopeV1;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -62,6 +62,14 @@ struct AppendEvidenceParamsV1 {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ProofParamsV1 {
     evidence_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SubmitWitnessReceiptsParamsV1 {
+    checkpoint_envelope: DsseEnvelopeV1,
+    signatures: Vec<WitnessSignatureV1>,
+    threshold: u8,
 }
 
 fn response_error(id: &str, code: &'static str, message: &'static str) -> RpcResponseV1 {
@@ -179,6 +187,33 @@ fn dispatch(request: &RpcRequestV1, token: &[u8], store: &Arc<Mutex<EvidenceStor
                 Err(LedgerError::Protocol(_)) =>
                     response_error(&request.id, "invalid_evidence", "evidence schema, payload, or signature rejected"),
                 Err(_) => response_error(&request.id, "ledger_unavailable", "evidence append failed"),
+            }
+        }
+        "witness.receipts.submit" => {
+            let params: SubmitWitnessReceiptsParamsV1 = match serde_json::from_value(request.params.clone()) {
+                Ok(params) if (2..=3).contains(&params.threshold) && params.signatures.len() <= 3 => params,
+                _ => return response_error(&request.id, "invalid_params", "witness receipt submission requires checkpointEnvelope, up to three signatures, and threshold 2 or 3"),
+            };
+            let now = match now_epoch_ms() {
+                Ok(now) => now,
+                Err(_) => return response_error(&request.id, "clock_error", "trusted clock is unavailable"),
+            };
+            let mut guard = match store.lock() {
+                Ok(guard) => guard,
+                Err(_) => return response_error(&request.id, "internal_error", "ledger lock unavailable"),
+            };
+            match guard.submit_witness_receipts(
+                &params.checkpoint_envelope,
+                &params.signatures,
+                params.threshold,
+                now,
+            ).and_then(|status| serde_json::to_value(status).map_err(LedgerError::from)) {
+                Ok(value) => response_ok(&request.id, value),
+                Err(LedgerError::Protocol(_)) =>
+                    response_error(&request.id, "invalid_checkpoint", "checkpoint signature or payload rejected"),
+                Err(LedgerError::Invariant(_)) =>
+                    response_error(&request.id, "invalid_witness_receipts", "witness receipt set failed trust-policy validation"),
+                Err(_) => response_error(&request.id, "witness_persistence_failed", "witness receipt persistence failed"),
             }
         }
         "proof.get" => {
