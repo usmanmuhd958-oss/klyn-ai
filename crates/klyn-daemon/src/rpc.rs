@@ -505,6 +505,22 @@ mod framing_tests {
     }
 
     #[test]
+    fn socket_cleanup_removes_sockets_but_never_regular_files() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let socket_path = directory.path().join("cleanup.sock");
+        let listener = UnixListener::bind(&socket_path).expect("bind test socket");
+        let cleanup = SocketPathCleanup(socket_path.clone());
+        drop(listener);
+        drop(cleanup);
+        assert!(!socket_path.exists(), "socket cleanup should remove the socket path");
+
+        let file_path = directory.path().join("do-not-delete.txt");
+        fs::write(&file_path, b"preserve").expect("write test file");
+        drop(SocketPathCleanup(file_path.clone()));
+        assert!(file_path.exists(), "cleanup must never remove a regular file");
+    }
+
+    #[test]
     fn active_connection_pool_enforces_hard_capacity() {
         let active = AtomicUsize::new(0);
         assert!(try_acquire_connection(&active, 2));
