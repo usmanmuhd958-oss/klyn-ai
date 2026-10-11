@@ -65,7 +65,10 @@ impl Request {
                 }
             }
             Method::FsWriteFile => {
-                let object = self.params.as_object().ok_or(ProtocolError::InvalidParams)?;
+                let object = self
+                    .params
+                    .as_object()
+                    .ok_or(ProtocolError::InvalidParams)?;
                 if !object.contains_key("expected_old_content") {
                     return Err(ProtocolError::InvalidParams);
                 }
@@ -76,7 +79,10 @@ impl Request {
                     || params.path.is_empty()
                     || params.path.len() > 4096
                     || params.content.len() > 48 * 1024
-                    || params.expected_old_content.as_ref().is_some_and(|old| old.len() > 48 * 1024)
+                    || params
+                        .expected_old_content
+                        .as_ref()
+                        .is_some_and(|old| old.len() > 48 * 1024)
                 {
                     return Err(ProtocolError::InvalidParams);
                 }
@@ -328,7 +334,6 @@ mod tests {
         assert_eq!(decoded, response);
     }
 }
-
 
 #[cfg(test)]
 mod fs_request_validation_tests {

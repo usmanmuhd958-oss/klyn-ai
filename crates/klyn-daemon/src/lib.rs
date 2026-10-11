@@ -31,7 +31,11 @@ pub struct Router {
 
 impl Router {
     pub fn new(lifecycle: Lifecycle, policy: Arc<dyn PolicyEnforcer>) -> Self {
-        Self { lifecycle, policy, fs: None }
+        Self {
+            lifecycle,
+            policy,
+            fs: None,
+        }
     }
 
     pub fn with_fs(
@@ -39,7 +43,11 @@ impl Router {
         policy: Arc<dyn PolicyEnforcer>,
         fs: Arc<FsService>,
     ) -> Self {
-        Self { lifecycle, policy, fs: Some(fs) }
+        Self {
+            lifecycle,
+            policy,
+            fs: Some(fs),
+        }
     }
 
     pub fn lifecycle(&self) -> Lifecycle {
@@ -153,7 +161,6 @@ impl Router {
         (response, Some(lease))
     }
 }
-
 
 fn filesystem_error_response(request_id: Option<u64>, error: FsServiceError) -> Response {
     match error {

@@ -1,9 +1,6 @@
 //! Authenticated IPC adapter for klyn-fs candidate transactions.
 
-use std::{
-    collections::BTreeMap,
-    sync::Mutex,
-};
+use std::{collections::BTreeMap, sync::Mutex};
 
 use klyn_fs::{FsEngine, FsError, KlynTransaction, TransactionState};
 use klyn_protocol::{FsWriteFileParams, Method, TransactionIdParams};
@@ -29,7 +26,10 @@ pub struct FsService {
 
 impl FsService {
     pub fn new(engine: FsEngine) -> Self {
-        Self { engine, transactions: Mutex::new(BTreeMap::new()) }
+        Self {
+            engine,
+            transactions: Mutex::new(BTreeMap::new()),
+        }
     }
 
     pub fn execute(&self, method: Method, params: &Value) -> Result<Value, FsServiceError> {
@@ -44,7 +44,10 @@ impl FsService {
                     "target_ref": self.engine.target_ref(),
                     "state": "init"
                 });
-                let mut registry = self.transactions.lock().map_err(|_| FsServiceError::RegistryUnavailable)?;
+                let mut registry = self
+                    .transactions
+                    .lock()
+                    .map_err(|_| FsServiceError::RegistryUnavailable)?;
                 if registry.contains_key(&id) {
                     return Err(FsServiceError::RegistryUnavailable);
                 }
@@ -54,8 +57,13 @@ impl FsService {
             Method::FsWriteFile => {
                 let request: FsWriteFileParams = serde_json::from_value(params.clone())
                     .map_err(|_| FsServiceError::InvalidParameters)?;
-                let mut registry = self.transactions.lock().map_err(|_| FsServiceError::RegistryUnavailable)?;
-                let tx = registry.get_mut(&request.transaction_id).ok_or(FsServiceError::NotFound)?;
+                let mut registry = self
+                    .transactions
+                    .lock()
+                    .map_err(|_| FsServiceError::RegistryUnavailable)?;
+                let tx = registry
+                    .get_mut(&request.transaction_id)
+                    .ok_or(FsServiceError::NotFound)?;
                 tx.write_file(
                     &request.path,
                     request.expected_old_content.as_deref(),
@@ -66,35 +74,53 @@ impl FsService {
             Method::FsStage => {
                 let request: TransactionIdParams = serde_json::from_value(params.clone())
                     .map_err(|_| FsServiceError::InvalidParameters)?;
-                let mut registry = self.transactions.lock().map_err(|_| FsServiceError::RegistryUnavailable)?;
-                let tx = registry.get_mut(&request.transaction_id).ok_or(FsServiceError::NotFound)?;
+                let mut registry = self
+                    .transactions
+                    .lock()
+                    .map_err(|_| FsServiceError::RegistryUnavailable)?;
+                let tx = registry
+                    .get_mut(&request.transaction_id)
+                    .ok_or(FsServiceError::NotFound)?;
                 tx.stage()?;
                 Ok(json!({"transaction_id": request.transaction_id, "state": "staged"}))
             }
             Method::FsValidate => {
                 let request: TransactionIdParams = serde_json::from_value(params.clone())
                     .map_err(|_| FsServiceError::InvalidParameters)?;
-                let mut registry = self.transactions.lock().map_err(|_| FsServiceError::RegistryUnavailable)?;
+                let mut registry = self
+                    .transactions
+                    .lock()
+                    .map_err(|_| FsServiceError::RegistryUnavailable)?;
                 let id = request.transaction_id;
                 let result = {
                     let tx = registry.get_mut(&id).ok_or(FsServiceError::NotFound)?;
-                    tx.validate().map(|revision| json!({
-                        "transaction_id": id,
-                        "state": "validated",
-                        "candidate_revision": revision,
-                        "base_revision": tx.base_revision()
-                    }))
+                    tx.validate().map(|revision| {
+                        json!({
+                            "transaction_id": id,
+                            "state": "validated",
+                            "candidate_revision": revision,
+                            "base_revision": tx.base_revision()
+                        })
+                    })
                 };
                 let terminal = registry.get(&id).is_some_and(|tx| {
-                    matches!(tx.state(), TransactionState::Aborted | TransactionState::Committed)
+                    matches!(
+                        tx.state(),
+                        TransactionState::Aborted | TransactionState::Committed
+                    )
                 });
-                if terminal { registry.remove(&id); }
+                if terminal {
+                    registry.remove(&id);
+                }
                 result.map_err(FsServiceError::Engine)
             }
             Method::FsCommit => {
                 let request: TransactionIdParams = serde_json::from_value(params.clone())
                     .map_err(|_| FsServiceError::InvalidParameters)?;
-                let mut registry = self.transactions.lock().map_err(|_| FsServiceError::RegistryUnavailable)?;
+                let mut registry = self
+                    .transactions
+                    .lock()
+                    .map_err(|_| FsServiceError::RegistryUnavailable)?;
                 let id = request.transaction_id;
                 let mut tx = registry.remove(&id).ok_or(FsServiceError::NotFound)?;
                 match tx.commit() {
@@ -106,7 +132,10 @@ impl FsService {
                         "published_revision": receipt.published_revision
                     })),
                     Err(error) => {
-                        if !matches!(tx.state(), TransactionState::Committed | TransactionState::Aborted) {
+                        if !matches!(
+                            tx.state(),
+                            TransactionState::Committed | TransactionState::Aborted
+                        ) {
                             registry.insert(id, tx);
                         }
                         Err(FsServiceError::Engine(error))
@@ -116,7 +145,10 @@ impl FsService {
             Method::FsAbort => {
                 let request: TransactionIdParams = serde_json::from_value(params.clone())
                     .map_err(|_| FsServiceError::InvalidParameters)?;
-                let mut registry = self.transactions.lock().map_err(|_| FsServiceError::RegistryUnavailable)?;
+                let mut registry = self
+                    .transactions
+                    .lock()
+                    .map_err(|_| FsServiceError::RegistryUnavailable)?;
                 let id = request.transaction_id;
                 let mut tx = registry.remove(&id).ok_or(FsServiceError::NotFound)?;
                 match tx.abort() {

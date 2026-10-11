@@ -134,17 +134,23 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod fs_policy_tests {
     use super::*;
 
     #[test]
     fn filesystem_publication_requires_its_own_permission() {
-        let peer = PeerIdentity { pid: 21, uid: 1000, gid: 1000 };
+        let peer = PeerIdentity {
+            pid: 21,
+            uid: 1000,
+            gid: 1000,
+        };
         let mut policy = UidPolicy::new();
         policy.grant(1000, Permission::FsBeginCandidate);
         assert!(policy.authorize(peer, Method::FsBegin).is_ok());
-        assert_eq!(policy.authorize(peer, Method::FsCommit), Err(PolicyError::Denied));
+        assert_eq!(
+            policy.authorize(peer, Method::FsCommit),
+            Err(PolicyError::Denied)
+        );
     }
 }

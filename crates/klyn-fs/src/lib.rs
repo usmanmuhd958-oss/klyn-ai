@@ -90,7 +90,9 @@ impl Journal {
             if name.starts_with(".tmp-") {
                 let metadata = fs::symlink_metadata(&path)?;
                 if metadata.file_type().is_symlink() || !metadata.is_file() {
-                    return Err(FsError::JournalCorrupt("unsafe temporary journal entry".into()));
+                    return Err(FsError::JournalCorrupt(
+                        "unsafe temporary journal entry".into(),
+                    ));
                 }
                 fs::remove_file(path)?;
                 continue;
@@ -100,12 +102,16 @@ impl Journal {
             }
             let metadata = fs::symlink_metadata(&path)?;
             if metadata.file_type().is_symlink() || !metadata.is_file() {
-                return Err(FsError::JournalCorrupt("journal entry is not a regular file".into()));
+                return Err(FsError::JournalCorrupt(
+                    "journal entry is not a regular file".into(),
+                ));
             }
             let record: JournalRecord = serde_json::from_slice(&fs::read(path)?)
                 .map_err(|_| FsError::JournalCorrupt("invalid journal record JSON".into()))?;
             if name != format!("{:020}.json", record.sequence) {
-                return Err(FsError::JournalCorrupt("record sequence/name mismatch".into()));
+                return Err(FsError::JournalCorrupt(
+                    "record sequence/name mismatch".into(),
+                ));
             }
             records.push(record);
         }
@@ -116,7 +122,9 @@ impl Journal {
             let expected = u64::try_from(index + 1)
                 .map_err(|_| FsError::JournalCorrupt("journal sequence overflow".into()))?;
             if record.sequence != expected {
-                return Err(FsError::JournalCorrupt("journal sequence gap or duplicate".into()));
+                return Err(FsError::JournalCorrupt(
+                    "journal sequence gap or duplicate".into(),
+                ));
             }
             if let Some(previous) = latest.get(&record.transaction_id) {
                 if previous.base_revision != record.base_revision
@@ -126,10 +134,14 @@ impl Journal {
                     || (previous.candidate_revision.is_some()
                         && previous.candidate_revision != record.candidate_revision)
                 {
-                    return Err(FsError::JournalCorrupt("invalid transaction journal transition".into()));
+                    return Err(FsError::JournalCorrupt(
+                        "invalid transaction journal transition".into(),
+                    ));
                 }
             } else if record.state != TransactionState::Init {
-                return Err(FsError::JournalCorrupt("first transaction record is not init".into()));
+                return Err(FsError::JournalCorrupt(
+                    "first transaction record is not init".into(),
+                ));
             }
             latest.insert(record.transaction_id.clone(), record.clone());
         }
@@ -139,7 +151,11 @@ impl Journal {
             .checked_add(1)
             .ok_or_else(|| FsError::JournalCorrupt("journal sequence overflow".into()))?;
 
-        Ok(Self { records_dir, next_sequence, latest })
+        Ok(Self {
+            records_dir,
+            next_sequence,
+            latest,
+        })
     }
 
     fn append(
@@ -153,15 +169,22 @@ impl Journal {
     ) -> Result<(), FsError> {
         if let Some(previous) = self.latest.get(id) {
             if previous.state.terminal() || !valid_transition(previous.state, state) {
-                return Err(FsError::InvalidTransition { from: previous.state, to: state });
+                return Err(FsError::InvalidTransition {
+                    from: previous.state,
+                    to: state,
+                });
             }
             if previous.base_revision != base || previous.target_ref != target_ref {
-                return Err(FsError::JournalCorrupt("transaction base/ref binding changed".into()));
+                return Err(FsError::JournalCorrupt(
+                    "transaction base/ref binding changed".into(),
+                ));
             }
             if previous.candidate_revision.is_some()
                 && previous.candidate_revision.as_deref() != candidate
             {
-                return Err(FsError::JournalCorrupt("candidate revision binding changed".into()));
+                return Err(FsError::JournalCorrupt(
+                    "candidate revision binding changed".into(),
+                ));
             }
         } else if state != TransactionState::Init {
             return Err(FsError::JournalCorrupt("first record must be init".into()));
@@ -177,9 +200,17 @@ impl Journal {
             detail: detail.map(str::to_owned),
         };
         let encoded = serde_json::to_vec(&record)?;
-        let final_path = self.records_dir.join(format!("{:020}.json", record.sequence));
-        let temporary = self.records_dir.join(format!(".tmp-{}-{}", std::process::id(), record.sequence));
-        let mut file = OpenOptions::new().write(true).create_new(true).mode(0o600).open(&temporary)?;
+        let final_path = self
+            .records_dir
+            .join(format!("{:020}.json", record.sequence));
+        let temporary =
+            self.records_dir
+                .join(format!(".tmp-{}-{}", std::process::id(), record.sequence));
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary)?;
 
         let write_result = (|| -> Result<(), FsError> {
             file.write_all(&encoded)?;
@@ -193,7 +224,9 @@ impl Journal {
             return write_result;
         }
 
-        self.next_sequence = self.next_sequence.checked_add(1)
+        self.next_sequence = self
+            .next_sequence
+            .checked_add(1)
             .ok_or_else(|| FsError::JournalCorrupt("journal sequence overflow".into()))?;
         self.latest.insert(id.to_owned(), record);
         Ok(())
@@ -227,7 +260,11 @@ pub enum FsError {
     #[error("filesystem I/O failed: {0}")]
     Io(#[from] io::Error),
     #[error("Git operation failed ({operation}, exit {code:?}): {stderr}")]
-    GitCommand { operation: String, code: Option<i32>, stderr: String },
+    GitCommand {
+        operation: String,
+        code: Option<i32>,
+        stderr: String,
+    },
     #[error("Git repository root could not be verified")]
     InvalidRepository,
     #[error("publication ref must be a local, un-checked-out branch under refs/heads")]
@@ -249,9 +286,15 @@ pub enum FsError {
     #[error("file precondition failed; refusing to overwrite stale content")]
     WriteConflict,
     #[error("operation requires {expected:?}, transaction is {actual:?}")]
-    WrongState { expected: TransactionState, actual: TransactionState },
+    WrongState {
+        expected: TransactionState,
+        actual: TransactionState,
+    },
     #[error("invalid transaction transition {from:?} -> {to:?}")]
-    InvalidTransition { from: TransactionState, to: TransactionState },
+    InvalidTransition {
+        from: TransactionState,
+        to: TransactionState,
+    },
     #[error("transaction has no staged changes")]
     EmptyTransaction,
     #[error("staged patch adds or changes a symlink or submodule")]
@@ -332,7 +375,11 @@ impl FsEngine {
         set_private_dir(&candidates_root)?;
         let records_dir = state_root.join(RECORDS_RELATIVE);
         fs::create_dir_all(&records_dir)?;
-        set_private_dir(records_dir.parent().ok_or(FsError::SynchronizationUnavailable)?)?;
+        set_private_dir(
+            records_dir
+                .parent()
+                .ok_or(FsError::SynchronizationUnavailable)?,
+        )?;
 
         let lock_path = state_root.join("engine.lock");
         if let Ok(meta) = fs::symlink_metadata(&lock_path) {
@@ -340,17 +387,28 @@ impl FsEngine {
                 return Err(FsError::SymlinkRejected);
             }
         }
-        let lock_file = OpenOptions::new().read(true).write(true).create(true)
-            .mode(0o600).open(&lock_path)?;
+        let lock_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .mode(0o600)
+            .open(&lock_path)?;
         fs::set_permissions(&lock_path, fs::Permissions::from_mode(0o600))?;
         match flock(lock_file.as_raw_fd(), FlockArg::LockExclusiveNonblock) {
             Ok(()) => {}
-            Err(error) if error == nix::errno::Errno::EWOULDBLOCK
-                || error == nix::errno::Errno::EAGAIN => return Err(FsError::EngineLocked),
+            Err(error)
+                if error == nix::errno::Errno::EWOULDBLOCK
+                    || error == nix::errno::Errno::EAGAIN =>
+            {
+                return Err(FsError::EngineLocked)
+            }
             Err(_) => return Err(FsError::SynchronizationUnavailable),
         }
 
-        let worktrees = git_text(&repo_root, vec![arg("worktree"), arg("list"), arg("--porcelain")])?;
+        let worktrees = git_text(
+            &repo_root,
+            vec![arg("worktree"), arg("list"), arg("--porcelain")],
+        )?;
         if worktree_checks_out_ref(&worktrees, target_ref) {
             return Err(FsError::RefCheckedOut);
         }
@@ -374,9 +432,15 @@ impl FsEngine {
         Ok(engine)
     }
 
-    pub fn target_ref(&self) -> &str { &self.inner.target_ref }
-    pub fn repository_root(&self) -> &Path { &self.inner.repo_root }
-    pub fn state_directory(&self) -> &Path { &self.inner.state_root }
+    pub fn target_ref(&self) -> &str {
+        &self.inner.target_ref
+    }
+    pub fn repository_root(&self) -> &Path {
+        &self.inner.repo_root
+    }
+    pub fn state_directory(&self) -> &Path {
+        &self.inner.state_root
+    }
 
     pub fn begin_transaction(&self) -> Result<KlynTransaction, FsError> {
         ensure_canonical_clean(&self.inner.repo_root)?;
@@ -387,12 +451,30 @@ impl FsEngine {
             return Err(FsError::SymlinkRejected);
         }
 
-        self.append(&id, TransactionState::Init, &base, None, Some("initialized"))?;
+        self.append(
+            &id,
+            TransactionState::Init,
+            &base,
+            None,
+            Some("initialized"),
+        )?;
         if let Err(error) = git(
             &self.inner.repo_root,
-            vec![arg("worktree"), arg("add"), arg("--detach"), arg(&candidate), arg(&base)],
+            vec![
+                arg("worktree"),
+                arg("add"),
+                arg("--detach"),
+                arg(&candidate),
+                arg(&base),
+            ],
         ) {
-            let _ = self.append(&id, TransactionState::Aborted, &base, None, Some("worktree creation failed"));
+            let _ = self.append(
+                &id,
+                TransactionState::Aborted,
+                &base,
+                None,
+                Some("worktree creation failed"),
+            );
             return Err(error);
         }
 
@@ -410,7 +492,11 @@ impl FsEngine {
     /// transactions are reconciled against the publication ref, never rewound.
     pub fn recover_incomplete_transactions(&self) -> Result<(), FsError> {
         let records = {
-            let journal = self.inner.journal.lock().map_err(|_| FsError::SynchronizationUnavailable)?;
+            let journal = self
+                .inner
+                .journal
+                .lock()
+                .map_err(|_| FsError::SynchronizationUnavailable)?;
             journal.latest_records()
         };
         for record in records {
@@ -421,7 +507,10 @@ impl FsEngine {
             }
             let published = current_ref(&self.inner.repo_root, &record.target_ref)?;
             let already_published = record.state == TransactionState::Validated
-                && record.candidate_revision.as_deref().is_some_and(|rev| rev == published);
+                && record
+                    .candidate_revision
+                    .as_deref()
+                    .is_some_and(|rev| rev == published);
             if already_published {
                 self.append(
                     &record.transaction_id,
@@ -459,13 +548,23 @@ impl FsEngine {
         candidate: Option<&str>,
         detail: Option<&str>,
     ) -> Result<(), FsError> {
-        let mut journal = self.inner.journal.lock().map_err(|_| FsError::SynchronizationUnavailable)?;
+        let mut journal = self
+            .inner
+            .journal
+            .lock()
+            .map_err(|_| FsError::SynchronizationUnavailable)?;
         journal.append(id, state, base, &self.inner.target_ref, candidate, detail)
     }
 
     fn state_from_journal(&self, id: &str) -> Result<TransactionState, FsError> {
-        let journal = self.inner.journal.lock().map_err(|_| FsError::SynchronizationUnavailable)?;
-        journal.latest_for(id).map(|r| r.state)
+        let journal = self
+            .inner
+            .journal
+            .lock()
+            .map_err(|_| FsError::SynchronizationUnavailable)?;
+        journal
+            .latest_for(id)
+            .map(|r| r.state)
             .ok_or_else(|| FsError::JournalCorrupt("transaction missing from journal".into()))
     }
 
@@ -488,18 +587,36 @@ impl FsEngine {
         if !actual.starts_with(root) {
             return Err(FsError::PathEscape);
         }
-        git(&self.inner.repo_root, vec![arg("worktree"), arg("remove"), arg("--force"), arg(candidate)])?;
+        git(
+            &self.inner.repo_root,
+            vec![
+                arg("worktree"),
+                arg("remove"),
+                arg("--force"),
+                arg(candidate),
+            ],
+        )?;
         let _ = git(&self.inner.repo_root, vec![arg("worktree"), arg("prune")]);
         Ok(())
     }
 }
 
 impl KlynTransaction {
-    pub fn id(&self) -> &str { &self.transaction_id }
-    pub fn state(&self) -> TransactionState { self.state }
-    pub fn base_revision(&self) -> &str { &self.base_revision }
-    pub fn candidate_path(&self) -> &Path { &self.candidate_path }
-    pub fn candidate_revision(&self) -> Option<&str> { self.candidate_revision.as_deref() }
+    pub fn id(&self) -> &str {
+        &self.transaction_id
+    }
+    pub fn state(&self) -> TransactionState {
+        self.state
+    }
+    pub fn base_revision(&self) -> &str {
+        &self.base_revision
+    }
+    pub fn candidate_path(&self) -> &Path {
+        &self.candidate_path
+    }
+    pub fn candidate_revision(&self) -> Option<&str> {
+        self.candidate_revision.as_deref()
+    }
 
     /// None means create-only; Some(text) is an exact preimage requirement.
     pub fn write_file(
@@ -509,7 +626,8 @@ impl KlynTransaction {
         content: &str,
     ) -> Result<(), FsError> {
         self.require(TransactionState::Init)?;
-        if relative_path.len() > 4096 || content.len() > MAX_MUTATION_BYTES
+        if relative_path.len() > 4096
+            || content.len() > MAX_MUTATION_BYTES
             || expected_old_content.is_some_and(|old| old.len() > MAX_MUTATION_BYTES)
         {
             return Err(FsError::MutationTooLarge);
@@ -548,8 +666,16 @@ impl KlynTransaction {
             _ => return Err(FsError::WriteConflict),
         }
 
-        let temporary = parent.join(format!(".klyn-write-{}-{}", self.transaction_id, NEXT_ID.fetch_add(1, Ordering::Relaxed)));
-        let mut file = OpenOptions::new().write(true).create_new(true).mode(0o600).open(&temporary)?;
+        let temporary = parent.join(format!(
+            ".klyn-write-{}-{}",
+            self.transaction_id,
+            NEXT_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary)?;
         let result = (|| -> Result<(), FsError> {
             file.write_all(content.as_bytes())?;
             file.sync_all()?;
@@ -557,16 +683,29 @@ impl KlynTransaction {
             sync_directory(&parent)?;
             Ok(())
         })();
-        if result.is_err() { let _ = fs::remove_file(&temporary); }
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
         result
     }
 
     pub fn stage(&mut self) -> Result<(), FsError> {
         self.require(TransactionState::Init)?;
         ensure_head(&self.candidate_path, &self.base_revision)?;
-        git(&self.candidate_path, vec![arg("add"), arg("--all"), arg("--"), arg(".")])?;
-        if !has_changes(&self.candidate_path)? { return Err(FsError::EmptyTransaction); }
-        self.engine.append(&self.transaction_id, TransactionState::Staged, &self.base_revision, None, Some("candidate index staged"))?;
+        git(
+            &self.candidate_path,
+            vec![arg("add"), arg("--all"), arg("--"), arg(".")],
+        )?;
+        if !has_changes(&self.candidate_path)? {
+            return Err(FsError::EmptyTransaction);
+        }
+        self.engine.append(
+            &self.transaction_id,
+            TransactionState::Staged,
+            &self.base_revision,
+            None,
+            Some("candidate index staged"),
+        )?;
         self.state = TransactionState::Staged;
         Ok(())
     }
@@ -580,27 +719,57 @@ impl KlynTransaction {
                 self.state = TransactionState::Validated;
                 Ok(self.candidate_revision.as_deref().expect("assigned above"))
             }
-            Err(error) => { let _ = self.abort_inner("validation failed"); Err(error) }
+            Err(error) => {
+                let _ = self.abort_inner("validation failed");
+                Err(error)
+            }
         }
     }
 
     fn validate_inner(&mut self) -> Result<String, FsError> {
         ensure_head(&self.candidate_path, &self.base_revision)?;
-        git(&self.candidate_path, vec![arg("diff"), arg("--cached"), arg("--check")])?;
+        git(
+            &self.candidate_path,
+            vec![arg("diff"), arg("--cached"), arg("--check")],
+        )?;
         reject_links(&self.candidate_path)?;
-        if !has_changes(&self.candidate_path)? { return Err(FsError::EmptyTransaction); }
+        if !has_changes(&self.candidate_path)? {
+            return Err(FsError::EmptyTransaction);
+        }
 
         let message = format!("KLYN candidate transaction {}", self.transaction_id);
-        git(&self.candidate_path, vec![
-            arg("-c"), arg("user.name=KLYN Transaction Engine"),
-            arg("-c"), arg("user.email=klyn-transaction@invalid"),
-            arg("-c"), arg("core.hooksPath=/dev/null"),
-            arg("commit"), arg("--no-gpg-sign"), arg("--no-verify"), arg("-m"), arg(message),
-        ])?;
-        let revision = git_text(&self.candidate_path, vec![arg("rev-parse"), arg("--verify"), arg("HEAD^{commit}")])?;
-        let parent = git_text(&self.candidate_path, vec![arg("rev-parse"), arg("--verify"), arg(format!("{revision}^"))])?;
+        git(
+            &self.candidate_path,
+            vec![
+                arg("-c"),
+                arg("user.name=KLYN Transaction Engine"),
+                arg("-c"),
+                arg("user.email=klyn-transaction@invalid"),
+                arg("-c"),
+                arg("core.hooksPath=/dev/null"),
+                arg("commit"),
+                arg("--no-gpg-sign"),
+                arg("--no-verify"),
+                arg("-m"),
+                arg(message),
+            ],
+        )?;
+        let revision = git_text(
+            &self.candidate_path,
+            vec![arg("rev-parse"), arg("--verify"), arg("HEAD^{commit}")],
+        )?;
+        let parent = git_text(
+            &self.candidate_path,
+            vec![
+                arg("rev-parse"),
+                arg("--verify"),
+                arg(format!("{revision}^")),
+            ],
+        )?;
         if parent != self.base_revision {
-            return Err(FsError::JournalCorrupt("candidate commit parent differs from pinned base".into()));
+            return Err(FsError::JournalCorrupt(
+                "candidate commit parent differs from pinned base".into(),
+            ));
         }
         ensure_clean(&self.candidate_path)?;
         self.engine.append(
@@ -617,36 +786,56 @@ impl KlynTransaction {
         self.require(TransactionState::Validated)?;
         let journal_state = self.engine.state_from_journal(&self.transaction_id)?;
         if journal_state != TransactionState::Validated {
-            return Err(FsError::WrongState { expected: TransactionState::Validated, actual: journal_state });
+            return Err(FsError::WrongState {
+                expected: TransactionState::Validated,
+                actual: journal_state,
+            });
         }
-        let revision = self.candidate_revision.clone()
-            .ok_or_else(|| FsError::JournalCorrupt("validated transaction has no candidate revision".into()))?;
+        let revision = self.candidate_revision.clone().ok_or_else(|| {
+            FsError::JournalCorrupt("validated transaction has no candidate revision".into())
+        })?;
         ensure_head(&self.candidate_path, &revision)?;
         ensure_clean(&self.candidate_path)?;
 
-        if let Err(error) = git(&self.engine.inner.repo_root, vec![
-            arg("update-ref"), arg(&self.engine.inner.target_ref), arg(&revision), arg(&self.base_revision),
-        ]) {
+        if let Err(error) = git(
+            &self.engine.inner.repo_root,
+            vec![
+                arg("update-ref"),
+                arg(&self.engine.inner.target_ref),
+                arg(&revision),
+                arg(&self.base_revision),
+            ],
+        ) {
             let actual = current_ref(&self.engine.inner.repo_root, &self.engine.inner.target_ref)?;
             let _ = self.abort_inner("publication CAS failed");
             if actual != self.base_revision {
-                return Err(FsError::Conflict { expected: self.base_revision.clone(), actual });
+                return Err(FsError::Conflict {
+                    expected: self.base_revision.clone(),
+                    actual,
+                });
             }
             return Err(error);
         }
 
         self.state = TransactionState::Committed;
-        if self.engine.append(
-            &self.transaction_id,
-            TransactionState::Committed,
-            &self.base_revision,
-            Some(&revision),
-            Some("Git ref compare-and-swap succeeded"),
-        ).is_err() {
+        if self
+            .engine
+            .append(
+                &self.transaction_id,
+                TransactionState::Committed,
+                &self.base_revision,
+                Some(&revision),
+                Some("Git ref compare-and-swap succeeded"),
+            )
+            .is_err()
+        {
             return Err(FsError::PublishedButJournalIncomplete { revision });
         }
         if let Err(error) = self.engine.cleanup(&self.candidate_path) {
-            return Err(FsError::PublishedCleanupPending { revision, reason: error.to_string() });
+            return Err(FsError::PublishedCleanupPending {
+                revision,
+                reason: error.to_string(),
+            });
         }
         Ok(PublishReceipt {
             transaction_id: self.transaction_id.clone(),
@@ -661,9 +850,14 @@ impl KlynTransaction {
     }
 
     fn abort_inner(&mut self, detail: &str) -> Result<(), FsError> {
-        if self.state.terminal() { return Ok(()); }
+        if self.state.terminal() {
+            return Ok(());
+        }
         let current = self.engine.state_from_journal(&self.transaction_id)?;
-        if current.terminal() { self.state = current; return Ok(()); }
+        if current.terminal() {
+            self.state = current;
+            return Ok(());
+        }
         self.engine.append(
             &self.transaction_id,
             TransactionState::Aborted,
@@ -676,8 +870,14 @@ impl KlynTransaction {
     }
 
     fn require(&self, expected: TransactionState) -> Result<(), FsError> {
-        if self.state == expected { Ok(()) }
-        else { Err(FsError::WrongState { expected, actual: self.state }) }
+        if self.state == expected {
+            Ok(())
+        } else {
+            Err(FsError::WrongState {
+                expected,
+                actual: self.state,
+            })
+        }
     }
 }
 
@@ -686,27 +886,54 @@ fn safe_parts(path: &str) -> Result<Vec<String>, FsError> {
         return Err(FsError::PathEscape);
     }
     let parts: Vec<&str> = path.split('/').collect();
-    if parts.iter().any(|p| p.is_empty() || *p == "." || *p == ".." || *p == ".git") {
+    if parts
+        .iter()
+        .any(|p| p.is_empty() || *p == "." || *p == ".." || *p == ".git")
+    {
         return Err(FsError::PathEscape);
     }
-    if Path::new(path).components().any(|c| !matches!(c, Component::Normal(_))) {
+    if Path::new(path)
+        .components()
+        .any(|c| !matches!(c, Component::Normal(_)))
+    {
         return Err(FsError::PathEscape);
     }
     Ok(parts.into_iter().map(str::to_owned).collect())
 }
 
 fn reject_links(candidate: &Path) -> Result<(), FsError> {
-    let output = git_output(candidate, vec![arg("diff"), arg("--cached"), arg("--raw"), arg("-z"), arg("--no-abbrev")])?;
+    let output = git_output(
+        candidate,
+        vec![
+            arg("diff"),
+            arg("--cached"),
+            arg("--raw"),
+            arg("-z"),
+            arg("--no-abbrev"),
+        ],
+    )?;
     let chunks: Vec<&[u8]> = output.stdout.split(|b| *b == 0).collect();
     let mut i = 0;
     while i < chunks.len() {
         let raw = chunks[i];
-        if raw.is_empty() { i += 1; continue; }
-        if !raw.starts_with(b":") { return Err(FsError::JournalCorrupt("unexpected Git raw diff output".into())); }
-        let header = std::str::from_utf8(raw).map_err(|_| FsError::JournalCorrupt("invalid Git diff header".into()))?;
+        if raw.is_empty() {
+            i += 1;
+            continue;
+        }
+        if !raw.starts_with(b":") {
+            return Err(FsError::JournalCorrupt(
+                "unexpected Git raw diff output".into(),
+            ));
+        }
+        let header = std::str::from_utf8(raw)
+            .map_err(|_| FsError::JournalCorrupt("invalid Git diff header".into()))?;
         let fields: Vec<&str> = header.split_whitespace().collect();
-        if fields.len() < 5 { return Err(FsError::JournalCorrupt("truncated Git diff header".into())); }
-        if fields[1] == "120000" || fields[1] == "160000" { return Err(FsError::LinkOrSubmoduleChange); }
+        if fields.len() < 5 {
+            return Err(FsError::JournalCorrupt("truncated Git diff header".into()));
+        }
+        if fields[1] == "120000" || fields[1] == "160000" {
+            return Err(FsError::LinkOrSubmoduleChange);
+        }
         i += 2;
     }
     Ok(())
@@ -722,14 +949,32 @@ fn has_changes(path: &Path) -> Result<bool, FsError> {
 }
 
 fn ensure_head(path: &Path, expected: &str) -> Result<(), FsError> {
-    let actual = git_text(path, vec![arg("rev-parse"), arg("--verify"), arg("HEAD^{commit}")])?;
-    if actual == expected { Ok(()) } else { Err(FsError::Conflict { expected: expected.into(), actual }) }
+    let actual = git_text(
+        path,
+        vec![arg("rev-parse"), arg("--verify"), arg("HEAD^{commit}")],
+    )?;
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(FsError::Conflict {
+            expected: expected.into(),
+            actual,
+        })
+    }
 }
 
 fn ensure_clean(path: &Path) -> Result<(), FsError> {
-    let status = git_text(path, vec![arg("status"), arg("--porcelain"), arg("--untracked-files=all")])?;
-    if status.is_empty() { Ok(()) }
-    else {
+    let status = git_text(
+        path,
+        vec![
+            arg("status"),
+            arg("--porcelain"),
+            arg("--untracked-files=all"),
+        ],
+    )?;
+    if status.is_empty() {
+        Ok(())
+    } else {
         Err(FsError::GitCommand {
             operation: "verify clean worktree".into(),
             code: Some(1),
@@ -742,52 +987,93 @@ fn ensure_canonical_clean(path: &Path) -> Result<(), FsError> {
     ensure_clean(path)
 }
 
-fn ensure_publication_ref(repo: &Path, target: &str, journal_has_history: bool) -> Result<(), FsError> {
-    if current_ref(repo, target).is_ok() { return Ok(()); }
-    if journal_has_history {
-        return Err(FsError::JournalCorrupt("publication ref missing while journal has history".into()));
+fn ensure_publication_ref(
+    repo: &Path,
+    target: &str,
+    journal_has_history: bool,
+) -> Result<(), FsError> {
+    if current_ref(repo, target).is_ok() {
+        return Ok(());
     }
-    let head = git_text(repo, vec![arg("rev-parse"), arg("--verify"), arg("HEAD^{commit}")])?;
-    git(repo, vec![arg("update-ref"), arg(target), arg(&head), arg("")])
-        .or_else(|_| current_ref(repo, target).map(|_| ()))
+    if journal_has_history {
+        return Err(FsError::JournalCorrupt(
+            "publication ref missing while journal has history".into(),
+        ));
+    }
+    let head = git_text(
+        repo,
+        vec![arg("rev-parse"), arg("--verify"), arg("HEAD^{commit}")],
+    )?;
+    git(
+        repo,
+        vec![arg("update-ref"), arg(target), arg(&head), arg("")],
+    )
+    .or_else(|_| current_ref(repo, target).map(|_| ()))
 }
 
 fn current_ref(repo: &Path, target: &str) -> Result<String, FsError> {
-    git_text(repo, vec![arg("rev-parse"), arg("--verify"), arg(format!("{target}^{{commit}}"))])
+    git_text(
+        repo,
+        vec![
+            arg("rev-parse"),
+            arg("--verify"),
+            arg(format!("{target}^{{commit}}")),
+        ],
+    )
 }
 
 fn worktree_checks_out_ref(worktrees: &str, target: &str) -> bool {
-    worktrees.lines().any(|line| line.strip_prefix("branch ").is_some_and(|branch| branch == target))
+    worktrees.lines().any(|line| {
+        line.strip_prefix("branch ")
+            .is_some_and(|branch| branch == target)
+    })
 }
 
 fn new_id() -> String {
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or(Duration::ZERO).as_nanos();
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .as_nanos();
     let sequence = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     format!("tx-{nanos:x}-{:x}-{sequence:x}", std::process::id())
 }
 
 fn valid_id(id: &str) -> bool {
-    !id.is_empty() && id.len() <= 96 && id.starts_with("tx-")
+    !id.is_empty()
+        && id.len() <= 96
+        && id.starts_with("tx-")
         && id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
 }
 
-fn arg(value: impl AsRef<OsStr>) -> OsString { value.as_ref().to_os_string() }
+fn arg(value: impl AsRef<OsStr>) -> OsString {
+    value.as_ref().to_os_string()
+}
 
 fn git(repo: &Path, args: Vec<OsString>) -> Result<(), FsError> {
     let output = git_output(repo, args)?;
-    if output.status.success() { Ok(()) } else { Err(git_error("Git command", output)) }
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(git_error("Git command", output))
+    }
 }
 
 fn git_text(repo: &Path, args: Vec<OsString>) -> Result<String, FsError> {
     let output = git_output(repo, args)?;
-    if !output.status.success() { return Err(git_error("Git command", output)); }
-    String::from_utf8(output.stdout).map(|s| s.trim().to_owned())
+    if !output.status.success() {
+        return Err(git_error("Git command", output));
+    }
+    String::from_utf8(output.stdout)
+        .map(|s| s.trim().to_owned())
         .map_err(|_| FsError::JournalCorrupt("Git output is not UTF-8".into()))
 }
 
 fn git_output(repo: &Path, args: Vec<OsString>) -> Result<Output, FsError> {
     Command::new("git")
-        .arg("-C").arg(repo).arg("-c").arg("core.hooksPath=/dev/null")
+        .arg("-C")
+        .arg(repo)
+        .arg("-c")
+        .arg("core.hooksPath=/dev/null")
         .args(args)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -797,8 +1083,11 @@ fn git_output(repo: &Path, args: Vec<OsString>) -> Result<Output, FsError> {
         .env_remove("GIT_INDEX_FILE")
         .env_remove("GIT_OBJECT_DIRECTORY")
         .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
-        .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())
-        .output().map_err(FsError::Io)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(FsError::Io)
 }
 
 fn git_error(operation: &str, output: Output) -> FsError {
@@ -835,7 +1124,11 @@ mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
 
-    struct Fixture { root: PathBuf, state: PathBuf, outside: PathBuf }
+    struct Fixture {
+        root: PathBuf,
+        state: PathBuf,
+        outside: PathBuf,
+    }
 
     impl Fixture {
         fn new() -> Self {
@@ -852,7 +1145,11 @@ mod tests {
             fs::write(root.join("README.md"), "base\n").unwrap();
             raw_git(&root, &["add", "README.md"]).unwrap();
             raw_git(&root, &["commit", "-m", "base"]).unwrap();
-            Self { root, state, outside }
+            Self {
+                root,
+                state,
+                outside,
+            }
         }
 
         fn engine(&self) -> FsEngine {
@@ -861,15 +1158,25 @@ mod tests {
     }
 
     impl Drop for Fixture {
-        fn drop(&mut self) { let _ = fs::remove_dir_all(self.root.parent().unwrap()); }
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(self.root.parent().unwrap());
+        }
     }
 
     fn raw_git(repo: &Path, args: &[&str]) -> Result<(), String> {
-        let output = Command::new("git").arg("-C").arg(repo).args(args)
-            .env("GIT_CONFIG_NOSYSTEM", "1").env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .output().map_err(|e| e.to_string())?;
-        if output.status.success() { Ok(()) }
-        else { Err(String::from_utf8_lossy(&output.stderr).into_owned()) }
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output()
+            .map_err(|e| e.to_string())?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).into_owned())
+        }
     }
 
     #[test]
@@ -878,13 +1185,20 @@ mod tests {
         let engine = fixture.engine();
         let original = git_text(&fixture.root, vec![arg("rev-parse"), arg("HEAD")]).unwrap();
         let mut tx = engine.begin_transaction().unwrap();
-        tx.write_file("src/new.rs", None, "pub fn ok() -> bool { true }\n").unwrap();
+        tx.write_file("src/new.rs", None, "pub fn ok() -> bool { true }\n")
+            .unwrap();
         tx.stage().unwrap();
         let revision = tx.validate().unwrap().to_owned();
         let receipt = tx.commit().unwrap();
         assert_eq!(receipt.published_revision, revision);
-        assert_eq!(current_ref(&fixture.root, DEFAULT_PUBLICATION_REF).unwrap(), revision);
-        assert_eq!(git_text(&fixture.root, vec![arg("rev-parse"), arg("HEAD")]).unwrap(), original);
+        assert_eq!(
+            current_ref(&fixture.root, DEFAULT_PUBLICATION_REF).unwrap(),
+            revision
+        );
+        assert_eq!(
+            git_text(&fixture.root, vec![arg("rev-parse"), arg("HEAD")]).unwrap(),
+            original
+        );
         assert!(!fixture.root.join("src/new.rs").exists());
         assert!(!tx.candidate_path.exists());
     }
@@ -897,11 +1211,16 @@ mod tests {
         let mut b = engine.begin_transaction().unwrap();
         a.write_file("a.txt", None, "A\n").unwrap();
         b.write_file("b.txt", None, "B\n").unwrap();
-        a.stage().unwrap(); b.stage().unwrap();
-        a.validate().unwrap(); b.validate().unwrap();
+        a.stage().unwrap();
+        b.stage().unwrap();
+        a.validate().unwrap();
+        b.validate().unwrap();
         let winner = a.commit().unwrap();
         assert!(matches!(b.commit(), Err(FsError::Conflict { .. })));
-        assert_eq!(current_ref(&fixture.root, DEFAULT_PUBLICATION_REF).unwrap(), winner.published_revision);
+        assert_eq!(
+            current_ref(&fixture.root, DEFAULT_PUBLICATION_REF).unwrap(),
+            winner.published_revision
+        );
     }
 
     #[test]
@@ -909,10 +1228,18 @@ mod tests {
         let fixture = Fixture::new();
         let engine = fixture.engine();
         let mut tx = engine.begin_transaction().unwrap();
-        assert!(matches!(tx.write_file("README.md", None, "new\n"), Err(FsError::WriteConflict)));
-        assert!(matches!(tx.write_file("README.md", Some("wrong\n"), "new\n"), Err(FsError::WriteConflict)));
+        assert!(matches!(
+            tx.write_file("README.md", None, "new\n"),
+            Err(FsError::WriteConflict)
+        ));
+        assert!(matches!(
+            tx.write_file("README.md", Some("wrong\n"), "new\n"),
+            Err(FsError::WriteConflict)
+        ));
         tx.write_file("README.md", Some("base\n"), "new\n").unwrap();
-        tx.stage().unwrap(); tx.validate().unwrap(); tx.commit().unwrap();
+        tx.stage().unwrap();
+        tx.validate().unwrap();
+        tx.commit().unwrap();
     }
 
     #[test]
@@ -921,7 +1248,10 @@ mod tests {
         let engine = fixture.engine();
         let mut tx = engine.begin_transaction().unwrap();
         for path in ["../escape", "/tmp/escape", ".git/config", "a/../../escape"] {
-            assert!(matches!(tx.write_file(path, None, "x"), Err(FsError::PathEscape)));
+            assert!(matches!(
+                tx.write_file(path, None, "x"),
+                Err(FsError::PathEscape)
+            ));
         }
         assert!(!fixture.outside.join("escape").exists());
         tx.abort().unwrap();
@@ -933,7 +1263,10 @@ mod tests {
         let engine = fixture.engine();
         let mut tx = engine.begin_transaction().unwrap();
         symlink(&fixture.outside, tx.candidate_path().join("escape")).unwrap();
-        assert!(matches!(tx.write_file("escape/pwned", None, "bad"), Err(FsError::SymlinkRejected)));
+        assert!(matches!(
+            tx.write_file("escape/pwned", None, "bad"),
+            Err(FsError::SymlinkRejected)
+        ));
         assert!(!fixture.outside.join("pwned").exists());
         tx.abort().unwrap();
     }
@@ -949,7 +1282,10 @@ mod tests {
         let candidate = tx.candidate_path().to_owned();
         drop(tx);
         engine.recover_incomplete_transactions().unwrap();
-        assert_eq!(current_ref(&fixture.root, DEFAULT_PUBLICATION_REF).unwrap(), base);
+        assert_eq!(
+            current_ref(&fixture.root, DEFAULT_PUBLICATION_REF).unwrap(),
+            base
+        );
         assert!(!candidate.exists());
     }
 
