@@ -29,9 +29,9 @@ use nix::sys::socket::{recvmsg, sendmsg, ControlMessage, ControlMessageOwned, Ms
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    path_is_within_grant, validate_relative_path, validate_trusted_root, CapabilityClaims,
-    FileAccess, FileGrant, NetworkGrant, SandboxError, SignedCapability, MAX_BROKER_FRAME_BYTES,
-    open_path_no_symlinks,
+    open_path_no_symlinks, path_is_within_grant, validate_relative_path, validate_trusted_root,
+    CapabilityClaims, FileAccess, FileGrant, NetworkGrant, SandboxError, SignedCapability,
+    MAX_BROKER_FRAME_BYTES,
 };
 
 pub trait CapabilityVerifier: Send + Sync + 'static {
