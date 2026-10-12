@@ -76,7 +76,7 @@ pub fn initialize() -> Result<WorkerBootstrapContext, SandboxError> {
     Ok(WorkerBootstrapContext { manifest, broker })
 }
 
-pub(crate) fn validate_manifest_shape(manifest: &WorkerManifest) -> Result<(), SandboxError> {
+pub fn validate_manifest_shape(manifest: &WorkerManifest) -> Result<(), SandboxError> {
     manifest.validate_fields()?;
     if manifest.version != WORKER_MANIFEST_VERSION {
         return Err(SandboxError::InvalidConfig(format!(
@@ -137,7 +137,7 @@ fn validate_capability_context(claims: &CapabilityClaims) -> Result<(), SandboxE
     Ok(())
 }
 
-pub(crate) fn load_trusted_verifying_key() -> Result<VerifyingKey, SandboxError> {
+pub fn load_trusted_verifying_key() -> Result<VerifyingKey, SandboxError> {
     let path = std::path::Path::new(VERIFY_KEY_PATH);
 
     // The final file is opened with O_NOFOLLOW, then ownership/mode/size are
