@@ -306,9 +306,7 @@ pub fn validate_trusted_root(path: impl AsRef<Path>) -> Result<PathBuf, SandboxE
         Path::new("/dev"),
         Path::new("/run"),
     ];
-    if canonical == Path::new("/")
-        || protected.iter().any(|prefix| canonical.starts_with(prefix))
-    {
+    if canonical == Path::new("/") || protected.iter().any(|prefix| canonical.starts_with(prefix)) {
         return Err(SandboxError::InvalidConfig(format!(
             "trusted root points at a protected filesystem tree: {}",
             canonical.display()
@@ -349,9 +347,8 @@ pub(crate) fn open_path_no_symlinks(
     let relative = path.strip_prefix("/").map_err(|_| {
         SandboxError::InvalidConfig("pinned filesystem path is not beneath /".into())
     })?;
-    let relative = CString::new(relative.as_os_str().as_bytes()).map_err(|_| {
-        SandboxError::InvalidConfig("NUL in pinned filesystem path".into())
-    })?;
+    let relative = CString::new(relative.as_os_str().as_bytes())
+        .map_err(|_| SandboxError::InvalidConfig("NUL in pinned filesystem path".into()))?;
     let root = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC)
@@ -363,8 +360,7 @@ pub(crate) fn open_path_no_symlinks(
         mode: u64,
         resolve: u64,
     }
-    let flags = libc::O_PATH | libc::O_CLOEXEC
-        | if directory_only { libc::O_DIRECTORY } else { 0 };
+    let flags = libc::O_PATH | libc::O_CLOEXEC | if directory_only { libc::O_DIRECTORY } else { 0 };
     let how = OpenHow {
         flags: flags as u64,
         mode: 0,
@@ -550,9 +546,7 @@ impl Drop for CgroupV2 {
 
 /// Verify this process is in a dedicated cgroup-v2 child with limits no weaker
 /// than the signed capability. Called before Landlock/seccomp block path reads.
-pub(crate) fn verify_current_cgroup_budget(
-    budget: &ResourceBudget,
-) -> Result<(), SandboxError> {
+pub(crate) fn verify_current_cgroup_budget(budget: &ResourceBudget) -> Result<(), SandboxError> {
     budget.validate()?;
     let proc_cgroup = fs::read_to_string("/proc/self/cgroup")?;
     let path = resolve_current_cgroup_path(&proc_cgroup, Path::new("/sys/fs/cgroup"))?;
@@ -585,9 +579,9 @@ fn resolve_current_cgroup_path(
             "worker has no unified cgroup-v2 membership in /proc/self/cgroup".into(),
         )
     })?;
-    let relative = Path::new(path).strip_prefix("/").map_err(|_| {
-        SandboxError::Enforcement("invalid unified cgroup path".into())
-    })?;
+    let relative = Path::new(path)
+        .strip_prefix("/")
+        .map_err(|_| SandboxError::Enforcement("invalid unified cgroup path".into()))?;
     if relative.as_os_str().is_empty()
         || relative.components().any(|component| {
             matches!(
@@ -612,7 +606,10 @@ fn resolve_current_cgroup_path(
     Ok(canonical)
 }
 
-pub(crate) fn verify_budget_controls(path: &Path, budget: &ResourceBudget) -> Result<(), SandboxError> {
+pub(crate) fn verify_budget_controls(
+    path: &Path,
+    budget: &ResourceBudget,
+) -> Result<(), SandboxError> {
     fn read_numeric(path: &Path, label: &str) -> Result<u64, SandboxError> {
         let value = fs::read_to_string(path)?;
         value.trim().parse::<u64>().map_err(|_| {
@@ -667,14 +664,26 @@ pub(crate) fn verify_budget_controls(path: &Path, budget: &ResourceBudget) -> Re
                     ))
                 })?;
             for (key, expected) in [
-                ("rbps", limit.rbps.map_or_else(|| "max".into(), |v| v.to_string())),
-                ("wbps", limit.wbps.map_or_else(|| "max".into(), |v| v.to_string())),
-                ("riops", limit.riops.map_or_else(|| "max".into(), |v| v.to_string())),
-                ("wiops", limit.wiops.map_or_else(|| "max".into(), |v| v.to_string())),
+                (
+                    "rbps",
+                    limit.rbps.map_or_else(|| "max".into(), |v| v.to_string()),
+                ),
+                (
+                    "wbps",
+                    limit.wbps.map_or_else(|| "max".into(), |v| v.to_string()),
+                ),
+                (
+                    "riops",
+                    limit.riops.map_or_else(|| "max".into(), |v| v.to_string()),
+                ),
+                (
+                    "wiops",
+                    limit.wiops.map_or_else(|| "max".into(), |v| v.to_string()),
+                ),
             ] {
-                let actual = line.split_whitespace().find_map(|field| {
-                    field.strip_prefix(&format!("{key}="))
-                });
+                let actual = line
+                    .split_whitespace()
+                    .find_map(|field| field.strip_prefix(&format!("{key}=")));
                 if actual != Some(expected.as_str()) {
                     return Err(SandboxError::Enforcement(format!(
                         "effective io.max {key} limit differs for device {device}"
@@ -775,7 +784,11 @@ mod tests {
         assert!(validate_relative_path("workspace/a.rs", false).is_ok());
         assert!(validate_relative_path("", true).is_ok());
         assert!(validate_relative_path(&"a".repeat(MAX_SANDBOX_PATH_BYTES + 1), false).is_err());
-        assert!(validate_relative_path(&format!("dir/{}", "x".repeat(MAX_SANDBOX_PATH_COMPONENT_BYTES + 1)), false).is_err());
+        assert!(validate_relative_path(
+            &format!("dir/{}", "x".repeat(MAX_SANDBOX_PATH_COMPONENT_BYTES + 1)),
+            false
+        )
+        .is_err());
     }
 
     #[test]
@@ -823,8 +836,16 @@ mod tests {
             subject_gid: 1000,
             expires_at_unix: u64::MAX,
             file_grants: vec![
-                FileGrant { root_id: "workspace".into(), prefix: "src".into(), access: FileAccess::Read },
-                FileGrant { root_id: "workspace".into(), prefix: "src".into(), access: FileAccess::Write },
+                FileGrant {
+                    root_id: "workspace".into(),
+                    prefix: "src".into(),
+                    access: FileAccess::Read,
+                },
+                FileGrant {
+                    root_id: "workspace".into(),
+                    prefix: "src".into(),
+                    access: FileAccess::Write,
+                },
             ],
             network_grants: vec![],
             budget: ResourceBudget {
@@ -839,8 +860,12 @@ mod tests {
 
         claims.file_grants.clear();
         claims.network_grants = vec![
-            NetworkGrant { address: "127.0.0.1:8080".into() },
-            NetworkGrant { address: "127.0.0.1:8080".into() },
+            NetworkGrant {
+                address: "127.0.0.1:8080".into(),
+            },
+            NetworkGrant {
+                address: "127.0.0.1:8080".into(),
+            },
         ];
         assert!(claims.validate().is_err());
     }
@@ -851,12 +876,13 @@ mod tests {
         fs::create_dir(mount.path().join("workers")).unwrap();
         fs::create_dir(mount.path().join("workers/agent")).unwrap();
 
-        let resolved = resolve_current_cgroup_path(
-            "12:cpu:/workers/agent\n0::/workers/agent\n",
-            mount.path(),
-        )
-        .unwrap();
-        assert_eq!(resolved, fs::canonicalize(mount.path().join("workers/agent")).unwrap());
+        let resolved =
+            resolve_current_cgroup_path("12:cpu:/workers/agent\n0::/workers/agent\n", mount.path())
+                .unwrap();
+        assert_eq!(
+            resolved,
+            fs::canonicalize(mount.path().join("workers/agent")).unwrap()
+        );
 
         assert!(resolve_current_cgroup_path("0::/\n", mount.path()).is_err());
         assert!(resolve_current_cgroup_path("12:cpu:/workers/agent\n", mount.path()).is_err());
@@ -885,7 +911,11 @@ mod tests {
         fs::write(dir.path().join("memory.oom.group"), "1").unwrap();
         fs::write(dir.path().join("cpu.max"), "50000 100000").unwrap();
         fs::write(dir.path().join("pids.max"), "8").unwrap();
-        fs::write(dir.path().join("io.max"), "8:0 rbps=1024 wbps=max riops=max wiops=max\n").unwrap();
+        fs::write(
+            dir.path().join("io.max"),
+            "8:0 rbps=1024 wbps=max riops=max wiops=max\n",
+        )
+        .unwrap();
         assert!(verify_budget_controls(dir.path(), &budget).is_ok());
 
         // A kernel-rounded-down memory value is stricter and therefore safe.
