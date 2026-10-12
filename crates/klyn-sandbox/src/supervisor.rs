@@ -90,7 +90,7 @@ impl SpawnedWorker {
             ));
         }
         writer.write_all(&encoded)?;
-        writer.write_all(b"\\n")?;
+        writer.write_all(b"\n")?;
         writer.flush()?;
         Ok(())
     }
@@ -111,7 +111,7 @@ impl SpawnedWorker {
                     "worker closed stdout in the middle of a response".into(),
                 ));
             }
-            let newline = available.iter().position(|byte| *byte == b'\\n');
+            let newline = available.iter().position(|byte| *byte == b'\n');
             let segment_len = newline.unwrap_or(available.len());
             if line.len().saturating_add(segment_len) > crate::MAX_BROKER_FRAME_BYTES {
                 return Err(SandboxError::Enforcement(
