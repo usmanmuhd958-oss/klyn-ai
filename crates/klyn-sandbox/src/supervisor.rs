@@ -50,6 +50,18 @@ pub struct SpawnedWorker {
     cgroup: CgroupV2Boundary,
 }
 
+impl Drop for SpawnedWorker {
+    fn drop(&mut self) {
+        // Dropping a std::process::Child does not terminate its process. Always
+        // kill the whole cgroup, reap stage-0, and wait for cgroup emptiness so
+        // an early-return/error path cannot orphan the namespace worker.
+        let _ = self.cgroup.kill_all();
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = self.cgroup.terminate_and_wait(WORKER_LIFECYCLE_TIMEOUT);
+    }
+}
+
 impl SpawnedWorker {
     pub fn pid(&self) -> u32 {
         self.child.id()
