@@ -37,6 +37,21 @@ fn main() {
 }
 
 fn run() -> Result<(), String> {
+    // Block at the first stage-0 instruction before parsing arguments or doing
+    // filesystem work. The supervisor attaches this PID and verifies cgroup
+    // controls before it can send the one-shot release token.
+    if unsafe { libc::fcntl(GATE_FD, libc::F_GETFD) } < 0 {
+        return Err("start gate FD 5 is not inherited".into());
+    }
+    let mut gate = unsafe { std::fs::File::from_raw_fd(GATE_FD) };
+    let mut signal = [0u8; 1];
+    gate.read_exact(&mut signal)
+        .map_err(|error| format!("waiting on cgroup start gate: {error}"))?;
+    if signal[0] != GATE_RELEASE {
+        return Err("invalid start gate signal".into());
+    }
+    drop(gate);
+
     let mut args = std::env::args_os().skip(1);
     let mut uid: Option<u32> = None;
     let mut gid: Option<u32> = None;
@@ -91,21 +106,9 @@ fn run() -> Result<(), String> {
         return Err("sealed manifest FD 4 is not inherited".into());
     }
 
-    if unsafe { libc::fcntl(GATE_FD, libc::F_GETFD) } < 0 {
-        return Err("start gate FD 5 is not inherited".into());
-    }
     if unsafe { libc::fcntl(WORKER_POLICY_GATE_FD, libc::F_GETFD) } < 0 {
         return Err("worker policy gate FD 6 is not inherited".into());
     }
-
-    let mut gate = unsafe { std::fs::File::from_raw_fd(GATE_FD) };
-    let mut signal = [0u8; 1];
-    gate.read_exact(&mut signal)
-        .map_err(|e| format!("waiting on cgroup start gate: {e}"))?;
-    if signal[0] != GATE_RELEASE {
-        return Err("invalid start gate signal".into());
-    }
-    drop(gate);
 
     let trusted_executable = validate_trusted_executable(&requested_executable)
         .map_err(|error| format!("refusing untrusted worker executable: {error}"))?;
