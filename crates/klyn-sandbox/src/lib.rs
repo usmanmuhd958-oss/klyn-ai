@@ -545,7 +545,71 @@ impl Drop for CgroupV2 {
     }
 }
 
-fn verify_budget_controls(path: &Path, budget: &ResourceBudget) -> Result<(), SandboxError> {
+/// Verify this process is in a dedicated cgroup-v2 child with limits no weaker
+/// than the signed capability. Called before Landlock/seccomp block path reads.
+pub(crate) fn verify_current_cgroup_budget(
+    budget: &ResourceBudget,
+) -> Result<(), SandboxError> {
+    budget.validate()?;
+    let proc_cgroup = fs::read_to_string("/proc/self/cgroup")?;
+    let path = resolve_current_cgroup_path(&proc_cgroup, Path::new("/sys/fs/cgroup"))?;
+    if fs::read_to_string(path.join("cgroup.type"))?.trim() != "domain"
+        || !path.join("cgroup.kill").exists()
+    {
+        return Err(SandboxError::Enforcement(
+            "worker is not in a killable domain cgroup-v2 sandbox".into(),
+        ));
+    }
+    verify_budget_controls(&path, budget)
+}
+
+fn resolve_current_cgroup_path(
+    proc_cgroup: &str,
+    cgroup_mount: &Path,
+) -> Result<PathBuf, SandboxError> {
+    let mut unified = None;
+    for line in proc_cgroup.lines() {
+        if let Some(path) = line.strip_prefix("0::") {
+            if unified.replace(path).is_some() {
+                return Err(SandboxError::Enforcement(
+                    "duplicate unified cgroup entry in /proc/self/cgroup".into(),
+                ));
+            }
+        }
+    }
+    let path = unified.ok_or_else(|| {
+        SandboxError::Enforcement(
+            "worker has no unified cgroup-v2 membership in /proc/self/cgroup".into(),
+        )
+    })?;
+    let relative = Path::new(path).strip_prefix("/").map_err(|_| {
+        SandboxError::Enforcement("invalid unified cgroup path".into())
+    })?;
+    if relative.as_os_str().is_empty()
+        || relative.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::CurDir | std::path::Component::ParentDir
+            )
+        })
+    {
+        return Err(SandboxError::Enforcement(
+            "worker must be in a dedicated non-root cgroup-v2 child".into(),
+        ));
+    }
+
+    let mount = fs::canonicalize(cgroup_mount)?;
+    let requested = mount.join(relative);
+    let canonical = fs::canonicalize(&requested)?;
+    if canonical != requested || !canonical.starts_with(&mount) {
+        return Err(SandboxError::Enforcement(
+            "worker cgroup path escapes the mounted cgroup-v2 hierarchy".into(),
+        ));
+    }
+    Ok(canonical)
+}
+
+pub(crate) fn verify_budget_controls(path: &Path, budget: &ResourceBudget) -> Result<(), SandboxError> {
     fn read_numeric(path: &Path, label: &str) -> Result<u64, SandboxError> {
         let value = fs::read_to_string(path)?;
         value.trim().parse::<u64>().map_err(|_| {
@@ -776,6 +840,24 @@ mod tests {
             NetworkGrant { address: "127.0.0.1:8080".into() },
         ];
         assert!(claims.validate().is_err());
+    }
+
+    #[test]
+    fn current_cgroup_resolution_rejects_missing_root_and_traversal() {
+        let mount = tempfile::tempdir().unwrap();
+        fs::create_dir(mount.path().join("workers")).unwrap();
+        fs::create_dir(mount.path().join("workers/agent")).unwrap();
+
+        let resolved = resolve_current_cgroup_path(
+            "12:cpu:/workers/agent\n0::/workers/agent\n",
+            mount.path(),
+        )
+        .unwrap();
+        assert_eq!(resolved, fs::canonicalize(mount.path().join("workers/agent")).unwrap());
+
+        assert!(resolve_current_cgroup_path("0::/\n", mount.path()).is_err());
+        assert!(resolve_current_cgroup_path("12:cpu:/workers/agent\n", mount.path()).is_err());
+        assert!(resolve_current_cgroup_path("0::/../outside\n", mount.path()).is_err());
     }
 
     #[test]
