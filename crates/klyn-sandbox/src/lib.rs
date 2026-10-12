@@ -18,9 +18,13 @@ pub mod worker_bootstrap;
 
 use std::{
     collections::BTreeSet,
-    fs::{self, OpenOptions},
+    ffi::CString,
+    fs::{self, File, OpenOptions},
     io::{self, Write},
-    os::unix::fs::MetadataExt,
+    os::{
+        fd::{AsRawFd, FromRawFd, OwnedFd},
+        unix::{ffi::OsStrExt, fs::MetadataExt},
+    },
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -308,6 +312,74 @@ pub fn validate_trusted_root(path: impl AsRef<Path>) -> Result<PathBuf, SandboxE
         )));
     }
     Ok(canonical)
+}
+
+/// Open a canonical absolute path as an O_PATH descriptor without following
+/// symlinks or magic links at any component. The descriptor pins the object
+/// used by Landlock rules or the broker's root handle, eliminating a
+/// canonicalize-then-open path replacement race.
+pub(crate) fn open_path_no_symlinks(
+    path: impl AsRef<Path>,
+    directory_only: bool,
+) -> Result<File, SandboxError> {
+    const RESOLVE_NO_MAGICLINKS: u64 = 0x02;
+    const RESOLVE_NO_SYMLINKS: u64 = 0x04;
+    const RESOLVE_BENEATH: u64 = 0x08;
+
+    let path = path.as_ref();
+    if !path.is_absolute() || path == Path::new("/") {
+        return Err(SandboxError::InvalidConfig(
+            "pinned filesystem path must be a non-root absolute path".into(),
+        ));
+    }
+    if path.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::CurDir | std::path::Component::ParentDir
+        )
+    }) {
+        return Err(SandboxError::InvalidConfig(
+            "pinned filesystem path must be canonical".into(),
+        ));
+    }
+
+    let relative = path.strip_prefix("/").map_err(|_| {
+        SandboxError::InvalidConfig("pinned filesystem path is not beneath /".into())
+    })?;
+    let relative = CString::new(relative.as_os_str().as_bytes()).map_err(|_| {
+        SandboxError::InvalidConfig("NUL in pinned filesystem path".into())
+    })?;
+    let root = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC)
+        .open("/")?;
+
+    #[repr(C)]
+    struct OpenHow {
+        flags: u64,
+        mode: u64,
+        resolve: u64,
+    }
+    let flags = libc::O_PATH | libc::O_CLOEXEC
+        | if directory_only { libc::O_DIRECTORY } else { 0 };
+    let how = OpenHow {
+        flags: flags as u64,
+        mode: 0,
+        resolve: RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_SYMLINKS,
+    };
+    let fd = unsafe {
+        libc::syscall(
+            libc::SYS_openat2,
+            root.as_raw_fd(),
+            relative.as_ptr(),
+            &how as *const OpenHow,
+            std::mem::size_of::<OpenHow>(),
+        ) as libc::c_int
+    };
+    if fd < 0 {
+        return Err(SandboxError::Io(io::Error::last_os_error()));
+    }
+    Ok(File::from(unsafe { OwnedFd::from_raw_fd(fd) }))
 }
 
 /// Component-aware subtree check (e.g. src2 is not beneath src).
