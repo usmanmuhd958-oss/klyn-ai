@@ -19,8 +19,8 @@ pub use crate::manifest::{WorkerManifest, WORKER_MANIFEST_VERSION};
 
 use crate::{
     broker::{BrokerClient, CapabilityVerifier, Ed25519CapabilityVerifier},
-    landlock_seccomp, validate_trusted_root, CapabilityClaims, SandboxError,
-    BROKER_FD, MANIFEST_FD, OCAP_VERSION,
+    landlock_seccomp, validate_trusted_root, CapabilityClaims, SandboxError, BROKER_FD,
+    MANIFEST_FD, OCAP_VERSION,
 };
 
 /// The key must be provisioned by the trusted image/configuration manager.
