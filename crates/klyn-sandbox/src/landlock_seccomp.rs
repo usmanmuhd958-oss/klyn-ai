@@ -253,7 +253,7 @@ mod tests {
         }
 
         eprintln!(
-            "SKIP: Landlock ABI v8 is unavailable (kernel reported ABI {abi});              policy installation must still fail closed"
+            "SKIP: Landlock ABI v8 is unavailable (kernel reported ABI {abi}); policy installation must still fail closed"
         );
         assert!(
             apply_landlock(&claims(), &BTreeMap::new()).is_err(),
