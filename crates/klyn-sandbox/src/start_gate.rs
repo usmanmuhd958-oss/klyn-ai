@@ -5,10 +5,7 @@
 //! the supervisor may send it only after cgroup membership and limits have
 //! been independently read back.
 
-use std::{
-    io::Write,
-    os::unix::net::UnixStream,
-};
+use std::{io::Write, os::unix::net::UnixStream};
 
 use ed25519_dalek::VerifyingKey;
 
@@ -82,7 +79,10 @@ impl StartGate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{io::{self, Read}, time::Duration};
+    use std::{
+        io::{self, Read},
+        time::Duration,
+    };
 
     #[test]
     fn worker_gate_blocks_until_successful_validation_ack() {
