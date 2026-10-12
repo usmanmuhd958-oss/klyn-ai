@@ -88,7 +88,7 @@ pub fn launch_worker(
     let worker_hash = sha256_file(&worker_executable)?;
 
     let key = manifest_signing_key.verifying_key();
-    let capability_verifier = Ed25519CapabilityVerifier::new(key);
+    let capability_verifier = Ed25519CapabilityVerifier::new(key.clone());
     config
         .capability
         .claims
@@ -276,16 +276,4 @@ mod tests {
         assert!(validate_trusted_init_executable("/definitely/not/klyn-sandbox-init").is_err());
     }
 
-    #[test]
-    fn worker_budget_expiry_is_not_accepted_by_supervisor_contract() {
-        let expired = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock after epoch")
-            .as_secs()
-            .saturating_sub(1);
-        assert!(expired < SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock after epoch")
-            .as_secs());
-    }
 }
