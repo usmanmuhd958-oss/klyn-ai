@@ -196,11 +196,16 @@ pub fn launch_worker(
     // Closing the supervisor's duplicate child endpoint is required; otherwise
     // a failed launcher would not observe EOF on the private gate channel.
     drop(child_gate);
+    drop(child_policy_gate);
     drop(manifest_source);
     drop(gate_source);
+    drop(policy_gate_source);
     drop(manifest_fd);
 
-    if let Err(error) = gate.release_after_verification(&cgroup, child.id(), &manifest, &key) {
+    let gate_result = gate
+        .release_after_verification(&cgroup, child.id(), &manifest, &key)
+        .and_then(|()| policy_gate.verify_policy_and_release(WORKER_BOOTSTRAP_TIMEOUT));
+    if let Err(error) = gate_result {
         let _ = child.kill();
         let _ = child.wait();
         let cleanup = cgroup.terminate_and_wait(WORKER_LIFECYCLE_TIMEOUT);
