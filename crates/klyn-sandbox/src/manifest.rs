@@ -186,7 +186,10 @@ impl WorkerManifest {
             .map_err(|_| SandboxError::Enforcement("worker manifest signature is invalid".into()))
     }
 
-    pub fn verify_worker_executable(&self, executable: impl AsRef<Path>) -> Result<(), SandboxError> {
+    pub fn verify_worker_executable(
+        &self,
+        executable: impl AsRef<Path>,
+    ) -> Result<(), SandboxError> {
         let digest = sha256_file(executable)?;
         if digest != self.worker_executable_sha256
             || !self
@@ -381,9 +384,7 @@ mod tests {
         assert!(seals >= 0);
         assert_eq!(seals & REQUIRED_MEMFD_SEALS, REQUIRED_MEMFD_SEALS);
 
-        let duplicate = unsafe {
-            libc::fcntl(file.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 10)
-        };
+        let duplicate = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 10) };
         assert!(duplicate >= 0);
         let decoded = read_sealed_manifest_fd(duplicate).expect("read sealed manifest");
         decoded
@@ -404,7 +405,9 @@ mod tests {
         manifest.worker_executable_sha256 = "A".repeat(64);
         assert!(manifest.validate_fields().is_err());
         manifest.worker_executable_sha256 = "a".repeat(64);
-        manifest.allowed_execution_binary_sha256.push("a".repeat(64));
+        manifest
+            .allowed_execution_binary_sha256
+            .push("a".repeat(64));
         assert!(manifest.validate_fields().is_err());
     }
 }
