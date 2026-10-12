@@ -208,7 +208,7 @@ fn load_trusted_verifying_key() -> Result<VerifyingKey, SandboxError> {
         parent = directory.parent();
     }
 
-    let mut file = OpenOptions::new()
+    let file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
         .open(path)?;
