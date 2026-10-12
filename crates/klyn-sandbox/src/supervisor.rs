@@ -88,7 +88,7 @@ pub fn launch_worker(
     let worker_hash = sha256_file(&worker_executable)?;
 
     let key = manifest_signing_key.verifying_key();
-    let capability_verifier = Ed25519CapabilityVerifier::new(key.clone());
+    let capability_verifier = Ed25519CapabilityVerifier::new(manifest_signing_key.verifying_key());
     config.capability.claims.validate()?;
     capability_verifier
         .verify(&config.capability)
