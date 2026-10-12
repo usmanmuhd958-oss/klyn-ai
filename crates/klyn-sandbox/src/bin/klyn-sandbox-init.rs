@@ -20,8 +20,8 @@ use klyn_sandbox::{
     broker::{CapabilityVerifier, Ed25519CapabilityVerifier},
     cgroup::CgroupV2Boundary,
     manifest::read_sealed_manifest_fd,
-    validate_trusted_executable,
     start_gate::{START_GATE_FD, START_GATE_RELEASE, WORKER_POLICY_GATE_FD},
+    validate_trusted_executable,
     worker_bootstrap::{load_trusted_verifying_key, validate_manifest_shape},
     MANIFEST_FD,
 };
