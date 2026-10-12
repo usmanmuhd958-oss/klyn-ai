@@ -28,6 +28,7 @@ validate_sandbox:
   script:
     - cargo fmt --all -- --check
     - cargo metadata --locked --format-version 1 > /dev/null
+    - cargo check --locked --workspace --all-targets -- -D warnings
 
 test_sandbox:
   stage: test
