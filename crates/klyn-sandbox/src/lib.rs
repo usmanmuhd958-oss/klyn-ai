@@ -584,6 +584,27 @@ pub fn validate_trusted_executable(path: impl AsRef<Path>) -> Result<PathBuf, Sa
             canonical.display()
         )));
     }
+
+    // A protected file inside a writable parent is still replaceable between
+    // validation and exec. Require every directory component to be controlled
+    // by root or the daemon's effective identity.
+    let mut parent = canonical.parent();
+    while let Some(directory) = parent {
+        let metadata = fs::metadata(directory)?;
+        if !metadata.is_dir()
+            || metadata.mode() & 0o022 != 0
+            || (metadata.uid() != 0 && metadata.uid() != euid)
+        {
+            return Err(SandboxError::InvalidConfig(format!(
+                "trusted executable has an unsafe parent directory: {}",
+                directory.display()
+            )));
+        }
+        if directory == Path::new("/") {
+            break;
+        }
+        parent = directory.parent();
+    }
     Ok(canonical)
 }
 
