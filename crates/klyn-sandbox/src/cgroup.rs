@@ -8,7 +8,6 @@ use std::{
     fs::{self, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
-    time::Duration,
 };
 
 use crate::{CgroupV2, ResourceBudget, SandboxError};
@@ -34,11 +33,7 @@ impl CgroupV2Boundary {
         cpu_weight: u32,
     ) -> Result<Self, SandboxError> {
         budget.validate()?;
-        if !(MIN_CPU_WEIGHT..=MAX_CPU_WEIGHT).contains(&cpu_weight) {
-            return Err(SandboxError::InvalidConfig(
-                "cgroup cpu.weight must be in 1..=10000".into(),
-            ));
-        }
+        validate_cpu_weight(cpu_weight)?;
 
         // CgroupV2::create writes memory.max, memory.swap.max, memory.oom.group,
         // cpu.max, pids.max and requested io.max limits, then reads them back.
@@ -137,6 +132,15 @@ impl CgroupV2Boundary {
     }
 }
 
+fn validate_cpu_weight(cpu_weight: u32) -> Result<(), SandboxError> {
+    if !(MIN_CPU_WEIGHT..=MAX_CPU_WEIGHT).contains(&cpu_weight) {
+        return Err(SandboxError::InvalidConfig(
+            "cgroup cpu.weight must be in 1..=10000".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn write_control(path: &Path, value: &str) -> io::Result<()> {
     let mut file = OpenOptions::new().write(true).open(path)?;
     file.write_all(value.as_bytes())?;
@@ -192,8 +196,10 @@ mod tests {
             io_limits: vec![],
         };
         assert!(budget.validate().is_ok());
-        assert!(!(MIN_CPU_WEIGHT..=MAX_CPU_WEIGHT).contains(&0));
-        assert!(!(MIN_CPU_WEIGHT..=MAX_CPU_WEIGHT).contains(&10_001));
+        assert!(validate_cpu_weight(1).is_ok());
+        assert!(validate_cpu_weight(10_000).is_ok());
+        assert!(validate_cpu_weight(0).is_err());
+        assert!(validate_cpu_weight(10_001).is_err());
     }
 
     #[test]
