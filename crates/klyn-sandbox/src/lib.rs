@@ -13,7 +13,11 @@
 compile_error!("klyn-sandbox currently requires Linux kernel isolation primitives");
 
 pub mod broker;
+pub mod cgroup;
 pub mod landlock_seccomp;
+pub mod manifest;
+pub mod start_gate;
+pub mod supervisor;
 pub mod worker_bootstrap;
 
 use std::{
