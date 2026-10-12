@@ -190,7 +190,7 @@ impl SandboxService {
             budget,
         };
         claims.validate()?;
-        let payload = serde_json::to_vec(&claims)?;
+        let payload = serde_json::to_vec(&claims).map_err(SandboxError::from)?;
         let signature = self.signing_key.sign(&payload).to_bytes().to_vec();
         let capability = SignedCapability { claims, signature };
 
