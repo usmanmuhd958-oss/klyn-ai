@@ -21,7 +21,9 @@ fn rejects_foreign_owned_socket_parent_even_when_mode_is_0755() {
     // The test's full ownership scenario requires chown(2). CI runs this
     // integration target under sudo; ordinary local cargo test remains usable.
     if !Uid::effective().is_root() {
-        eprintln!("skipping ownership mutation: rerun as root to exercise foreign-owner integration case");
+        eprintln!(
+            "skipping ownership mutation: rerun as root to exercise foreign-owner integration case"
+        );
         return;
     }
 
