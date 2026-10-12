@@ -429,7 +429,7 @@ mod tests {
         SignedCapability, OCAP_VERSION,
     };
     use ed25519_dalek::SigningKey;
-    use std::{collections::BTreeMap, io, path::PathBuf, sync::Arc};
+    use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
     fn claims() -> CapabilityClaims {
         CapabilityClaims {
