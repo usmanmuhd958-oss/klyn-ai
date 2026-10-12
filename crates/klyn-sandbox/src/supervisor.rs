@@ -89,10 +89,7 @@ pub fn launch_worker(
 
     let key = manifest_signing_key.verifying_key();
     let capability_verifier = Ed25519CapabilityVerifier::new(key.clone());
-    config
-        .capability
-        .claims
-        .validate()?;
+    config.capability.claims.validate()?;
     capability_verifier
         .verify(&config.capability)
         .map_err(|error| {
@@ -175,13 +172,7 @@ pub fn launch_worker(
             if libc::syscall(libc::SYS_close_range, 3u32, 3u32, 0u32) != 0 {
                 return Err(io::Error::last_os_error());
             }
-            if libc::syscall(
-                libc::SYS_close_range,
-                6u32,
-                u32::MAX,
-                0u32,
-            ) != 0
-            {
+            if libc::syscall(libc::SYS_close_range, 6u32, u32::MAX, 0u32) != 0 {
                 return Err(io::Error::last_os_error());
             }
             Ok(())
@@ -234,15 +225,13 @@ fn validate_trusted_init_executable(path: impl AsRef<Path>) -> Result<PathBuf, S
         || metadata.mode() & (libc::S_ISUID | libc::S_ISGID) != 0
     {
         return Err(SandboxError::InvalidConfig(
-            "stage-0 executable must be a root-owned, executable, non-writable regular file"
-                .into(),
+            "stage-0 executable must be a root-owned, executable, non-writable regular file".into(),
         ));
     }
     let mut file = File::open(&canonical)?;
     let mut magic = [0u8; 4];
-    file.read_exact(&mut magic).map_err(|_| {
-        SandboxError::InvalidConfig("stage-0 executable is truncated".into())
-    })?;
+    file.read_exact(&mut magic)
+        .map_err(|_| SandboxError::InvalidConfig("stage-0 executable is truncated".into()))?;
     if magic != *b"\x7fELF" {
         return Err(SandboxError::InvalidConfig(
             "stage-0 launcher must be a native ELF executable".into(),
@@ -275,5 +264,4 @@ mod tests {
         assert!(validate_trusted_init_executable("/bin/sh").is_err());
         assert!(validate_trusted_init_executable("/definitely/not/klyn-sandbox-init").is_err());
     }
-
 }
