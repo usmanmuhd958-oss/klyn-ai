@@ -42,6 +42,7 @@ pub fn initialize() -> Result<WorkerBootstrapContext, SandboxError> {
     let verification_key = load_trusted_verifying_key()?;
     manifest.verify_signature(&verification_key)?;
     manifest.verify_worker_executable("/proc/self/exe")?;
+    manifest.verify_current_fd_limit()?;
     // Filesystem root resolution happens only after the signer is trusted.
     validate_manifest_shape(&manifest)?;
 
