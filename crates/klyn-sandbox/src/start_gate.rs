@@ -103,10 +103,7 @@ impl WorkerPolicyGate {
         ))
     }
 
-    pub fn verify_policy_and_release(
-        &mut self,
-        timeout: Duration,
-    ) -> Result<(), SandboxError> {
+    pub fn verify_policy_and_release(&mut self, timeout: Duration) -> Result<(), SandboxError> {
         if self.released {
             return Err(SandboxError::Enforcement(
                 "mission start gate has already been released".into(),
@@ -157,10 +154,7 @@ pub fn worker_wait_for_supervisor_release() -> Result<(), SandboxError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{
-        io,
-        thread,
-    };
+    use std::{io, thread};
 
     #[test]
     fn worker_gate_blocks_until_successful_cgroup_validation_ack() {
