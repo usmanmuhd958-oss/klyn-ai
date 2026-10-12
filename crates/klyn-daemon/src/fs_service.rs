@@ -58,7 +58,9 @@ impl FsService {
             .transactions
             .lock()
             .map_err(|_| FsServiceError::RegistryUnavailable)?;
-        let owned = registry.get(transaction_id).ok_or(FsServiceError::NotFound)?;
+        let owned = registry
+            .get(transaction_id)
+            .ok_or(FsServiceError::NotFound)?;
         if owned.owner_uid != peer.uid {
             return Err(FsServiceError::PermissionDenied);
         }

@@ -264,10 +264,7 @@ impl ManagedSandboxedWorker {
             .ok_or(SandboxServiceError::WorkerFinished)
     }
 
-    pub fn send_command(
-        &mut self,
-        command: &serde_json::Value,
-    ) -> Result<(), SandboxServiceError> {
+    pub fn send_command(&mut self, command: &serde_json::Value) -> Result<(), SandboxServiceError> {
         self.worker
             .as_mut()
             .ok_or(SandboxServiceError::WorkerFinished)?
@@ -275,9 +272,7 @@ impl ManagedSandboxedWorker {
         Ok(())
     }
 
-    pub fn read_response(
-        &mut self,
-    ) -> Result<Option<serde_json::Value>, SandboxServiceError> {
+    pub fn read_response(&mut self) -> Result<Option<serde_json::Value>, SandboxServiceError> {
         Ok(self
             .worker
             .as_mut()
@@ -309,7 +304,9 @@ impl ManagedSandboxedWorker {
     fn stop_and_join_broker(&mut self) -> Result<(), SandboxServiceError> {
         self.stop.store(true, Ordering::Release);
         if let Some(thread) = self.broker_thread.take() {
-            thread.join().map_err(|_| SandboxServiceError::BrokerThreadFailed)??;
+            thread
+                .join()
+                .map_err(|_| SandboxServiceError::BrokerThreadFailed)??;
         }
         Ok(())
     }

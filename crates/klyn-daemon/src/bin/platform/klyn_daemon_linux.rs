@@ -221,9 +221,10 @@ fn run_worker_smoke(application: &Application) -> Result<(), Box<dyn Error>> {
     };
 
     let worker_result = (|| -> Result<(), Box<dyn Error>> {
-        let mut worker = application
-            .sandbox_service
-            .launch_candidate_worker(&transaction_id, peer, budget)?;
+        let mut worker =
+            application
+                .sandbox_service
+                .launch_candidate_worker(&transaction_id, peer, budget)?;
         worker.send_command(&json!({"op": "ping"}))?;
         let response = worker
             .read_response()?
@@ -242,9 +243,11 @@ fn run_worker_smoke(application: &Application) -> Result<(), Box<dyn Error>> {
         Ok(())
     })();
 
-    let abort_result = application
-        .fs_service
-        .execute(peer, Method::FsAbort, &json!({"transaction_id": transaction_id}));
+    let abort_result = application.fs_service.execute(
+        peer,
+        Method::FsAbort,
+        &json!({"transaction_id": transaction_id}),
+    );
     worker_result?;
     abort_result?;
     Ok(())

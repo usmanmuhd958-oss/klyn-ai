@@ -84,7 +84,9 @@ fn write_response(writer: &mut impl Write, value: &serde_json::Value) -> Result<
     if bytes.is_empty() || bytes.len() > MAX_COMMAND_BYTES {
         return Err("worker response exceeds the frame limit".into());
     }
-    writer.write_all(&bytes).map_err(|error| error.to_string())?;
+    writer
+        .write_all(&bytes)
+        .map_err(|error| error.to_string())?;
     writer.write_all(b"\n").map_err(|error| error.to_string())?;
     writer.flush().map_err(|error| error.to_string())
 }
