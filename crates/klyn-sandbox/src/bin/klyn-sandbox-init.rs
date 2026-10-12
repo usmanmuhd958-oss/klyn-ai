@@ -380,6 +380,14 @@ fn validate_standard_streams() -> Result<(), String> {
     Ok(())
 }
 
+fn child_fail(message: &str) -> ! {
+    let bytes = format!("klyn-sandbox-init: {message}\n");
+    unsafe {
+        let _ = libc::write(libc::STDERR_FILENO, bytes.as_ptr().cast(), bytes.len());
+        libc::_exit(125);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,13 +426,5 @@ mod tests {
             "rlimit child failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-    }
-}
-
-fn child_fail(message: &str) -> ! {
-    let bytes = format!("klyn-sandbox-init: {message}\n");
-    unsafe {
-        let _ = libc::write(libc::STDERR_FILENO, bytes.as_ptr().cast(), bytes.len());
-        libc::_exit(125);
     }
 }
