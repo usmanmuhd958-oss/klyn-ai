@@ -62,6 +62,11 @@ pub fn initialize() -> Result<WorkerBootstrapContext, SandboxError> {
 
     validate_capability_context(&manifest.capability.claims)?;
 
+    // Do not trust the launcher merely because it accepted a budget. Confirm
+    // this worker is already in the dedicated, killable cgroup whose effective
+    // kernel limits do not exceed the signed capability budget.
+    crate::verify_current_cgroup_budget(&manifest.capability.claims.budget)?;
+
     // Connect before seccomp: after enforcement, socket creation/connect is
     // intentionally unavailable to the worker. Broker requests re-check
     // signature, expiry, peer credentials, and revocation on every operation.
