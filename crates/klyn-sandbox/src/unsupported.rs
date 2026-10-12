@@ -1,3 +1,39 @@
+//! Explicitly unsupported cgroup-v2 handle. No control files are touched.
+#[cfg(not(target_os = "linux"))]
+pub struct CgroupV2 {
+    path: std::path::PathBuf,
+}
+
+#[cfg(not(target_os = "linux"))]
+impl CgroupV2 {
+    pub fn create(
+        _delegated_root: impl AsRef<std::path::Path>,
+        _id: &str,
+        _budget: &crate::ResourceBudget,
+    ) -> Result<Self, crate::SandboxError> {
+        Err(crate::SandboxError::UnsupportedPlatform)
+    }
+
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
+    pub fn attach_pid(&self, _pid: u32) -> Result<(), crate::SandboxError> {
+        Err(crate::SandboxError::UnsupportedPlatform)
+    }
+
+    pub fn kill_all(&self) -> Result<(), crate::SandboxError> {
+        Err(crate::SandboxError::UnsupportedPlatform)
+    }
+
+    pub fn terminate_and_wait(
+        &self,
+        _timeout: std::time::Duration,
+    ) -> Result<(), crate::SandboxError> {
+        Err(crate::SandboxError::UnsupportedPlatform)
+    }
+}
+
 //! Fail-closed API surface for targets without the Linux sandbox backend.
 //!
 //! The stubs intentionally do not emulate enforcement. Every operation that
