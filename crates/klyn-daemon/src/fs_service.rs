@@ -87,8 +87,7 @@ impl FsService {
                     .transactions
                     .lock()
                     .map_err(|_| FsServiceError::RegistryUnavailable)?;
-                let owned =
-                    owned_transaction_mut(&mut registry, &request.transaction_id, peer)?;
+                let owned = owned_transaction_mut(&mut registry, &request.transaction_id, peer)?;
                 owned.transaction.write_file(
                     &request.path,
                     request.expected_old_content.as_deref(),
@@ -103,8 +102,7 @@ impl FsService {
                     .transactions
                     .lock()
                     .map_err(|_| FsServiceError::RegistryUnavailable)?;
-                let owned =
-                    owned_transaction_mut(&mut registry, &request.transaction_id, peer)?;
+                let owned = owned_transaction_mut(&mut registry, &request.transaction_id, peer)?;
                 owned.transaction.stage()?;
                 Ok(json!({"transaction_id": request.transaction_id, "state": "staged"}))
             }
