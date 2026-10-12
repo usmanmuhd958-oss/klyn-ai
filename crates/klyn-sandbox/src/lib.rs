@@ -291,11 +291,36 @@ pub fn validate_relative_path(path: &str, allow_empty: bool) -> Result<(), Sandb
 /// Resolve and validate a daemon-configured filesystem root.
 pub fn validate_trusted_root(path: impl AsRef<Path>) -> Result<PathBuf, SandboxError> {
     let canonical = fs::canonicalize(path.as_ref())?;
-    if !fs::metadata(&canonical)?.is_dir() {
+    // Open the final directory without following symlinks. Do all object-level
+    // checks against this pinned descriptor instead of re-resolving the path.
+    let pinned = open_path_no_symlinks(&canonical, true)?;
+    let metadata = pinned.metadata()?;
+    if !metadata.is_dir() || metadata.mode() & 0o022 != 0 {
         return Err(SandboxError::InvalidConfig(format!(
-            "trusted root is not a directory: {}",
+            "trusted root is not a protected directory (must not be group/world writable): {}",
             canonical.display()
         )));
+    }
+
+    // Prevent an untrusted writable ancestor from replacing the path between
+    // validation and descriptor acquisition. Sticky directories such as /tmp
+    // are permitted because the directory entry can only be renamed by its
+    // owner or the parent owner; the root itself remains non-group/world-writable.
+    let mut current = canonical.parent();
+    while let Some(parent) = current {
+        let parent_meta = fs::metadata(parent)?;
+        if !parent_meta.is_dir()
+            || (parent_meta.mode() & 0o022 != 0 && parent_meta.mode() & 0o1000 == 0)
+        {
+            return Err(SandboxError::InvalidConfig(format!(
+                "trusted root has an unsafe writable ancestor: {}",
+                parent.display()
+            )));
+        }
+        if parent == Path::new("/") {
+            break;
+        }
+        current = parent.parent();
     }
 
     // Never let a capability root expose the host root or virtual kernel APIs.
@@ -309,6 +334,37 @@ pub fn validate_trusted_root(path: impl AsRef<Path>) -> Result<PathBuf, SandboxE
     if canonical == Path::new("/") || protected.iter().any(|prefix| canonical.starts_with(prefix)) {
         return Err(SandboxError::InvalidConfig(format!(
             "trusted root points at a protected filesystem tree: {}",
+            canonical.display()
+        )));
+    }
+
+    // Bind mounts can make procfs/sysfs/cgroups visible under an innocent-looking
+    // path. Reject their filesystem identities as well as their lexical paths.
+    const FORBIDDEN_FS_TYPES: &[u64] = &[
+        0x0000_9fa0, // PROC_SUPER_MAGIC
+        0x6265_6572, // SYSFS_MAGIC
+        0x0000_1cd1, // DEVPTS_SUPER_MAGIC
+        0x0027_e0eb, // CGROUP_SUPER_MAGIC
+        0x6367_7270, // CGROUP2_SUPER_MAGIC
+        0x6462_6720, // DEBUGFS_MAGIC
+        0x7363_6673, // SECURITYFS_MAGIC
+        0x7472_6163, // TRACEFS_MAGIC
+        0xcafe_4a11, // BPF_FS_MAGIC
+        0x6e73_6673, // NSFS_MAGIC
+        0x4249_4e4d, // BINFMTFS_MAGIC
+        0x6264_6576, // BDEVFS_MAGIC
+        0x6c6f_6f70, // BINDERFS_SUPER_MAGIC
+        0x6265_6570, // CONFIGFS_MAGIC
+        0x0000_0187, // AUTOFS_SUPER_MAGIC
+    ];
+    let mut fs_stat = std::mem::MaybeUninit::<libc::statfs>::uninit();
+    if unsafe { libc::fstatfs(pinned.as_raw_fd(), fs_stat.as_mut_ptr()) } != 0 {
+        return Err(SandboxError::Io(io::Error::last_os_error()));
+    }
+    let fs_stat = unsafe { fs_stat.assume_init() };
+    if FORBIDDEN_FS_TYPES.contains(&(fs_stat.f_type as u64)) {
+        return Err(SandboxError::InvalidConfig(format!(
+            "trusted root is on a protected virtual filesystem: {}",
             canonical.display()
         )));
     }
