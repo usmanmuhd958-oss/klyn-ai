@@ -192,6 +192,9 @@ fn run() -> Result<(), String> {
     if let Err(error) = clear_process_capability_sets() {
         child_fail(&format!("clearing process capabilities failed: {error}"));
     }
+    if let Err(error) = apply_worker_rlimits() {
+        child_fail(&format!("applying worker resource limits failed: {error}"));
+    }
     unsafe {
         libc::umask(0o077);
     }
@@ -315,6 +318,39 @@ fn clear_process_capability_sets() -> Result<(), String> {
     Ok(())
 }
 
+fn apply_worker_rlimits() -> Result<(), String> {
+    // Cgroup limits remain authoritative for CPU, memory and task count.
+    // These rlimits additionally prevent core dumps and unbounded FD fan-out.
+    const WORKER_NOFILE_LIMIT: libc::rlim_t = 256;
+    for (resource, limit, label) in [
+        (libc::RLIMIT_CORE, 0 as libc::rlim_t, "RLIMIT_CORE"),
+        (libc::RLIMIT_NOFILE, WORKER_NOFILE_LIMIT, "RLIMIT_NOFILE"),
+    ] {
+        let limits = libc::rlimit {
+            rlim_cur: limit,
+            rlim_max: limit,
+        };
+        if unsafe { libc::setrlimit(resource, &limits) } != 0 {
+            return Err(format!(
+                "setrlimit({label}) failed: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        let mut actual = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+        if unsafe { libc::getrlimit(resource, actual.as_mut_ptr()) } != 0 {
+            return Err(format!(
+                "getrlimit({label}) failed: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        let actual = unsafe { actual.assume_init() };
+        if actual.rlim_cur != limit || actual.rlim_max != limit {
+            return Err(format!("effective {label} differs from requested sandbox limit"));
+        }
+    }
+    Ok(())
+}
+
 fn validate_standard_streams() -> Result<(), String> {
     let null_device = std::fs::metadata("/dev/null")
         .map_err(|error| format!("cannot validate /dev/null: {error}"))?
@@ -339,6 +375,41 @@ fn validate_standard_streams() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn worker_rlimits_are_finite_and_read_back_exactly() {
+        const CHILD_MARKER: &str = "KLYN_RLIMIT_TEST_CHILD";
+        if std::env::var_os(CHILD_MARKER).is_some() {
+            apply_worker_rlimits().expect("apply worker rlimits");
+            let mut core = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+            let mut nofile = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+            assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_CORE, core.as_mut_ptr()) }, 0);
+            assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, nofile.as_mut_ptr()) }, 0);
+            let core = unsafe { core.assume_init() };
+            let nofile = unsafe { nofile.assume_init() };
+            assert_eq!((core.rlim_cur, core.rlim_max), (0, 0));
+            assert_eq!((nofile.rlim_cur, nofile.rlim_max), (256, 256));
+            return;
+        }
+
+        let output = Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("worker_rlimits_are_finite_and_read_back_exactly")
+            .arg("--nocapture")
+            .env(CHILD_MARKER, "1")
+            .output()
+            .expect("spawn isolated rlimit test process");
+        assert!(
+            output.status.success(),
+            "rlimit child failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
 
 fn child_fail(message: &str) -> ! {
