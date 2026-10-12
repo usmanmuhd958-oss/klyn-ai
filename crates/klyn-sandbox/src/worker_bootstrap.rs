@@ -8,9 +8,12 @@
 
 use std::{
     collections::BTreeMap,
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::{Read, Seek, SeekFrom},
-    os::{fd::FromRawFd, unix::fs::MetadataExt},
+    os::{
+        fd::FromRawFd,
+        unix::fs::{MetadataExt, OpenOptionsExt},
+    },
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -182,8 +185,33 @@ fn validate_capability_context(claims: &CapabilityClaims) -> Result<(), SandboxE
 
 fn load_trusted_verifying_key() -> Result<VerifyingKey, SandboxError> {
     let path = std::path::Path::new(VERIFY_KEY_PATH);
-    let metadata = fs::symlink_metadata(path)?;
-    if !metadata.file_type().is_file()
+
+    // The final file is opened with O_NOFOLLOW, then ownership/mode/size are
+    // checked on that open file descriptor to avoid a check-then-open race.
+    let mut parent = path.parent();
+    while let Some(directory) = parent {
+        let metadata = fs::symlink_metadata(directory)?;
+        if !metadata.file_type().is_dir()
+            || metadata.uid() != 0
+            || metadata.mode() & 0o022 != 0
+        {
+            return Err(SandboxError::InvalidConfig(format!(
+                "verification-key directory is not root-controlled: {}",
+                directory.display()
+            )));
+        }
+        if directory == std::path::Path::new("/") {
+            break;
+        }
+        parent = directory.parent();
+    }
+
+    let mut file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+        .open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file()
         || metadata.uid() != 0
         || metadata.mode() & 0o022 != 0
         || metadata.len() != 32
@@ -193,7 +221,8 @@ fn load_trusted_verifying_key() -> Result<VerifyingKey, SandboxError> {
         ));
     }
 
-    let bytes = fs::read(path)?;
+    let mut bytes = Vec::with_capacity(33);
+    file.take(33).read_to_end(&mut bytes)?;
     let raw: [u8; 32] = bytes.try_into().map_err(|_| {
         SandboxError::InvalidConfig("Ed25519 public key must be exactly 32 bytes".into())
     })?;
@@ -239,7 +268,7 @@ mod tests {
         let claims = CapabilityClaims {
             version: OCAP_VERSION,
             token_id: "expired-test".into(),
-            subject_uid: unsafe { libc::geteuid() },
+            subject_uid: (unsafe { libc::geteuid() }).max(1),
             subject_gid: unsafe { libc::getegid() },
             expires_at_unix: 0,
             file_grants: vec![],
