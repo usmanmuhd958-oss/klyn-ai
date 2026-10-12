@@ -86,14 +86,27 @@ fn run() -> Result<(), String> {
     if !requested_executable.is_absolute() {
         return Err("worker executable path must be absolute".into());
     }
+    if unsafe { libc::fcntl(MANIFEST_FD, libc::F_GETFD) } < 0 {
+        return Err("sealed manifest FD 4 is not inherited".into());
+    }
+
+    if unsafe { libc::fcntl(GATE_FD, libc::F_GETFD) } < 0 {
+        return Err("start gate FD 5 is not inherited".into());
+    }
+
+    let mut gate = unsafe { std::fs::File::from_raw_fd(GATE_FD) };
+    let mut signal = [0u8; 1];
+    gate.read_exact(&mut signal)
+        .map_err(|e| format!("waiting on cgroup start gate: {e}"))?;
+    if signal[0] != GATE_RELEASE {
+        return Err("invalid start gate signal".into());
+    }
+    drop(gate);
+
     let trusted_executable = validate_trusted_executable(&requested_executable)
         .map_err(|error| format!("refusing untrusted worker executable: {error}"))?;
     command[0] = trusted_executable.into_os_string();
     validate_standard_streams()?;
-
-    if unsafe { libc::fcntl(MANIFEST_FD, libc::F_GETFD) } < 0 {
-        return Err("sealed manifest FD 4 is not inherited".into());
-    }
 
     // Validate the sealed manifest, signer, capability, and exact worker image
     // while still in trusted stage-0. This does not apply Landlock or seccomp;
@@ -133,14 +146,8 @@ fn run() -> Result<(), String> {
         return Err("worker capability has expired".into());
     }
 
-    let mut gate = unsafe { std::fs::File::from_raw_fd(GATE_FD) };
-    let mut signal = [0u8; 1];
-    gate.read_exact(&mut signal)
-        .map_err(|e| format!("waiting on cgroup start gate: {e}"))?;
-    if signal[0] != GATE_RELEASE {
-        return Err("invalid start gate signal".into());
-    }
-    drop(gate);
+
+
 
     // The ACK permits only trusted bootstrap progress. Re-check the actual
     // cgroup before changing namespaces or execing the worker image.
