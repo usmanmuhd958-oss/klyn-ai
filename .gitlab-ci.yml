@@ -1,19 +1,36 @@
-default:
-  image: node:20-slim
+image: rust:1.99.0-slim-bookworm
 
 stages:
   - validate
-  - build
+  - test
 
-validate_klyn:
+variables:
+  CARGO_HOME: "$CI_PROJECT_DIR/.cargo"
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: "always"
+
+cache:
+  key: "klyn-rust-${CI_COMMIT_REF_SLUG}"
+  paths:
+    - .cargo/registry/index/
+    - .cargo/registry/cache/
+    - .cargo/git/
+    - target/
+
+before_script:
+  - rustup component add rustfmt clippy
+  - rustc --version
+  - cargo --version
+  - uname -a
+
+validate_sandbox:
   stage: validate
   script:
-    - echo "⚡ Validating Klyn OS Agentic Core..."
-    - node -v
-    - echo "✓ Core validation successful!"
+    - cargo fmt --all -- --check
+    - cargo metadata --locked --format-version 1 > /dev/null
 
-build_klyn:
-  stage: build
+test_sandbox:
+  stage: test
   script:
-    - echo "🚀 Executing Klyn build process..."
-    - echo "✓ Klyn build successfully completed!"
+    - cargo test --locked -p klyn-sandbox
+    - cargo clippy --locked -p klyn-sandbox --all-targets -- -D warnings
