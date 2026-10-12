@@ -29,6 +29,7 @@ pub const MIN_CPU_WEIGHT: u32 = 1;
 pub const MAX_CPU_WEIGHT: u32 = 10_000;
 const REQUIRED_MEMFD_SEALS: libc::c_int =
     libc::F_SEAL_WRITE | libc::F_SEAL_GROW | libc::F_SEAL_SHRINK | libc::F_SEAL_SEAL;
+const MANIFEST_SIGNATURE_DOMAIN: &str = "KLYN_OS_WORKER_MANIFEST_V1";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -57,6 +58,7 @@ pub struct WorkerManifest {
 
 #[derive(Serialize)]
 struct WorkerManifestPayload<'a> {
+    domain: &'static str,
     version: u32,
     broker_socket: &'a PathBuf,
     roots: &'a BTreeMap<String, PathBuf>,
@@ -72,6 +74,7 @@ struct WorkerManifestPayload<'a> {
 impl WorkerManifest {
     fn payload_bytes(&self) -> Result<Vec<u8>, SandboxError> {
         Ok(serde_json::to_vec(&WorkerManifestPayload {
+            domain: MANIFEST_SIGNATURE_DOMAIN,
             version: self.version,
             broker_socket: &self.broker_socket,
             roots: &self.roots,
