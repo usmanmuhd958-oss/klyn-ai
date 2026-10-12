@@ -529,13 +529,13 @@ pub struct BrokerClient {
 }
 
 impl BrokerClient {
-    pub fn connect_reserved(path: impl AsRef<Path>) -> io::Result<Self> {
-        let stream = UnixStream::connect(path)?;
+    pub fn connect_reserved(path: impl AsRef<Path>) -> Result<Self, SandboxError> {
+        let stream = UnixStream::connect(path).map_err(SandboxError::Io)?;
         let raw = stream.as_raw_fd();
         if raw != 3 {
             let rc = unsafe { libc::dup3(raw, 3, libc::O_CLOEXEC) };
             if rc < 0 {
-                return Err(io::Error::last_os_error());
+                return Err(SandboxError::Io(io::Error::last_os_error()));
             }
             drop(stream);
             let stream = unsafe { UnixStream::from_raw_fd(3) };

@@ -9,22 +9,41 @@
 //! * Every required kernel enforcement failure is fatal to the worker. Callers
 //!   must never downgrade to an unsandboxed execution path.
 
-#[cfg(not(target_os = "linux"))]
-compile_error!("klyn-sandbox currently requires Linux kernel isolation primitives");
-
+#[cfg(target_os = "linux")]
 pub mod broker;
+#[cfg(target_os = "linux")]
 pub mod cgroup;
+#[cfg(target_os = "linux")]
 pub mod landlock_seccomp;
+#[cfg(target_os = "linux")]
 pub mod manifest;
+#[cfg(target_os = "linux")]
 pub mod start_gate;
+#[cfg(target_os = "linux")]
 pub mod supervisor;
+#[cfg(target_os = "linux")]
 pub mod worker_bootstrap;
+
+#[cfg(not(target_os = "linux"))]
+#[path = "unsupported.rs"]
+mod unsupported;
+
+#[cfg(not(target_os = "linux"))]
+pub use unsupported::{
+    broker, cgroup, landlock_seccomp, manifest, start_gate, supervisor, worker_bootstrap, CgroupV2,
+};
 
 use std::{
     collections::BTreeSet,
+    io,
+    path::{Path, PathBuf},
+};
+
+#[cfg(target_os = "linux")]
+use std::{
     ffi::{CString, OsStr},
     fs::{self, File, OpenOptions},
-    io::{self, Read, Write},
+    io::{Read, Write},
     os::{
         fd::{AsRawFd, FromRawFd, OwnedFd},
         unix::{
@@ -32,7 +51,6 @@ use std::{
             fs::{MetadataExt, OpenOptionsExt},
         },
     },
-    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -53,6 +71,8 @@ pub enum SandboxError {
     InvalidConfig(String),
     #[error("kernel enforcement failed: {0}")]
     Enforcement(String),
+    #[error("sandbox enforcement is unsupported on this platform; refusing worker execution")]
+    UnsupportedPlatform,
     #[error("I/O error: {0}")]
     Io(#[from] io::Error),
     #[error("serialization error: {0}")]
@@ -293,6 +313,7 @@ pub fn validate_relative_path(path: &str, allow_empty: bool) -> Result<(), Sandb
 }
 
 /// Resolve and validate a daemon-configured filesystem root.
+#[cfg(target_os = "linux")]
 pub fn validate_trusted_root(path: impl AsRef<Path>) -> Result<PathBuf, SandboxError> {
     let canonical = fs::canonicalize(path.as_ref())?;
     // Open the final directory without following symlinks. Do all object-level
@@ -379,6 +400,7 @@ pub fn validate_trusted_root(path: impl AsRef<Path>) -> Result<PathBuf, SandboxE
 /// symlinks or magic links at any component. The descriptor pins the object
 /// used by Landlock rules or the broker's root handle, eliminating a
 /// canonicalize-then-open path replacement race.
+#[cfg(target_os = "linux")]
 pub(crate) fn open_path_no_symlinks(
     path: impl AsRef<Path>,
     directory_only: bool,
@@ -454,10 +476,12 @@ pub fn path_is_within_grant(requested: &str, prefix: &str) -> bool {
 
 /// A delegated cgroup-v2 subtree. The parent must already expose cpu, memory,
 /// pids and (when requested) io controllers to this delegated subtree.
+#[cfg(target_os = "linux")]
 pub struct CgroupV2 {
     path: PathBuf,
 }
 
+#[cfg(target_os = "linux")]
 impl CgroupV2 {
     pub fn create(
         delegated_root: impl AsRef<Path>,
@@ -592,6 +616,7 @@ impl CgroupV2 {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl Drop for CgroupV2 {
     fn drop(&mut self) {
         // Dropping the supervisor handle must not leave a runaway worker behind.
@@ -605,6 +630,7 @@ impl Drop for CgroupV2 {
 
 /// Verify this process is in a dedicated cgroup-v2 child with limits no weaker
 /// than the signed capability. Called before Landlock/seccomp block path reads.
+#[cfg(target_os = "linux")]
 pub(crate) fn verify_current_cgroup_budget(budget: &ResourceBudget) -> Result<(), SandboxError> {
     budget.validate()?;
     let proc_cgroup = fs::read_to_string("/proc/self/cgroup")?;
@@ -619,6 +645,7 @@ pub(crate) fn verify_current_cgroup_budget(budget: &ResourceBudget) -> Result<()
     verify_budget_controls(&path, budget)
 }
 
+#[cfg(target_os = "linux")]
 fn resolve_current_cgroup_path(
     proc_cgroup: &str,
     cgroup_mount: &Path,
@@ -665,6 +692,7 @@ fn resolve_current_cgroup_path(
     Ok(canonical)
 }
 
+#[cfg(target_os = "linux")]
 pub(crate) fn verify_budget_controls(
     path: &Path,
     budget: &ResourceBudget,
@@ -754,12 +782,14 @@ pub(crate) fn verify_budget_controls(
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn write_control(path: &Path, value: &str) -> io::Result<()> {
     let mut file = OpenOptions::new().write(true).open(path)?;
     file.write_all(value.as_bytes())?;
     file.flush()
 }
 
+#[cfg(target_os = "linux")]
 fn validate_cgroup_id(id: &str) -> Result<(), SandboxError> {
     if id.is_empty()
         || id.len() > 64
@@ -776,6 +806,7 @@ fn validate_cgroup_id(id: &str) -> Result<(), SandboxError> {
 
 /// Verify that a configured worker executable is root-owned, non-writable,
 /// and stored beneath directories that untrusted worker identities cannot alter.
+#[cfg(target_os = "linux")]
 pub fn validate_trusted_executable(path: impl AsRef<Path>) -> Result<PathBuf, SandboxError> {
     let canonical = fs::canonicalize(path)?;
     let metadata = fs::metadata(&canonical)?;
@@ -830,7 +861,17 @@ pub fn validate_trusted_executable(path: impl AsRef<Path>) -> Result<PathBuf, Sa
     Ok(canonical)
 }
 
-#[cfg(test)]
+#[cfg(not(target_os = "linux"))]
+pub fn validate_trusted_root(_path: impl AsRef<Path>) -> Result<PathBuf, SandboxError> {
+    Err(SandboxError::UnsupportedPlatform)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn validate_trusted_executable(_path: impl AsRef<Path>) -> Result<PathBuf, SandboxError> {
+    Err(SandboxError::UnsupportedPlatform)
+}
+
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
 

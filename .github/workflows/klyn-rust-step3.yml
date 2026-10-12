@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - feat/step3-worker-bootstrap
+      - reconcile/step3-platform-daemon
   pull_request:
     branches:
       - main
@@ -42,6 +43,12 @@ jobs:
           rustc --version
           cargo --version
           uname -a
+      - name: Install Android target for platform-boundary check
+        run: rustup target add aarch64-linux-android
+      - name: Check workspace for Android with warnings denied
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo check --locked --workspace --all-targets --target aarch64-linux-android
       - name: Verify locked workspace metadata
         run: cargo metadata --locked --format-version 1 > /dev/null
       - name: Format workspace
