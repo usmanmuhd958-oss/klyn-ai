@@ -67,7 +67,6 @@ impl FsService {
         Ok(owned.transaction.candidate_path().to_path_buf())
     }
 
-
     /// Execute one already-policy-authorized operation for a peer whose UID was
     /// obtained from kernel Unix-socket credentials, never from request JSON.
     pub fn execute(

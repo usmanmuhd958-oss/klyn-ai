@@ -9,9 +9,9 @@
 pub mod fs_service;
 pub mod lifecycle;
 pub mod policy;
-pub mod server;
 #[cfg(target_os = "linux")]
 pub mod sandbox_service;
+pub mod server;
 
 use std::sync::Arc;
 
@@ -57,7 +57,6 @@ impl Router {
             sandbox: None,
         }
     }
-
 
     /// Construct a router with the trusted native worker lifecycle.
     ///

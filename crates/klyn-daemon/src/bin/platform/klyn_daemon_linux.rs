@@ -204,7 +204,9 @@ fn run_worker_smoke(application: &Application) -> Result<(), Box<dyn Error>> {
         uid: nix::unistd::geteuid().as_raw(),
         gid: nix::unistd::getegid().as_raw(),
     };
-    let created = application.fs_service.execute(peer, Method::FsBegin, &json!({}))?;
+    let created = application
+        .fs_service
+        .execute(peer, Method::FsBegin, &json!({}))?;
     let transaction_id = created
         .get("transaction_id")
         .and_then(Value::as_str)
