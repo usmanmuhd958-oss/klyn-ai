@@ -80,9 +80,10 @@ impl SpawnedWorker {
 
     /// Write one bounded JSON-line command to the already-confined worker.
     pub fn send_json(&mut self, value: &serde_json::Value) -> Result<(), SandboxError> {
-        let writer = self.stdin.as_mut().ok_or_else(|| {
-            SandboxError::Enforcement("worker stdin is unavailable".into())
-        })?;
+        let writer = self
+            .stdin
+            .as_mut()
+            .ok_or_else(|| SandboxError::Enforcement("worker stdin is unavailable".into()))?;
         let encoded = serde_json::to_vec(value)?;
         if encoded.len() > crate::MAX_BROKER_FRAME_BYTES {
             return Err(SandboxError::InvalidConfig(
@@ -97,9 +98,10 @@ impl SpawnedWorker {
 
     /// Read one bounded JSON-line response from the worker.
     pub fn read_json_response(&mut self) -> Result<Option<serde_json::Value>, SandboxError> {
-        let reader = self.stdout.as_mut().ok_or_else(|| {
-            SandboxError::Enforcement("worker stdout is unavailable".into())
-        })?;
+        let reader = self
+            .stdout
+            .as_mut()
+            .ok_or_else(|| SandboxError::Enforcement("worker stdout is unavailable".into()))?;
         let mut line = Vec::new();
         loop {
             let available = reader.fill_buf()?;
@@ -332,7 +334,12 @@ pub fn launch_worker(
         };
     }
 
-    Ok(SpawnedWorker { child, cgroup, stdin: Some(worker_stdin), stdout: Some(BufReader::new(worker_stdout)) })
+    Ok(SpawnedWorker {
+        child,
+        cgroup,
+        stdin: Some(worker_stdin),
+        stdout: Some(BufReader::new(worker_stdout)),
+    })
 }
 
 fn duplicate_cloexec(fd: RawFd) -> Result<OwnedFd, SandboxError> {
