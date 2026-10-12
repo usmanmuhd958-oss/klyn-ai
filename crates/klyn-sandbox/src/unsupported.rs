@@ -41,9 +41,14 @@ impl CgroupV2 {
 //! or execute a payload returns UnsupportedPlatform.
 
 pub mod broker {
-    use std::{collections::BTreeMap, io, path::{Path, PathBuf}, sync::Arc};
-    use ed25519_dalek::VerifyingKey;
     use crate::{FileAccess, SandboxError, SignedCapability};
+    use ed25519_dalek::VerifyingKey;
+    use std::{
+        collections::BTreeMap,
+        io,
+        path::{Path, PathBuf},
+        sync::Arc,
+    };
 
     pub trait CapabilityVerifier: Send + Sync + 'static {
         fn verify(&self, token: &SignedCapability) -> Result<(), String>;
@@ -58,7 +63,9 @@ pub mod broker {
     }
 
     impl Ed25519CapabilityVerifier {
-        pub fn new(key: VerifyingKey) -> Self { Self { _key: key } }
+        pub fn new(key: VerifyingKey) -> Self {
+            Self { _key: key }
+        }
     }
 
     impl CapabilityVerifier for Ed25519CapabilityVerifier {
@@ -77,13 +84,17 @@ pub mod broker {
         pub queue_capacity: usize,
     }
 
-    pub struct ResourceBroker { socket_path: PathBuf }
+    pub struct ResourceBroker {
+        socket_path: PathBuf,
+    }
 
     impl ResourceBroker {
         pub fn bind(_config: BrokerConfig) -> Result<Self, SandboxError> {
             Err(SandboxError::UnsupportedPlatform)
         }
-        pub fn socket_path(&self) -> &Path { &self.socket_path }
+        pub fn socket_path(&self) -> &Path {
+            &self.socket_path
+        }
         pub fn serve(self) -> Result<(), SandboxError> {
             Err(SandboxError::UnsupportedPlatform)
         }
@@ -140,8 +151,11 @@ pub mod broker {
 }
 
 pub mod cgroup {
-    use std::{path::{Path, PathBuf}, time::Duration};
     use crate::{ResourceBudget, SandboxError};
+    use std::{
+        path::{Path, PathBuf},
+        time::Duration,
+    };
 
     pub const MIN_CPU_WEIGHT: u32 = 1;
     pub const MAX_CPU_WEIGHT: u32 = 10_000;
@@ -161,9 +175,15 @@ pub mod cgroup {
         ) -> Result<Self, SandboxError> {
             Err(SandboxError::UnsupportedPlatform)
         }
-        pub fn path(&self) -> &Path { &self.path }
-        pub fn budget(&self) -> &ResourceBudget { &self.budget }
-        pub fn cpu_weight(&self) -> u32 { self.cpu_weight }
+        pub fn path(&self) -> &Path {
+            &self.path
+        }
+        pub fn budget(&self) -> &ResourceBudget {
+            &self.budget
+        }
+        pub fn cpu_weight(&self) -> u32 {
+            self.cpu_weight
+        }
         pub fn attach_and_verify(&self, _pid: u32) -> Result<(), SandboxError> {
             Err(SandboxError::UnsupportedPlatform)
         }
@@ -187,8 +207,8 @@ pub mod cgroup {
 }
 
 pub mod landlock_seccomp {
-    use std::{collections::BTreeMap, path::PathBuf};
     use crate::{CapabilityClaims, SandboxError};
+    use std::{collections::BTreeMap, path::PathBuf};
 
     pub type RestrictionStatus = ();
 
@@ -213,10 +233,14 @@ pub mod landlock_seccomp {
 }
 
 pub mod manifest {
-    use std::{collections::BTreeMap, fs::File, path::{Path, PathBuf}};
+    use crate::{SandboxError, SignedCapability};
     use ed25519_dalek::{SigningKey, VerifyingKey};
     use serde::{Deserialize, Serialize};
-    use crate::{SandboxError, SignedCapability};
+    use std::{
+        collections::BTreeMap,
+        fs::File,
+        path::{Path, PathBuf},
+    };
 
     pub const WORKER_MANIFEST_VERSION: u32 = 1;
     pub const REQUIRED_LANDLOCK_ABI: u32 = 8;
@@ -274,9 +298,9 @@ pub mod manifest {
 }
 
 pub mod start_gate {
-    use std::{path::Path, time::Duration};
-    use ed25519_dalek::VerifyingKey;
     use crate::{cgroup::CgroupV2Boundary, manifest::WorkerManifest, SandboxError};
+    use ed25519_dalek::VerifyingKey;
+    use std::time::Duration;
 
     pub const START_GATE_FD: i32 = 5;
     pub const START_GATE_RELEASE: u8 = 0xA5;
@@ -307,21 +331,26 @@ pub mod start_gate {
         pub fn pair() -> Result<(Self, UnsupportedGateEndpoint), SandboxError> {
             Err(SandboxError::UnsupportedPlatform)
         }
-        pub fn verify_policy_and_release(&mut self, _timeout: Duration) -> Result<(), SandboxError> {
+        pub fn verify_policy_and_release(
+            &mut self,
+            _timeout: Duration,
+        ) -> Result<(), SandboxError> {
             Err(SandboxError::UnsupportedPlatform)
         }
     }
 
     pub fn worker_wait_for_supervisor_release() -> Result<(), SandboxError> {
-        let _ = Path::new("");
         Err(SandboxError::UnsupportedPlatform)
     }
 }
 
 pub mod supervisor {
-    use std::{path::{Path, PathBuf}, process::ExitStatus};
-    use ed25519_dalek::SigningKey;
     use crate::{SandboxError, SignedCapability};
+    use ed25519_dalek::SigningKey;
+    use std::{
+        path::{Path, PathBuf},
+        process::ExitStatus,
+    };
 
     pub struct WorkerLaunchConfig {
         pub init_executable: PathBuf,
@@ -340,8 +369,12 @@ pub mod supervisor {
     }
 
     impl SpawnedWorker {
-        pub fn pid(&self) -> u32 { self.pid }
-        pub fn cgroup_path(&self) -> &Path { &self.cgroup_path }
+        pub fn pid(&self) -> u32 {
+            self.pid
+        }
+        pub fn cgroup_path(&self) -> &Path {
+            &self.cgroup_path
+        }
         pub fn try_wait(&mut self) -> Result<Option<ExitStatus>, SandboxError> {
             Err(SandboxError::UnsupportedPlatform)
         }
@@ -362,8 +395,8 @@ pub mod supervisor {
 }
 
 pub mod worker_bootstrap {
-    use ed25519_dalek::VerifyingKey;
     use crate::{broker::BrokerClient, manifest::WorkerManifest, SandboxError};
+    use ed25519_dalek::VerifyingKey;
 
     pub const VERIFY_KEY_PATH: &str = "/etc/klyn/ocap-ed25519.pub";
 
@@ -387,13 +420,15 @@ pub mod worker_bootstrap {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-    use ed25519_dalek::SigningKey;
     use crate::{
-        cgroup::CgroupV2Boundary, landlock_seccomp, supervisor::{self, WorkerLaunchConfig},
+        cgroup::CgroupV2Boundary,
+        landlock_seccomp,
+        supervisor::{self, WorkerLaunchConfig},
         worker_bootstrap, CapabilityClaims, FileGrant, NetworkGrant, ResourceBudget, SandboxError,
         SignedCapability, OCAP_VERSION,
     };
+    use ed25519_dalek::SigningKey;
+    use std::path::PathBuf;
 
     fn claims() -> CapabilityClaims {
         CapabilityClaims {
@@ -425,7 +460,11 @@ mod tests {
             Err(SandboxError::UnsupportedPlatform)
         ));
         assert!(matches!(
-            landlock_seccomp::enforce_worker(&capability.claims, &std::collections::BTreeMap::new(), 3),
+            landlock_seccomp::enforce_worker(
+                &capability.claims,
+                &std::collections::BTreeMap::new(),
+                3
+            ),
             Err(SandboxError::UnsupportedPlatform)
         ));
         assert!(matches!(

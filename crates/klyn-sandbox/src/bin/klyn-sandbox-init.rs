@@ -15,8 +15,6 @@ fn main() {
 
 #[cfg(not(target_os = "linux"))]
 fn main() -> ! {
-    eprintln!(
-        "klyn-sandbox-init: unsupported platform; refusing worker launch"
-    );
+    eprintln!("klyn-sandbox-init: unsupported platform; refusing worker launch");
     std::process::exit(125);
 }

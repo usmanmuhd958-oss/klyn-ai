@@ -29,9 +29,16 @@ pub mod worker_bootstrap;
 mod unsupported;
 
 #[cfg(not(target_os = "linux"))]
-pub use unsupported::{broker, cgroup, landlock_seccomp, manifest, start_gate, supervisor, worker_bootstrap, CgroupV2};
+pub use unsupported::{
+    broker, cgroup, landlock_seccomp, manifest, start_gate, supervisor, worker_bootstrap,
+    CgroupV2,
+};
 
-use std::{collections::BTreeSet, io, path::{Path, PathBuf}};
+use std::{
+    collections::BTreeSet,
+    io,
+    path::{Path, PathBuf},
+};
 
 #[cfg(target_os = "linux")]
 use std::{
@@ -861,9 +868,7 @@ pub fn validate_trusted_root(_path: impl AsRef<Path>) -> Result<PathBuf, Sandbox
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn validate_trusted_executable(
-    _path: impl AsRef<Path>,
-) -> Result<PathBuf, SandboxError> {
+pub fn validate_trusted_executable(_path: impl AsRef<Path>) -> Result<PathBuf, SandboxError> {
     Err(SandboxError::UnsupportedPlatform)
 }
 
