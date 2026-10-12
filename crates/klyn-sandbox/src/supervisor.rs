@@ -100,19 +100,35 @@ impl SpawnedWorker {
         let reader = self.stdout.as_mut().ok_or_else(|| {
             SandboxError::Enforcement("worker stdout is unavailable".into())
         })?;
-        let mut line = String::new();
-        let bytes = (&mut *reader)
-            .take((crate::MAX_BROKER_FRAME_BYTES + 1) as u64)
-            .read_line(&mut line)?;
-        if bytes == 0 {
-            return Ok(None);
+        let mut line = Vec::new();
+        loop {
+            let available = reader.fill_buf()?;
+            if available.is_empty() {
+                if line.is_empty() {
+                    return Ok(None);
+                }
+                return Err(SandboxError::Enforcement(
+                    "worker closed stdout in the middle of a response".into(),
+                ));
+            }
+            let newline = available.iter().position(|byte| *byte == b'\\n');
+            let segment_len = newline.unwrap_or(available.len());
+            if line.len().saturating_add(segment_len) > crate::MAX_BROKER_FRAME_BYTES {
+                return Err(SandboxError::Enforcement(
+                    "worker response exceeds the frame limit".into(),
+                ));
+            }
+            line.extend_from_slice(&available[..segment_len]);
+            let consumed = segment_len + usize::from(newline.is_some());
+            reader.consume(consumed);
+            if newline.is_some() {
+                break;
+            }
         }
-        if line.len() > crate::MAX_BROKER_FRAME_BYTES {
-            return Err(SandboxError::Enforcement(
-                "worker response exceeds the frame limit".into(),
-            ));
-        }
-        Ok(Some(serde_json::from_str(&line)?))
+        let line = std::str::from_utf8(&line).map_err(|error| {
+            SandboxError::Enforcement(format!("worker response is not UTF-8: {error}"))
+        })?;
+        Ok(Some(serde_json::from_str(line)?))
     }
 
     pub fn close_stdin(&mut self) {
