@@ -396,9 +396,7 @@ mod tests {
 
         // The duplicate shares its open-file description offset with the
         // original memfd. A second process must still decode it from byte 0.
-        let duplicate_again = unsafe {
-            libc::fcntl(file.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 10)
-        };
+        let duplicate_again = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 10) };
         assert!(duplicate_again >= 0);
         let decoded_again =
             read_sealed_manifest_fd(duplicate_again).expect("rewound manifest can be read twice");
