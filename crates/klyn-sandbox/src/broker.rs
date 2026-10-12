@@ -8,13 +8,13 @@
 
 use std::{
     collections::BTreeMap,
-    fs::{self, File, OpenOptions},
+    fs::{self, File},
     io::{self, IoSlice, Read, Write},
     net::{SocketAddr, TcpStream},
     os::{
         fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
         unix::{
-            fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
+            fs::{FileTypeExt, MetadataExt, PermissionsExt},
             net::{UnixListener, UnixStream},
         },
     },
@@ -31,6 +31,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     path_is_within_grant, validate_relative_path, validate_trusted_root, CapabilityClaims,
     FileAccess, FileGrant, NetworkGrant, SandboxError, SignedCapability, MAX_BROKER_FRAME_BYTES,
+    open_path_no_symlinks,
 };
 
 pub trait CapabilityVerifier: Send + Sync + 'static {
@@ -186,10 +187,9 @@ impl ResourceBroker {
                 ));
             }
             let canonical = validate_trusted_root(path)?;
-            let file = OpenOptions::new()
-                .read(true)
-                .custom_flags(libc::O_CLOEXEC | libc::O_DIRECTORY)
-                .open(&canonical)?;
+            // Pin the configured root using openat2 with symlink resolution
+            // disabled at every component; path strings are not authority.
+            let file = open_path_no_symlinks(&canonical, true)?;
             roots.insert(
                 id,
                 RootHandle {
