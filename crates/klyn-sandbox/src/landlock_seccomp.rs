@@ -7,16 +7,18 @@
 use std::{collections::BTreeMap, os::fd::RawFd, path::PathBuf};
 
 use landlock::{
-    make_bitflags, Access, AccessFs, CompatLevel, Compatible, PathBeneath, PathFd,
-    RestrictSelfAttr, RestrictionStatus, Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus,
-    ABI,
+    make_bitflags, Access, AccessFs, CompatLevel, Compatible, PathBeneath, RestrictSelfAttr,
+    RestrictionStatus, Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus, ABI,
 };
 use seccompiler::{
     BpfProgram, SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition, SeccompFilter,
     SeccompRule,
 };
 
-use crate::{validate_relative_path, validate_trusted_root, CapabilityClaims, FileAccess, SandboxError, BROKER_FD};
+use crate::{
+    open_path_no_symlinks, validate_relative_path, validate_trusted_root, CapabilityClaims,
+    FileAccess, SandboxError, BROKER_FD,
+};
 
 /// Apply a hard-required Landlock ABI v8 ruleset.
 ///
@@ -69,19 +71,23 @@ pub fn apply_landlock(
             )));
         }
 
-        let access = match grant.access {
-            FileAccess::Read => make_bitflags!(AccessFs::{ReadFile | ReadDir}),
-            FileAccess::Write => make_bitflags!(AccessFs::{WriteFile | Truncate}),
-            FileAccess::ReadWrite => {
+        // Pin the target inode with openat2 (no symlink or magic-link
+        // resolution), then tailor directory-only rights to the pinned object.
+        let target = open_path_no_symlinks(&canonical, false)?;
+        let is_directory = target.metadata()?.is_dir();
+        let access = match (grant.access, is_directory) {
+            (FileAccess::Read, true) => make_bitflags!(AccessFs::{ReadFile | ReadDir}),
+            (FileAccess::Read, false) => make_bitflags!(AccessFs::ReadFile),
+            (FileAccess::Write, _) => make_bitflags!(AccessFs::{WriteFile | Truncate}),
+            (FileAccess::ReadWrite, true) => {
                 make_bitflags!(AccessFs::{ReadFile | ReadDir | WriteFile | Truncate})
+            }
+            (FileAccess::ReadWrite, false) => {
+                make_bitflags!(AccessFs::{ReadFile | WriteFile | Truncate})
             }
         };
         ruleset = ruleset
-            .add_rule(PathBeneath::new(
-                PathFd::new(&canonical)
-                    .map_err(|e| SandboxError::Enforcement(format!("Landlock PathFd: {e}")))?,
-                access,
-            ))
+            .add_rule(PathBeneath::new(target, access))
             .map_err(|e| SandboxError::Enforcement(format!("Landlock add_rule: {e}")))?;
     }
 
