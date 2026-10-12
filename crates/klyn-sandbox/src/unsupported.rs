@@ -1,4 +1,10 @@
-//! Explicitly unsupported cgroup-v2 handle. No control files are touched.
+//! Fail-closed API surface for targets without the Linux sandbox backend.
+//!
+//! The stubs intentionally do not emulate enforcement. Every operation that
+//! could initialize a broker, validate platform enforcement, release a worker,
+//! or execute a payload returns UnsupportedPlatform.
+
+// Explicitly unsupported cgroup-v2 handle. No control files are touched.
 #[cfg(not(target_os = "linux"))]
 pub struct CgroupV2 {
     path: std::path::PathBuf,
@@ -33,12 +39,6 @@ impl CgroupV2 {
         Err(crate::SandboxError::UnsupportedPlatform)
     }
 }
-
-//! Fail-closed API surface for targets without the Linux sandbox backend.
-//!
-//! The stubs intentionally do not emulate enforcement. Every operation that
-//! could initialize a broker, validate platform enforcement, release a worker,
-//! or execute a payload returns UnsupportedPlatform.
 
 pub mod broker {
     use crate::{FileAccess, SandboxError, SignedCapability};
