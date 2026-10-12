@@ -423,6 +423,9 @@ pub mod worker_bootstrap {
 #[cfg(test)]
 mod tests {
     use crate::{
+        broker::{
+            self, BrokerClient, BrokerConfig, CapabilityVerifier, ResourceBroker, RevocationOracle,
+        },
         cgroup::CgroupV2Boundary,
         landlock_seccomp,
         supervisor::{self, WorkerLaunchConfig},
@@ -430,7 +433,12 @@ mod tests {
         SignedCapability, OCAP_VERSION,
     };
     use ed25519_dalek::SigningKey;
-    use std::path::PathBuf;
+    use std::{
+        collections::BTreeMap,
+        io,
+        path::PathBuf,
+        sync::Arc,
+    };
 
     fn claims() -> CapabilityClaims {
         CapabilityClaims {
@@ -499,6 +507,69 @@ mod tests {
         ));
         assert!(matches!(
             crate::validate_trusted_executable("/tmp/worker"),
+            Err(SandboxError::UnsupportedPlatform)
+        ));
+    }
+
+    struct DenyVerifier;
+
+    impl CapabilityVerifier for DenyVerifier {
+        fn verify(&self, _token: &SignedCapability) -> Result<(), String> {
+            Err(SandboxError::UnsupportedPlatform.to_string())
+        }
+    }
+
+    struct DenyRevocationOracle;
+
+    impl RevocationOracle for DenyRevocationOracle {
+        fn is_revoked(&self, _token_id: &str) -> Result<bool, String> {
+            Err(SandboxError::UnsupportedPlatform.to_string())
+        }
+    }
+
+    #[test]
+    fn broker_cgroup_manifest_and_gate_fail_closed() {
+        let config = BrokerConfig {
+            socket_path: PathBuf::from("/tmp/klyn-unsupported.sock"),
+            roots: BTreeMap::new(),
+            verifier: Arc::new(DenyVerifier),
+            revocations: Arc::new(DenyRevocationOracle),
+            max_workers: 1,
+            queue_capacity: 1,
+        };
+        assert!(matches!(
+            ResourceBroker::bind(config),
+            Err(SandboxError::UnsupportedPlatform)
+        ));
+
+        assert!(matches!(
+            BrokerClient::connect_reserved("/tmp/klyn-unsupported.sock"),
+            Err(error) if error.kind() == io::ErrorKind::Unsupported
+        ));
+
+        assert!(matches!(
+            crate::CgroupV2::create(
+                "/tmp",
+                "unsupported-worker",
+                &claims().budget,
+            ),
+            Err(SandboxError::UnsupportedPlatform)
+        ));
+
+        assert!(matches!(
+            crate::manifest::read_sealed_manifest_fd(4),
+            Err(SandboxError::UnsupportedPlatform)
+        ));
+
+        assert!(matches!(
+            crate::start_gate::StartGate::pair(),
+            Err(SandboxError::UnsupportedPlatform)
+        ));
+
+        // Keep this module import exercised by the test surface without
+        // introducing any real verifier/launch operation.
+        assert!(matches!(
+            broker::landlock_seccomp::apply_worker_seccomp(3),
             Err(SandboxError::UnsupportedPlatform)
         ));
     }
