@@ -122,7 +122,7 @@ fn run() -> Result<(), String> {
     if claims.subject_uid != uid || claims.subject_gid != gid {
         return Err("launcher UID/GID does not match the signed capability subject".into());
     }
-    Ed25519CapabilityVerifier::new(verification_key.clone())
+    Ed25519CapabilityVerifier::new(verification_key)
         .verify(&manifest.capability)
         .map_err(|error| format!("capability signature rejected: {error}"))?;
     let now = SystemTime::now()
