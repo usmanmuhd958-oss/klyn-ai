@@ -294,13 +294,14 @@ pub fn validate_trusted_root(path: impl AsRef<Path>) -> Result<PathBuf, SandboxE
     // Never let a capability root expose the host root or virtual kernel APIs.
     // Path::starts_with is component-aware (so /dev-workspace is not /dev).
     let protected = [
-        Path::new("/"),
         Path::new("/proc"),
         Path::new("/sys"),
         Path::new("/dev"),
         Path::new("/run"),
     ];
-    if protected.iter().any(|prefix| canonical == *prefix || (prefix != &Path::new("/") && canonical.starts_with(prefix))) {
+    if canonical == Path::new("/")
+        || protected.iter().any(|prefix| canonical.starts_with(prefix))
+    {
         return Err(SandboxError::InvalidConfig(format!(
             "trusted root points at a protected filesystem tree: {}",
             canonical.display()
