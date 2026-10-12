@@ -94,6 +94,9 @@ fn run() -> Result<(), String> {
     if unsafe { libc::fcntl(GATE_FD, libc::F_GETFD) } < 0 {
         return Err("start gate FD 5 is not inherited".into());
     }
+    if unsafe { libc::fcntl(WORKER_POLICY_GATE_FD, libc::F_GETFD) } < 0 {
+        return Err("worker policy gate FD 6 is not inherited".into());
+    }
 
     let mut gate = unsafe { std::fs::File::from_raw_fd(GATE_FD) };
     let mut signal = [0u8; 1];
