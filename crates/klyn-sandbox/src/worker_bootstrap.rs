@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     broker::{BrokerClient, CapabilityVerifier, Ed25519CapabilityVerifier},
     landlock_seccomp, CapabilityClaims, SandboxError, SignedCapability, BROKER_FD, MANIFEST_FD,
-    MAX_BROKER_FRAME_BYTES, OCAP_VERSION,
+    validate_trusted_root, MAX_BROKER_FRAME_BYTES, OCAP_VERSION,
 };
 
 /// The key must be provisioned by the trusted image/configuration manager.
@@ -143,8 +143,8 @@ fn validate_manifest_shape(manifest: &WorkerManifest) -> Result<(), SandboxError
                 "trusted root IDs must be bounded and paths must be absolute".into(),
             ));
         }
-        let canonical = fs::canonicalize(path)?;
-        if !fs::metadata(&canonical)?.is_dir() || canonical != *path {
+        let canonical = validate_trusted_root(path)?;
+        if canonical != *path {
             return Err(SandboxError::InvalidConfig(format!(
                 "trusted root must be an existing canonical directory: {}",
                 path.display()
