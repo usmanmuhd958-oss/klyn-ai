@@ -29,8 +29,8 @@ use nix::sys::socket::{recvmsg, sendmsg, ControlMessage, ControlMessageOwned, Ms
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    path_is_within_grant, validate_relative_path, CapabilityClaims, FileAccess, FileGrant,
-    NetworkGrant, SandboxError, SignedCapability, MAX_BROKER_FRAME_BYTES,
+    path_is_within_grant, validate_relative_path, validate_trusted_root, CapabilityClaims,
+    FileAccess, FileGrant, NetworkGrant, SandboxError, SignedCapability, MAX_BROKER_FRAME_BYTES,
 };
 
 pub trait CapabilityVerifier: Send + Sync + 'static {
@@ -185,13 +185,7 @@ impl ResourceBroker {
                     "invalid or duplicate root id".into(),
                 ));
             }
-            let canonical = fs::canonicalize(path)?;
-            if !fs::metadata(&canonical)?.is_dir() {
-                return Err(SandboxError::InvalidConfig(format!(
-                    "configured root is not a directory: {}",
-                    canonical.display()
-                )));
-            }
+            let canonical = validate_trusted_root(path)?;
             let file = OpenOptions::new()
                 .read(true)
                 .custom_flags(libc::O_CLOEXEC | libc::O_DIRECTORY)
