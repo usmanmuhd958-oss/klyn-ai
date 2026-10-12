@@ -595,11 +595,10 @@ impl CgroupV2 {
 impl Drop for CgroupV2 {
     fn drop(&mut self) {
         // Dropping the supervisor handle must not leave a runaway worker behind.
-        // Explicit terminate_and_wait is preferred because Drop cannot report errors.
-        let kill = self.path.join("cgroup.kill");
-        if kill.exists() {
-            let _ = write_control(&kill, "1");
-        }
+        // Use a bounded wait so directory removal does not race asynchronous
+        // task teardown. Explicit terminate_and_wait remains preferred because
+        // Drop cannot report cleanup errors to the caller.
+        let _ = self.terminate_and_wait(Duration::from_secs(3));
         let _ = fs::remove_dir(&self.path);
     }
 }
