@@ -105,7 +105,7 @@ fn run() -> Result<(), String> {
 
     let trusted_executable = validate_trusted_executable(&requested_executable)
         .map_err(|error| format!("refusing untrusted worker executable: {error}"))?;
-    command[0] = trusted_executable.into_os_string();
+    command[0] = trusted_executable.clone().into_os_string();
     validate_standard_streams()?;
 
     // Validate the sealed manifest, signer, capability, and exact worker image
