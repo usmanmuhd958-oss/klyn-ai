@@ -259,7 +259,8 @@ fn drop_capability_authority() -> Result<(), String> {
             0,
             0,
         )
-    } != 0 {
+    } != 0
+    {
         return Err(std::io::Error::last_os_error().to_string());
     }
     if unsafe { libc::prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0) } != 0 {
@@ -345,7 +346,9 @@ fn apply_worker_rlimits() -> Result<(), String> {
         }
         let actual = unsafe { actual.assume_init() };
         if actual.rlim_cur != limit || actual.rlim_max != limit {
-            return Err(format!("effective {label} differs from requested sandbox limit"));
+            return Err(format!(
+                "effective {label} differs from requested sandbox limit"
+            ));
         }
     }
     Ok(())
@@ -388,8 +391,14 @@ mod tests {
             apply_worker_rlimits().expect("apply worker rlimits");
             let mut core = std::mem::MaybeUninit::<libc::rlimit>::uninit();
             let mut nofile = std::mem::MaybeUninit::<libc::rlimit>::uninit();
-            assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_CORE, core.as_mut_ptr()) }, 0);
-            assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, nofile.as_mut_ptr()) }, 0);
+            assert_eq!(
+                unsafe { libc::getrlimit(libc::RLIMIT_CORE, core.as_mut_ptr()) },
+                0
+            );
+            assert_eq!(
+                unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, nofile.as_mut_ptr()) },
+                0
+            );
             let core = unsafe { core.assume_init() };
             let nofile = unsafe { nofile.assume_init() };
             assert_eq!((core.rlim_cur, core.rlim_max), (0, 0));
