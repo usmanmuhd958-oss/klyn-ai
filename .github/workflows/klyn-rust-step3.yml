@@ -15,6 +15,9 @@ on:
       - Cargo.toml
       - Cargo.lock
       - crates/klyn-sandbox/**
+      - crates/klyn-daemon/**
+      - crates/klyn-fs/**
+      - crates/klyn-protocol/**
       - .github/workflows/klyn-rust-step3.yml
       - .gitlab-ci.yml
       - rust-toolchain.toml

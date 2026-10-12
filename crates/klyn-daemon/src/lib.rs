@@ -10,6 +10,8 @@ pub mod fs_service;
 pub mod lifecycle;
 pub mod policy;
 pub mod server;
+#[cfg(target_os = "linux")]
+pub mod sandbox_service;
 
 use std::sync::Arc;
 
@@ -27,6 +29,8 @@ pub struct Router {
     lifecycle: Lifecycle,
     policy: Arc<dyn PolicyEnforcer>,
     fs: Option<Arc<FsService>>,
+    #[cfg(target_os = "linux")]
+    sandbox: Option<Arc<sandbox_service::SandboxService>>,
 }
 
 impl Router {
@@ -35,6 +39,8 @@ impl Router {
             lifecycle,
             policy,
             fs: None,
+            #[cfg(target_os = "linux")]
+            sandbox: None,
         }
     }
 
@@ -47,7 +53,33 @@ impl Router {
             lifecycle,
             policy,
             fs: Some(fs),
+            #[cfg(target_os = "linux")]
+            sandbox: None,
         }
+    }
+
+
+    /// Construct a router with the trusted native worker lifecycle.
+    ///
+    /// Launch remains an in-process API; it is not exposed as a model-facing RPC.
+    #[cfg(target_os = "linux")]
+    pub fn with_services(
+        lifecycle: Lifecycle,
+        policy: Arc<dyn PolicyEnforcer>,
+        fs: Arc<FsService>,
+        sandbox: Arc<sandbox_service::SandboxService>,
+    ) -> Self {
+        Self {
+            lifecycle,
+            policy,
+            fs: Some(fs),
+            sandbox: Some(sandbox),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn sandbox_service(&self) -> Option<&Arc<sandbox_service::SandboxService>> {
+        self.sandbox.as_ref()
     }
 
     pub fn lifecycle(&self) -> Lifecycle {
