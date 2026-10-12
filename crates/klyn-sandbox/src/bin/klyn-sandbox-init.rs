@@ -201,6 +201,9 @@ fn run() -> Result<(), String> {
     if pid > 0 {
         unsafe {
             libc::close(MANIFEST_FD);
+            // Only the PID-namespace worker may hold the policy-gate endpoint;
+            // retaining it here would suppress EOF if the worker exits early.
+            libc::close(WORKER_POLICY_GATE_FD);
         }
         let mut status: libc::c_int = 0;
         loop {
