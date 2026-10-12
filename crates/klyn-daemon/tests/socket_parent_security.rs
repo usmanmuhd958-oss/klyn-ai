@@ -56,6 +56,6 @@ fn rejects_foreign_owned_socket_parent_even_when_mode_is_0755() {
     let result = BoundSocket::bind(attacker_directory.join("klyn.sock"));
     assert!(
         matches!(result, Err(DaemonError::InsecureSocketDirectory)),
-        "foreign-owned 0755 socket parent must be rejected before bind; got {result:?}"
+        "foreign-owned 0755 socket parent must be rejected before bind"
     );
 }
