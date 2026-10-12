@@ -21,12 +21,13 @@ use klyn_sandbox::{
     cgroup::CgroupV2Boundary,
     manifest::read_sealed_manifest_fd,
     validate_trusted_executable,
+    start_gate::{START_GATE_FD, START_GATE_RELEASE, WORKER_POLICY_GATE_FD},
     worker_bootstrap::{load_trusted_verifying_key, validate_manifest_shape},
     MANIFEST_FD,
 };
 
-const GATE_FD: i32 = klyn_sandbox::start_gate::START_GATE_FD;
-const GATE_RELEASE: u8 = klyn_sandbox::start_gate::START_GATE_RELEASE;
+const GATE_FD: i32 = START_GATE_FD;
+const GATE_RELEASE: u8 = START_GATE_RELEASE;
 
 fn main() {
     if let Err(error) = run() {
