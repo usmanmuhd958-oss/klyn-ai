@@ -10,7 +10,7 @@ use std::{
     fs::File,
     io::{self, Read, Seek, SeekFrom, Write},
     os::{
-        fd::{AsRawFd, FromRawFd, IntoRawFd, RawFd},
+        fd::{AsRawFd, FromRawFd, RawFd},
         unix::fs::MetadataExt,
     },
     path::{Path, PathBuf},
@@ -272,7 +272,7 @@ pub fn read_sealed_manifest_fd(fd: RawFd) -> Result<WorkerManifest, SandboxError
     }
     let expected_size = metadata.len();
     let mut bytes = Vec::with_capacity(expected_size as usize);
-    file.by_ref()
+    Read::by_ref(&mut file)
         .take((MAX_BROKER_FRAME_BYTES + 1) as u64)
         .read_to_end(&mut bytes)?;
     if bytes.len() as u64 != expected_size || bytes.len() > MAX_BROKER_FRAME_BYTES {
