@@ -23,11 +23,12 @@ use crate::{
     broker::{CapabilityVerifier, Ed25519CapabilityVerifier},
     cgroup::CgroupV2Boundary,
     manifest::{sha256_file, WorkerManifest, REQUIRED_LANDLOCK_ABI, WORKER_MAX_OPEN_FDS},
-    start_gate::StartGate,
+    start_gate::{StartGate, WorkerPolicyGate},
     validate_trusted_executable, SandboxError, SignedCapability, MANIFEST_FD,
 };
 
 const WORKER_LIFECYCLE_TIMEOUT: Duration = Duration::from_secs(3);
+const WORKER_BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub struct WorkerLaunchConfig {
     /// Root-controlled klyn-sandbox-init binary, not a generic command runner.
