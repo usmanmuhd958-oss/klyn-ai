@@ -257,6 +257,9 @@ pub fn read_sealed_manifest_fd(fd: RawFd) -> Result<WorkerManifest, SandboxError
         return Err(SandboxError::InvalidConfig("invalid manifest FD".into()));
     }
     let mut file = unsafe { File::from_raw_fd(fd) };
+    // dup(2)/F_DUPFD share the underlying file offset across fork+exec. Stage-0
+    // has already inspected this same memfd, so every consumer must rewind it.
+    file.seek(SeekFrom::Start(0))?;
     let seals = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GET_SEALS) };
     if seals < 0 || seals & REQUIRED_MEMFD_SEALS != REQUIRED_MEMFD_SEALS {
         return Err(SandboxError::Enforcement(
@@ -390,6 +393,18 @@ mod tests {
         decoded
             .verify_signature(&key.verifying_key())
             .expect("decoded manifest signature must verify");
+
+        // The duplicate shares its open-file description offset with the
+        // original memfd. A second process must still decode it from byte 0.
+        let duplicate_again = unsafe {
+            libc::fcntl(file.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 10)
+        };
+        assert!(duplicate_again >= 0);
+        let decoded_again =
+            read_sealed_manifest_fd(duplicate_again).expect("rewound manifest can be read twice");
+        decoded_again
+            .verify_signature(&key.verifying_key())
+            .expect("second decode signature must verify");
     }
 
     #[test]
