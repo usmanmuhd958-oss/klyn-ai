@@ -45,7 +45,6 @@ pub mod broker {
     use ed25519_dalek::VerifyingKey;
     use std::{
         collections::BTreeMap,
-        io,
         path::{Path, PathBuf},
         sync::Arc,
     };
@@ -103,11 +102,8 @@ pub mod broker {
     pub struct BrokerClient;
 
     impl BrokerClient {
-        pub fn connect_reserved(_path: impl AsRef<Path>) -> io::Result<Self> {
-            Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                SandboxError::UnsupportedPlatform.to_string(),
-            ))
+        pub fn connect_reserved(_path: impl AsRef<Path>) -> Result<Self, SandboxError> {
+            Err(SandboxError::UnsupportedPlatform)
         }
 
         #[cfg(unix)]
@@ -539,7 +535,7 @@ mod tests {
 
         assert!(matches!(
             BrokerClient::connect_reserved("/tmp/klyn-unsupported.sock"),
-            Err(error) if error.kind() == io::ErrorKind::Unsupported
+            Err(SandboxError::UnsupportedPlatform)
         ));
 
         assert!(matches!(
