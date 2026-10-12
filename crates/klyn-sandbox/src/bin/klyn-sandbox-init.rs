@@ -67,7 +67,9 @@ fn run() -> Result<(), String> {
     let uid = uid.ok_or("missing uid")?;
     let gid = gid.ok_or("missing gid")?;
     if uid == 0 || command.len() != 1 {
-        return Err("UID 0 and any command other than one trusted worker executable are forbidden".into());
+        return Err(
+            "UID 0 and any command other than one trusted worker executable are forbidden".into(),
+        );
     }
 
     // This privileged helper must never become a generic command runner. The
