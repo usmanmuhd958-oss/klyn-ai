@@ -151,7 +151,7 @@ impl Router {
                     RpcErrorCode::FilesystemUnavailable,
                     "filesystem transaction service is unavailable",
                 ),
-                Some(service) => match service.execute(request.method, &request.params) {
+                Some(service) => match service.execute(peer, request.method, &request.params) {
                     Ok(result) => Response::success(request_id, result),
                     Err(error) => filesystem_error_response(Some(request_id), error),
                 },
@@ -164,7 +164,13 @@ impl Router {
 
 fn filesystem_error_response(request_id: Option<u64>, error: FsServiceError) -> Response {
     match error {
-        FsServiceError::NotFound | FsServiceError::InvalidParameters => Response::failure(
+        // Do not reveal whether another UID's transaction ID exists.
+        FsServiceError::NotFound | FsServiceError::PermissionDenied => Response::failure(
+            request_id,
+            RpcErrorCode::Unauthorized,
+            "filesystem transaction is unavailable or the caller is not authorized",
+        ),
+        FsServiceError::InvalidParameters => Response::failure(
             request_id,
             RpcErrorCode::InvalidState,
             "filesystem transaction or parameters are invalid",
