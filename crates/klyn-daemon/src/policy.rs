@@ -16,6 +16,11 @@ pub struct PeerIdentity {
 pub enum Permission {
     ObserveDaemon,
     ShutdownDaemon,
+    FsBeginCandidate,
+    FsMutateCandidate,
+    FsValidateCandidate,
+    FsPublishRevision,
+    FsAbortCandidate,
 }
 
 impl Permission {
@@ -23,6 +28,11 @@ impl Permission {
         match method {
             Method::Ping | Method::DaemonStatus => Self::ObserveDaemon,
             Method::DaemonShutdown => Self::ShutdownDaemon,
+            Method::FsBegin => Self::FsBeginCandidate,
+            Method::FsWriteFile | Method::FsStage => Self::FsMutateCandidate,
+            Method::FsValidate => Self::FsValidateCandidate,
+            Method::FsCommit => Self::FsPublishRevision,
+            Method::FsAbort => Self::FsAbortCandidate,
         }
     }
 }
@@ -119,6 +129,27 @@ mod tests {
         policy.grant(1000, Permission::ObserveDaemon);
         assert_eq!(
             policy.authorize(peer(1000), Method::DaemonShutdown),
+            Err(PolicyError::Denied)
+        );
+    }
+}
+
+#[cfg(test)]
+mod fs_policy_tests {
+    use super::*;
+
+    #[test]
+    fn filesystem_publication_requires_its_own_permission() {
+        let peer = PeerIdentity {
+            pid: 21,
+            uid: 1000,
+            gid: 1000,
+        };
+        let mut policy = UidPolicy::new();
+        policy.grant(1000, Permission::FsBeginCandidate);
+        assert!(policy.authorize(peer, Method::FsBegin).is_ok());
+        assert_eq!(
+            policy.authorize(peer, Method::FsCommit),
             Err(PolicyError::Denied)
         );
     }

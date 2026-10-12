@@ -19,6 +19,12 @@ pub enum Method {
     Ping,
     DaemonStatus,
     DaemonShutdown,
+    FsBegin,
+    FsWriteFile,
+    FsStage,
+    FsValidate,
+    FsCommit,
+    FsAbort,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -45,7 +51,7 @@ impl Request {
         }
 
         match self.method {
-            Method::Ping | Method::DaemonStatus => {
+            Method::Ping | Method::DaemonStatus | Method::FsBegin => {
                 serde_json::from_value::<EmptyParams>(self.params.clone())
                     .map_err(|_| ProtocolError::InvalidParams)?;
             }
@@ -55,6 +61,36 @@ impl Request {
                 if params.reason.as_ref().is_some_and(|reason| {
                     reason.len() > 256 || reason.chars().any(char::is_control)
                 }) {
+                    return Err(ProtocolError::InvalidParams);
+                }
+            }
+            Method::FsWriteFile => {
+                let object = self
+                    .params
+                    .as_object()
+                    .ok_or(ProtocolError::InvalidParams)?;
+                if !object.contains_key("expected_old_content") {
+                    return Err(ProtocolError::InvalidParams);
+                }
+                let params: FsWriteFileParams = serde_json::from_value(self.params.clone())
+                    .map_err(|_| ProtocolError::InvalidParams)?;
+                if params.transaction_id.is_empty()
+                    || params.transaction_id.len() > 96
+                    || params.path.is_empty()
+                    || params.path.len() > 4096
+                    || params.content.len() > 48 * 1024
+                    || params
+                        .expected_old_content
+                        .as_ref()
+                        .is_some_and(|old| old.len() > 48 * 1024)
+                {
+                    return Err(ProtocolError::InvalidParams);
+                }
+            }
+            Method::FsStage | Method::FsValidate | Method::FsCommit | Method::FsAbort => {
+                let params: TransactionIdParams = serde_json::from_value(self.params.clone())
+                    .map_err(|_| ProtocolError::InvalidParams)?;
+                if params.transaction_id.is_empty() || params.transaction_id.len() > 96 {
                     return Err(ProtocolError::InvalidParams);
                 }
             }
@@ -74,6 +110,23 @@ struct ShutdownParams {
     reason: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct FsWriteFileParams {
+    pub transaction_id: String,
+    pub path: String,
+    /// Null means create-only; a string is the exact expected UTF-8 preimage.
+    /// The field itself is required by Request::validate.
+    pub expected_old_content: Option<String>,
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TransactionIdParams {
+    pub transaction_id: String,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum RpcErrorCode {
@@ -84,6 +137,10 @@ pub enum RpcErrorCode {
     NotReady,
     ShuttingDown,
     FrameTooLarge,
+    Conflict,
+    InvalidPath,
+    InvalidState,
+    FilesystemUnavailable,
     Internal,
 }
 
@@ -275,5 +332,63 @@ mod tests {
         assert!(bytes.ends_with(b"\n"));
         let decoded: Response = serde_json::from_slice(&bytes[..bytes.len() - 1]).unwrap();
         assert_eq!(decoded, response);
+    }
+}
+
+#[cfg(test)]
+mod fs_request_validation_tests {
+    use super::*;
+
+    fn request(method: Method, params: Value) -> Request {
+        Request {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 17,
+            method,
+            params,
+        }
+    }
+
+    #[test]
+    fn filesystem_write_requires_explicit_preimage_field() {
+        let missing = request(
+            Method::FsWriteFile,
+            serde_json::json!({
+                "transaction_id": "tx-a-1-1",
+                "path": "src/lib.rs",
+                "content": "source"
+            }),
+        );
+        assert!(missing.validate().is_err());
+
+        let create = request(
+            Method::FsWriteFile,
+            serde_json::json!({
+                "transaction_id": "tx-a-1-1",
+                "path": "src/lib.rs",
+                "expected_old_content": null,
+                "content": "source"
+            }),
+        );
+        assert!(create.validate().is_ok());
+    }
+
+    #[test]
+    fn filesystem_params_reject_unknown_fields_and_oversized_contents() {
+        let extra = request(
+            Method::FsCommit,
+            serde_json::json!({"transaction_id": "tx-a-1-1", "force": true}),
+        );
+        assert!(extra.validate().is_err());
+
+        let too_large = request(
+            Method::FsWriteFile,
+            serde_json::json!({
+                "transaction_id": "tx-a-1-1",
+                "path": "x",
+                "expected_old_content": null,
+                "content": "a".repeat(49 * 1024)
+            }),
+        );
+        assert!(too_large.validate().is_err());
     }
 }
