@@ -200,7 +200,7 @@ fn initialize() -> Result<Application, Box<dyn Error>> {
 
 fn run_worker_smoke(application: &Application) -> Result<(), Box<dyn Error>> {
     let peer = PeerIdentity {
-        pid: nix::unistd::getpid().as_raw() as u32,
+        pid: std::process::id(),
         uid: nix::unistd::geteuid().as_raw(),
         gid: nix::unistd::getegid().as_raw(),
     };
