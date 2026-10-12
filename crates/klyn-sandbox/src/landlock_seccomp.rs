@@ -77,7 +77,7 @@ pub fn apply_landlock(
         let is_directory = target.metadata()?.is_dir();
         let access = match (grant.access, is_directory) {
             (FileAccess::Read, true) => make_bitflags!(AccessFs::{ReadFile | ReadDir}),
-            (FileAccess::Read, false) => make_bitflags!(AccessFs::ReadFile),
+            (FileAccess::Read, false) => make_bitflags!(AccessFs::{ReadFile}),
             (FileAccess::Write, _) => make_bitflags!(AccessFs::{WriteFile | Truncate}),
             (FileAccess::ReadWrite, true) => {
                 make_bitflags!(AccessFs::{ReadFile | ReadDir | WriteFile | Truncate})
