@@ -46,6 +46,8 @@ jobs:
         run: cargo metadata --locked --format-version 1 > /dev/null
       - name: Format workspace
         run: cargo fmt --all -- --check
+      - name: Check all workspace targets with warnings denied
+        run: cargo check --locked --workspace --all-targets -- -D warnings
       - name: Sandbox unit and integration tests
         run: cargo test --locked -p klyn-sandbox
       - name: Sandbox Clippy
