@@ -433,12 +433,7 @@ mod tests {
         SignedCapability, OCAP_VERSION,
     };
     use ed25519_dalek::SigningKey;
-    use std::{
-        collections::BTreeMap,
-        io,
-        path::PathBuf,
-        sync::Arc,
-    };
+    use std::{collections::BTreeMap, io, path::PathBuf, sync::Arc};
 
     fn claims() -> CapabilityClaims {
         CapabilityClaims {
@@ -548,11 +543,7 @@ mod tests {
         ));
 
         assert!(matches!(
-            crate::CgroupV2::create(
-                "/tmp",
-                "unsupported-worker",
-                &claims().budget,
-            ),
+            crate::CgroupV2::create("/tmp", "unsupported-worker", &claims().budget,),
             Err(SandboxError::UnsupportedPlatform)
         ));
 
