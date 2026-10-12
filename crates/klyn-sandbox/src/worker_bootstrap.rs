@@ -8,18 +8,16 @@
 
 use std::{
     collections::BTreeMap,
-    fs::{self, File, OpenOptions},
-    io::{Read, Seek, SeekFrom},
-    os::{
-        fd::FromRawFd,
-        unix::fs::{MetadataExt, OpenOptionsExt},
-    },
+    fs::{self, OpenOptions},
+    io::Read,
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use ed25519_dalek::VerifyingKey;
-use serde::{Deserialize, Serialize};
+
+pub use crate::manifest::{WorkerManifest, WORKER_MANIFEST_VERSION};
 
 use crate::{
     broker::{BrokerClient, CapabilityVerifier, Ed25519CapabilityVerifier},
@@ -30,19 +28,6 @@ use crate::{
 /// The key must be provisioned by the trusted image/configuration manager.
 /// It contains exactly 32 raw Ed25519 public-key bytes, never a private key.
 pub const VERIFY_KEY_PATH: &str = "/etc/klyn/ocap-ed25519.pub";
-pub const WORKER_MANIFEST_VERSION: u32 = 1;
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WorkerManifest {
-    pub version: u32,
-    /// Trusted absolute path to the already-running broker's Unix socket.
-    pub broker_socket: PathBuf,
-    /// Daemon-configured root IDs mapped to trusted absolute directories.
-    pub roots: BTreeMap<String, PathBuf>,
-    pub capability: SignedCapability,
-}
-
 pub struct WorkerBootstrapContext {
     pub manifest: WorkerManifest,
     pub broker: BrokerClient,
@@ -52,20 +37,29 @@ pub struct WorkerBootstrapContext {
 /// mandatory Landlock + seccomp restrictions. Any failure is fatal; callers
 /// must exit without processing mission input.
 pub fn initialize() -> Result<WorkerBootstrapContext, SandboxError> {
-    let manifest = read_sealed_manifest()?;
+    let manifest = crate::manifest::read_sealed_manifest_fd(MANIFEST_FD)?;
     validate_manifest_shape(&manifest)?;
 
-    let verifier = Ed25519CapabilityVerifier::new(load_trusted_verifying_key()?);
+    // A sealed memfd prevents mutation after sealing; the Ed25519 signature
+    // establishes who authorized its contents. Both checks are mandatory.
+    let verification_key = load_trusted_verifying_key()?;
+    manifest.verify_signature(&verification_key)?;
+    manifest.verify_worker_executable("/proc/self/exe")?;
+
+    let verifier = Ed25519CapabilityVerifier::new(verification_key);
     verifier
         .verify(&manifest.capability)
         .map_err(|e| SandboxError::InvalidConfig(format!("capability verification failed: {e}")))?;
 
     validate_capability_context(&manifest.capability.claims)?;
 
-    // Do not trust the launcher merely because it accepted a budget. Confirm
-    // this worker is already in the dedicated, killable cgroup whose effective
-    // kernel limits do not exceed the signed capability budget.
-    crate::verify_current_cgroup_budget(&manifest.capability.claims.budget)?;
+    // Bind the running process to the exact signed cgroup leaf and read back
+    // every enforced memory/CPU/PID/I/O control plus cpu.weight.
+    crate::cgroup::CgroupV2Boundary::verify_current(
+        &manifest.cgroup_path,
+        &manifest.capability.claims.budget,
+        manifest.cpu_weight,
+    )?;
 
     // Connect before seccomp: after enforcement, socket creation/connect is
     // intentionally unavailable to the worker. Broker requests re-check
@@ -82,53 +76,8 @@ pub fn initialize() -> Result<WorkerBootstrapContext, SandboxError> {
     Ok(WorkerBootstrapContext { manifest, broker })
 }
 
-fn read_sealed_manifest() -> Result<WorkerManifest, SandboxError> {
-    // FD 4 is a process contract shared with klyn-sandbox-init. Verify seals
-    // before reading, and bound parsing to prevent memory-exhaustion payloads.
-    let fd = MANIFEST_FD;
-    let seals = unsafe { libc::fcntl(fd, libc::F_GET_SEALS) };
-    if seals < 0 {
-        return Err(SandboxError::Enforcement(
-            "manifest descriptor is not a seal-capable memfd".into(),
-        ));
-    }
-
-    let required = libc::F_SEAL_WRITE | libc::F_SEAL_GROW | libc::F_SEAL_SHRINK | libc::F_SEAL_SEAL;
-    if seals & required != required {
-        return Err(SandboxError::Enforcement(
-            "manifest memfd is missing required immutability seals".into(),
-        ));
-    }
-
-    // Confirm FD 4 is a regular file before taking ownership. This bootstrap
-    // process is expected to be single-purpose and must not reuse FD 4 later.
-    let mut stat = std::mem::MaybeUninit::<libc::stat>::zeroed();
-    if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } != 0 {
-        return Err(SandboxError::Io(std::io::Error::last_os_error()));
-    }
-    let stat = unsafe { stat.assume_init() };
-    if (stat.st_mode & libc::S_IFMT) != libc::S_IFREG {
-        return Err(SandboxError::Enforcement(
-            "manifest descriptor is not a regular file".into(),
-        ));
-    }
-
-    // SAFETY: the launcher transfers ownership of FD 4 to this process.
-    let mut file = unsafe { File::from_raw_fd(fd) };
-    file.seek(SeekFrom::Start(0))?;
-    let mut bytes = Vec::new();
-    file.take((MAX_BROKER_FRAME_BYTES + 1) as u64)
-        .read_to_end(&mut bytes)?;
-    if bytes.is_empty() || bytes.len() > MAX_BROKER_FRAME_BYTES {
-        return Err(SandboxError::InvalidConfig(
-            "worker manifest size is outside the permitted range".into(),
-        ));
-    }
-
-    Ok(serde_json::from_slice(&bytes)?)
-}
-
-fn validate_manifest_shape(manifest: &WorkerManifest) -> Result<(), SandboxError> {
+pub(crate) fn validate_manifest_shape(manifest: &WorkerManifest) -> Result<(), SandboxError> {
+    manifest.validate_fields()?;
     if manifest.version != WORKER_MANIFEST_VERSION {
         return Err(SandboxError::InvalidConfig(format!(
             "unsupported worker manifest version {}",
@@ -188,7 +137,7 @@ fn validate_capability_context(claims: &CapabilityClaims) -> Result<(), SandboxE
     Ok(())
 }
 
-fn load_trusted_verifying_key() -> Result<VerifyingKey, SandboxError> {
+pub(crate) fn load_trusted_verifying_key() -> Result<VerifyingKey, SandboxError> {
     let path = std::path::Path::new(VERIFY_KEY_PATH);
 
     // The final file is opened with O_NOFOLLOW, then ownership/mode/size are
@@ -261,6 +210,13 @@ mod tests {
                 },
                 signature: vec![],
             },
+            worker_executable_sha256: "a".repeat(64),
+            allowed_execution_binary_sha256: vec!["a".repeat(64)],
+            landlock_abi: crate::manifest::REQUIRED_LANDLOCK_ABI,
+            max_open_fds: crate::manifest::WORKER_MAX_OPEN_FDS,
+            cgroup_path: PathBuf::from("/sys/fs/cgroup/klyn/workers/test-worker"),
+            cpu_weight: 100,
+            signature: vec![],
         };
         assert!(validate_manifest_shape(&manifest).is_err());
     }
