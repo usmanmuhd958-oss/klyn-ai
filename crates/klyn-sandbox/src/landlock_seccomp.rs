@@ -233,6 +233,35 @@ mod tests {
     use crate::{ResourceBudget, SignedCapability};
     use std::{ffi::CString, os::fd::AsRawFd, os::unix::net::UnixStream, process::Command};
 
+    /// GitLab's shared runner currently exposes Linux 5.15, which predates
+    /// Landlock ABI v8. Runtime enforcement must remain fail-closed, but the
+    /// CI test should verify that behavior instead of failing before exercising
+    /// the rest of the sandbox. Supported runners still execute the full
+    /// restriction and negative-case checks below.
+    fn require_landlock_v8_or_assert_fail_closed() -> bool {
+        const LANDLOCK_CREATE_RULESET_VERSION: libc::c_uint = 1;
+        let abi = unsafe {
+            libc::syscall(
+                libc::SYS_landlock_create_ruleset,
+                std::ptr::null::<libc::c_void>(),
+                0usize,
+                LANDLOCK_CREATE_RULESET_VERSION,
+            )
+        };
+        if abi >= 8 {
+            return true;
+        }
+
+        eprintln!(
+            "SKIP: Landlock ABI v8 is unavailable (kernel reported ABI {abi});              policy installation must still fail closed"
+        );
+        assert!(
+            apply_landlock(&claims(), &BTreeMap::new()).is_err(),
+            "sandbox must refuse Landlock enforcement when ABI v8 is unavailable"
+        );
+        false
+    }
+
     fn claims() -> CapabilityClaims {
         CapabilityClaims {
             version: crate::OCAP_VERSION,
@@ -254,6 +283,9 @@ mod tests {
 
     #[test]
     fn landlock_requires_supported_abi_and_all_threads() {
+        if !require_landlock_v8_or_assert_fail_closed() {
+            return;
+        }
         const CHILD_MARKER: &str = "KLYN_LANDLOCK_STATUS_CHILD";
         if std::env::var_os(CHILD_MARKER).is_some() {
             let roots = BTreeMap::new();
@@ -428,6 +460,9 @@ mod tests {
 
     #[test]
     fn landlock_enforces_granted_paths_and_denies_writes_to_read_only_grants() {
+        if !require_landlock_v8_or_assert_fail_closed() {
+            return;
+        }
         const CHILD_ROOT: &str = "KLYN_LANDLOCK_TEST_ROOT";
         if let Some(root) = std::env::var_os(CHILD_ROOT) {
             let root = PathBuf::from(root);
