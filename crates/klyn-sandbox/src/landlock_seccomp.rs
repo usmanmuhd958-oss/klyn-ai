@@ -231,12 +231,7 @@ pub fn enforce_worker(
 mod tests {
     use super::*;
     use crate::{ResourceBudget, SignedCapability};
-    use std::{
-        ffi::CString,
-        os::fd::AsRawFd,
-        os::unix::net::UnixStream,
-        process::Command,
-    };
+    use std::{ffi::CString, os::fd::AsRawFd, os::unix::net::UnixStream, process::Command};
 
     fn claims() -> CapabilityClaims {
         CapabilityClaims {
@@ -322,13 +317,18 @@ mod tests {
                 )
             };
             assert_eq!(opened, -1, "openat unexpectedly succeeded");
-            assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::EPERM)
+            );
 
-            let socket = unsafe {
-                libc::syscall(libc::SYS_socket, libc::AF_INET, libc::SOCK_STREAM, 0)
-            };
+            let socket =
+                unsafe { libc::syscall(libc::SYS_socket, libc::AF_INET, libc::SOCK_STREAM, 0) };
             assert_eq!(socket, -1, "socket unexpectedly succeeded");
-            assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::EPERM)
+            );
 
             let address = unsafe { std::mem::zeroed::<libc::sockaddr>() };
             let connected = unsafe {
@@ -340,7 +340,10 @@ mod tests {
                 )
             };
             assert_eq!(connected, -1, "connect unexpectedly succeeded");
-            assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::EPERM)
+            );
 
             let missing = CString::new("/__klyn_seccomp_execve_must_be_denied__").unwrap();
             let argv = [missing.as_ptr(), std::ptr::null()];
@@ -352,21 +355,40 @@ mod tests {
                     std::ptr::null::<*const libc::c_char>(),
                 )
             };
-            assert_eq!(executed, -1, "execve unexpectedly returned from a missing target");
-            assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
+            assert_eq!(
+                executed, -1,
+                "execve unexpectedly returned from a missing target"
+            );
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::EPERM)
+            );
 
             let changed = unsafe { libc::syscall(libc::SYS_fchmod, BROKER_FD, 0o777) };
             assert_eq!(changed, -1, "fchmod unexpectedly succeeded");
-            assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::EPERM)
+            );
 
             let duplicated = unsafe { libc::syscall(libc::SYS_dup, BROKER_FD) };
             assert_eq!(duplicated, -1, "dup unexpectedly succeeded");
-            assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::EPERM)
+            );
 
             let mut message = unsafe { std::mem::zeroed::<libc::msghdr>() };
-            let wrong_fd = unsafe { libc::syscall(libc::SYS_recvmsg, BROKER_FD + 1, &mut message, 0) };
-            assert_eq!(wrong_fd, -1, "recvmsg on a non-broker fd unexpectedly succeeded");
-            assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
+            let wrong_fd =
+                unsafe { libc::syscall(libc::SYS_recvmsg, BROKER_FD + 1, &mut message, 0) };
+            assert_eq!(
+                wrong_fd, -1,
+                "recvmsg on a non-broker fd unexpectedly succeeded"
+            );
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::EPERM)
+            );
             return;
         }
 
