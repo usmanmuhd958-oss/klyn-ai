@@ -47,7 +47,7 @@ jobs:
       - name: Format workspace
         run: cargo fmt --all -- --check
       - name: Check all workspace targets with warnings denied
-        run: cargo check --locked --workspace --all-targets -- -D warnings
+        run: RUSTFLAGS="-D warnings" cargo check --locked --workspace --all-targets
       - name: Sandbox unit and integration tests
         run: cargo test --locked -p klyn-sandbox
       - name: Sandbox Clippy
