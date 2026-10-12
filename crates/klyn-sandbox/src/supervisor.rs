@@ -228,8 +228,14 @@ pub fn launch_worker(
         .and_then(|()| policy_gate.verify_policy_and_release(WORKER_BOOTSTRAP_TIMEOUT));
     if let Err(error) = gate_result {
         let _ = child.kill();
-        let _ = child.wait();
         let cleanup = cgroup.terminate_and_wait(WORKER_LIFECYCLE_TIMEOUT);
+        if cleanup.is_ok() {
+            let _ = child.wait();
+        } else {
+            // Do not allow a failed startup path to block indefinitely on a
+            // process the kernel could not confirm as terminated.
+            let _ = child.try_wait();
+        }
         return match cleanup {
             Ok(()) => Err(error),
             Err(cleanup_error) => Err(SandboxError::Enforcement(format!(
