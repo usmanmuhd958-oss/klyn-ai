@@ -452,7 +452,10 @@ class Mailbox extends EventEmitter {
         if (!this.#persistStream?.writable) return;
         try {
             this.#persistStream.write(JSON.stringify(message) + '\n');
-        } catch (_) {}
+        } catch (err) {
+            // Failing to persist means the message is lost on restart.
+            process.stderr.write(`[Mailbox:${this.#name}] Persist write failed: ${err.message}\n`);
+        }
     }
 
     #loadPersistedMessages() {
@@ -461,6 +464,7 @@ class Mailbox extends EventEmitter {
         try {
             const lines = fs.readFileSync(this.#persistPath, 'utf8').split('\n');
             let loaded  = 0;
+            let skipped = 0;
             const now   = Date.now();
 
             for (const line of lines) {
@@ -473,7 +477,13 @@ class Mailbox extends EventEmitter {
                     msg.status = MESSAGE_STATUS.PENDING;
                     this.#queue.enqueue(msg);
                     loaded++;
-                } catch (_) {}
+                } catch (err) {
+                    skipped++;
+                }
+            }
+
+            if (skipped > 0) {
+                process.stderr.write(`[Mailbox:${this.#name}] Dropped ${skipped} corrupt persisted message(s)\n`);
             }
 
             if (loaded > 0) {

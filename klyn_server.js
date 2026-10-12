@@ -482,7 +482,7 @@ function createServer(engine, deps = {}) {
     return requireAuth(req, res);
   };
 
-  const server = http.createServer((req, res) => {
+  const handleRequest = async (req, res) => {
     // Request accounting (cheap, per-route counter for /metrics)
     const route = req.url || '/';
     requestCounters.set(route, (requestCounters.get(route) || 0) + 1);
@@ -594,7 +594,16 @@ function createServer(engine, deps = {}) {
       }
     });
 
+    // A client that disconnects mid-body emits 'error' on the request stream;
+    // without a listener that is an unhandled 'error' event and kills the process.
+    req.on('error', (err) => {
+      aborted = true;
+      logger.warn('Request stream error', { url: req.url, error: err.message });
+      if (!res.headersSent) respond(res, 400, { status: 'error', message: 'Request stream error' });
+    });
+
     req.on('end', async () => {
+      if (aborted) return;
       try {
         const payload = body ? JSON.parse(body) : {};
         const url = req.url || '';
@@ -669,8 +678,27 @@ function createServer(engine, deps = {}) {
           });
         }
       } catch (err) {
-        respond(res, 400, { status: 'error', message: err.message });
+        // A malformed body is the client's fault (400); anything else is an
+        // engine/IO failure and must surface as 500 with a server-side log —
+        // never reported to the caller as a bad request.
+        if (err instanceof SyntaxError) {
+          logger.warn('Malformed JSON body', { url: req.url, error: err.message });
+          respond(res, 400, { status: 'error', message: err.message });
+        } else {
+          logger.error('Request handler failed', { url: req.url, error: err.message, stack: err.stack });
+          respond(res, 500, { status: 'error', message: 'Internal server error' });
+        }
       }
+    });
+  };
+
+  // Any rejection escaping the handler is logged and answered with a 500 —
+  // an unanswered request would otherwise hang until the socket times out.
+  const server = http.createServer((req, res) => {
+    handleRequest(req, res).catch((err) => {
+      logger.error('Unhandled request error', { url: req.url, error: err?.message, stack: err?.stack });
+      if (res.headersSent) res.end();
+      else respond(res, 500, { status: 'error', message: 'Internal server error' });
     });
   });
 
@@ -718,7 +746,9 @@ function createServer(engine, deps = {}) {
   const finishShutdown = async () => {
     try {
       await logger.flush();
-    } catch (_) {}
+    } catch (err) {
+      process.stderr.write(`[KLYN Gateway] Log flush failed during shutdown: ${err.message}\n`);
+    }
     logger.info('Shutdown complete');
     process.exit(0);
   };
@@ -744,7 +774,10 @@ function startServer(port) {
       logger.warn(`Port ${port} occupied, attempting port ${port + 1}...`);
       startServer(port + 1);
     } else {
-      logger.error('Server error', { error: err.message });
+      // The gateway has no listening socket — stay noisy and exit non-zero so
+      // the supervisor restarts instead of keeping a dead process alive.
+      logger.error('Server error — gateway cannot serve traffic', { error: err.message, stack: err.stack });
+      process.exit(1);
     }
   });
   server.listen(port, '0.0.0.0', () => {

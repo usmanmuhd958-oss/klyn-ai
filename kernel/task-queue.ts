@@ -289,7 +289,11 @@ class TaskStore {
                             });
                         }
                     }
-                } catch (_) {}
+                } catch (err) {
+                    // A single unparseable record must not silently vanish:
+                    // recovery drops the task, so it has to be reported.
+                    process.stderr.write(`[TaskStore] Skipped unrecoverable task record: ${err.message}\n`);
+                }
             }
         } catch (err) {
             process.stderr.write(`[TaskStore] Recovery error: ${err.message}\n`);
@@ -326,7 +330,9 @@ class TaskStore {
             for (const f of toDelete) {
                 fs.unlinkSync(path.join(this.#dir, f));
             }
-        } catch (_) {}
+        } catch (err) {
+            process.stderr.write(`[TaskStore] Log pruning failed: ${err.message}\n`);
+        }
     }
 }
 
