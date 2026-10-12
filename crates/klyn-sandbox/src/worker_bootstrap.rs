@@ -69,6 +69,11 @@ pub fn initialize() -> Result<WorkerBootstrapContext, SandboxError> {
 
     landlock_seccomp::enforce_worker(&manifest.capability.claims, &manifest.roots, BROKER_FD)?;
 
+    // Do not return control to mission/runtime code until the supervisor has
+    // observed this process after policy installation and sent the final ACK.
+    // Failure or supervisor death is fatal; callers must not process input.
+    crate::start_gate::worker_wait_for_supervisor_release()?;
+
     // Keep this reference explicit: the signed claims are the policy input,
     // not values independently supplied by the worker.
     let _: &CapabilityClaims = &manifest.capability.claims;
