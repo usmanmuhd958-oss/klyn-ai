@@ -18,9 +18,9 @@ pub mod worker_bootstrap;
 
 use std::{
     collections::BTreeSet,
-    ffi::CString,
+    ffi::{CString, OsStr},
     fs::{self, File, OpenOptions},
-    io::{self, Write},
+    io::{self, Read, Write},
     os::{
         fd::{AsRawFd, FromRawFd, OwnedFd},
         unix::{
@@ -777,6 +777,23 @@ pub fn validate_trusted_executable(path: impl AsRef<Path>) -> Result<PathBuf, Sa
     let canonical = fs::canonicalize(path)?;
     let metadata = fs::metadata(&canonical)?;
     let mode = metadata.mode();
+    if canonical.file_name() != Some(OsStr::new("klyn-worker")) {
+        return Err(SandboxError::InvalidConfig(
+            "trusted executable must be named klyn-worker".into(),
+        ));
+    }
+
+    let mut executable = File::open(&canonical)?;
+    let mut elf_magic = [0u8; 4];
+    executable.read_exact(&mut elf_magic).map_err(|_| {
+        SandboxError::InvalidConfig("trusted worker executable is truncated".into())
+    })?;
+    if elf_magic != *b"\x7fELF" {
+        return Err(SandboxError::InvalidConfig(
+            "trusted worker must be a native ELF executable, not a script or data file".into(),
+        ));
+    }
+
     if !metadata.is_file()
         || mode & 0o111 == 0
         || mode & 0o222 != 0
@@ -855,6 +872,10 @@ mod tests {
         assert!(
             validate_trusted_executable(&executable).is_err(),
             "temporary or user-controlled worker binary was accepted"
+        );
+        assert!(
+            validate_trusted_executable("/bin/sh").is_err(),
+            "generic shell must not be accepted as the trusted worker"
         );
     }
 
