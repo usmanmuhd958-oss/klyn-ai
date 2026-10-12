@@ -10,6 +10,7 @@ on:
       - main
       - master
       - feat/klyn-step2-transactional-fs
+      - feat/step3-worker-bootstrap
     paths:
       - Cargo.toml
       - Cargo.lock
@@ -42,6 +43,12 @@ jobs:
           rustc --version
           cargo --version
           uname -a
+      - name: Install Android target for cross-platform compile check
+        run: rustup target add aarch64-linux-android
+      - name: Check all workspace targets on Android with warnings denied
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo check --locked --workspace --all-targets --target aarch64-linux-android
       - name: Verify locked workspace metadata
         run: cargo metadata --locked --format-version 1 > /dev/null
       - name: Format workspace
