@@ -512,7 +512,7 @@ fn write_frame<T: Serialize>(stream: &mut UnixStream, value: &T) -> io::Result<(
 }
 
 fn send_fd(socket: RawFd, fd: RawFd) -> io::Result<()> {
-    let byte = [b'F'];
+    let byte = *b"F";
     let iov = [IoSlice::new(&byte)];
     let fds = [fd];
     let cmsg = ControlMessage::ScmRights(&fds);
@@ -614,29 +614,30 @@ impl BrokerClient {
 fn receive_fd(socket: RawFd) -> io::Result<OwnedFd> {
     let (bytes, flags, marker_byte, received) = {
         let mut marker = [0u8; 1];
-        let mut iov = [io::IoSliceMut::new(&mut marker)];
-        let mut cmsgspace = nix::cmsg_space!([RawFd; 8]);
-        let msg = recvmsg::<()>(
-            socket,
-            &mut iov,
-            Some(&mut cmsgspace),
-            MsgFlags::MSG_CMSG_CLOEXEC,
-        )
-        .map_err(io::Error::from)?;
+        let (bytes, flags, received) = {
+            let mut iov = [io::IoSliceMut::new(&mut marker)];
+            let mut cmsgspace = nix::cmsg_space!([RawFd; 8]);
+            let msg = recvmsg::<()>(
+                socket,
+                &mut iov,
+                Some(&mut cmsgspace),
+                MsgFlags::MSG_CMSG_CLOEXEC,
+            )
+            .map_err(io::Error::from)?;
 
-        let bytes = msg.bytes;
-        let flags = msg.flags;
-        let mut received = Vec::new();
-        for cmsg in msg.cmsgs().map_err(io::Error::from)? {
-            if let ControlMessageOwned::ScmRights(fds) = cmsg {
-                for fd in fds {
-                    received.push(unsafe { OwnedFd::from_raw_fd(fd) });
+            let bytes = msg.bytes;
+            let flags = msg.flags;
+            let mut received = Vec::new();
+            for cmsg in msg.cmsgs().map_err(io::Error::from)? {
+                if let ControlMessageOwned::ScmRights(fds) = cmsg {
+                    for fd in fds {
+                        received.push(unsafe { OwnedFd::from_raw_fd(fd) });
+                    }
                 }
             }
-        }
 
-        // Release the iovec borrow before reading the marker.
-        drop(iov);
+            (bytes, flags, received)
+        };
         (bytes, flags, marker[0], received)
     };
 
