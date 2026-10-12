@@ -1,4 +1,8 @@
 //! Authenticated IPC adapter for klyn-fs candidate transactions.
+//!
+//! Transaction ownership is bound to the kernel-authenticated peer UID supplied
+//! by the daemon after SO_PEERCRED validation. The daemon separately rechecks
+//! method permissions on every request before dispatching here.
 
 use std::{collections::BTreeMap, sync::Mutex};
 
@@ -7,10 +11,14 @@ use klyn_protocol::{FsWriteFileParams, Method, TransactionIdParams};
 use serde_json::{json, Value};
 use thiserror::Error;
 
+use crate::policy::PeerIdentity;
+
 #[derive(Debug, Error)]
 pub enum FsServiceError {
     #[error("filesystem transaction not found")]
     NotFound,
+    #[error("caller does not own this filesystem transaction")]
+    PermissionDenied,
     #[error("filesystem IPC parameters are invalid")]
     InvalidParameters,
     #[error("filesystem transaction registry is unavailable")]
@@ -19,9 +27,14 @@ pub enum FsServiceError {
     Engine(#[from] FsError),
 }
 
+struct OwnedTransaction {
+    owner_uid: u32,
+    transaction: KlynTransaction,
+}
+
 pub struct FsService {
     engine: FsEngine,
-    transactions: Mutex<BTreeMap<String, KlynTransaction>>,
+    transactions: Mutex<BTreeMap<String, OwnedTransaction>>,
 }
 
 impl FsService {
@@ -32,7 +45,14 @@ impl FsService {
         }
     }
 
-    pub fn execute(&self, method: Method, params: &Value) -> Result<Value, FsServiceError> {
+    /// Execute one already-policy-authorized operation for a peer whose UID was
+    /// obtained from kernel Unix-socket credentials, never from request JSON.
+    pub fn execute(
+        &self,
+        peer: PeerIdentity,
+        method: Method,
+        params: &Value,
+    ) -> Result<Value, FsServiceError> {
         match method {
             Method::FsBegin => {
                 let tx = self.engine.begin_transaction()?;
@@ -51,7 +71,13 @@ impl FsService {
                 if registry.contains_key(&id) {
                     return Err(FsServiceError::RegistryUnavailable);
                 }
-                registry.insert(id, tx);
+                registry.insert(
+                    id,
+                    OwnedTransaction {
+                        owner_uid: peer.uid,
+                        transaction: tx,
+                    },
+                );
                 Ok(result)
             }
             Method::FsWriteFile => {
@@ -61,10 +87,8 @@ impl FsService {
                     .transactions
                     .lock()
                     .map_err(|_| FsServiceError::RegistryUnavailable)?;
-                let tx = registry
-                    .get_mut(&request.transaction_id)
-                    .ok_or(FsServiceError::NotFound)?;
-                tx.write_file(
+                let owned = owned_transaction_mut(&mut registry, &request.transaction_id, peer)?;
+                owned.transaction.write_file(
                     &request.path,
                     request.expected_old_content.as_deref(),
                     &request.content,
@@ -78,10 +102,8 @@ impl FsService {
                     .transactions
                     .lock()
                     .map_err(|_| FsServiceError::RegistryUnavailable)?;
-                let tx = registry
-                    .get_mut(&request.transaction_id)
-                    .ok_or(FsServiceError::NotFound)?;
-                tx.stage()?;
+                let owned = owned_transaction_mut(&mut registry, &request.transaction_id, peer)?;
+                owned.transaction.stage()?;
                 Ok(json!({"transaction_id": request.transaction_id, "state": "staged"}))
             }
             Method::FsValidate => {
@@ -93,9 +115,9 @@ impl FsService {
                     .map_err(|_| FsServiceError::RegistryUnavailable)?;
                 let id = request.transaction_id;
                 let result = {
-                    let tx = registry.get_mut(&id).ok_or(FsServiceError::NotFound)?;
-                    let base_revision = tx.base_revision().to_owned();
-                    tx.validate().map(|revision| {
+                    let owned = owned_transaction_mut(&mut registry, &id, peer)?;
+                    let base_revision = owned.transaction.base_revision().to_owned();
+                    owned.transaction.validate().map(|revision| {
                         json!({
                             "transaction_id": id,
                             "state": "validated",
@@ -104,9 +126,9 @@ impl FsService {
                         })
                     })
                 };
-                let terminal = registry.get(&id).is_some_and(|tx| {
+                let terminal = registry.get(&id).is_some_and(|owned| {
                     matches!(
-                        tx.state(),
+                        owned.transaction.state(),
                         TransactionState::Aborted | TransactionState::Committed
                     )
                 });
@@ -123,7 +145,9 @@ impl FsService {
                     .lock()
                     .map_err(|_| FsServiceError::RegistryUnavailable)?;
                 let id = request.transaction_id;
-                let mut tx = registry.remove(&id).ok_or(FsServiceError::NotFound)?;
+                let owned = take_owned_transaction(&mut registry, &id, peer)?;
+                let owner_uid = owned.owner_uid;
+                let mut tx = owned.transaction;
                 match tx.commit() {
                     Ok(receipt) => Ok(json!({
                         "transaction_id": receipt.transaction_id,
@@ -137,7 +161,13 @@ impl FsService {
                             tx.state(),
                             TransactionState::Committed | TransactionState::Aborted
                         ) {
-                            registry.insert(id, tx);
+                            registry.insert(
+                                id,
+                                OwnedTransaction {
+                                    owner_uid,
+                                    transaction: tx,
+                                },
+                            );
                         }
                         Err(FsServiceError::Engine(error))
                     }
@@ -151,11 +181,19 @@ impl FsService {
                     .lock()
                     .map_err(|_| FsServiceError::RegistryUnavailable)?;
                 let id = request.transaction_id;
-                let mut tx = registry.remove(&id).ok_or(FsServiceError::NotFound)?;
+                let owned = take_owned_transaction(&mut registry, &id, peer)?;
+                let owner_uid = owned.owner_uid;
+                let mut tx = owned.transaction;
                 match tx.abort() {
                     Ok(()) => Ok(json!({"transaction_id": id, "state": "aborted"})),
                     Err(error) => {
-                        registry.insert(id, tx);
+                        registry.insert(
+                            id,
+                            OwnedTransaction {
+                                owner_uid,
+                                transaction: tx,
+                            },
+                        );
                         Err(FsServiceError::Engine(error))
                     }
                 }
@@ -163,4 +201,28 @@ impl FsService {
             _ => Err(FsServiceError::InvalidParameters),
         }
     }
+}
+
+fn owned_transaction_mut<'a>(
+    registry: &'a mut BTreeMap<String, OwnedTransaction>,
+    id: &str,
+    peer: PeerIdentity,
+) -> Result<&'a mut OwnedTransaction, FsServiceError> {
+    let owned = registry.get_mut(id).ok_or(FsServiceError::NotFound)?;
+    if owned.owner_uid != peer.uid {
+        return Err(FsServiceError::PermissionDenied);
+    }
+    Ok(owned)
+}
+
+fn take_owned_transaction(
+    registry: &mut BTreeMap<String, OwnedTransaction>,
+    id: &str,
+    peer: PeerIdentity,
+) -> Result<OwnedTransaction, FsServiceError> {
+    let owned = registry.get(id).ok_or(FsServiceError::NotFound)?;
+    if owned.owner_uid != peer.uid {
+        return Err(FsServiceError::PermissionDenied);
+    }
+    registry.remove(id).ok_or(FsServiceError::NotFound)
 }

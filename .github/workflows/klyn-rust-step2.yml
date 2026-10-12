@@ -5,7 +5,10 @@ on:
     branches:
       - feat/klyn-step2-transactional-fs
   pull_request:
-    branches: [main, master]
+    branches:
+      - main
+      - master
+      - 'feat/**'
     paths:
       - Cargo.toml
       - crates/klyn-fs/**
