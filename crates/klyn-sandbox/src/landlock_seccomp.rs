@@ -16,9 +16,9 @@ use seccompiler::{
     SeccompRule,
 };
 
-use crate::{validate_relative_path, CapabilityClaims, FileAccess, SandboxError, BROKER_FD};
+use crate::{validate_relative_path, validate_trusted_root, CapabilityClaims, FileAccess, SandboxError, BROKER_FD};
 
-/// Apply a hard-required ABI-v3 Landlock ruleset.
+/// Apply a hard-required Landlock ABI v8 ruleset.
 ///
 /// Roots must be daemon-controlled mappings from OCap root IDs to trusted
 /// directory paths. Grant paths that traverse symlinks are rejected.
@@ -42,13 +42,7 @@ pub fn apply_landlock(
                 "invalid trusted root id".into(),
             ));
         }
-        let canonical = std::fs::canonicalize(path)?;
-        if !std::fs::metadata(&canonical)?.is_dir() {
-            return Err(SandboxError::InvalidConfig(format!(
-                "trusted root is not a directory: {}",
-                canonical.display()
-            )));
-        }
+        let canonical = validate_trusted_root(path)?;
         normalized_roots.insert(id.as_str(), canonical);
     }
 
@@ -169,10 +163,6 @@ pub fn apply_worker_seccomp(broker_fd: RawFd) -> Result<(), SandboxError> {
         libc::SYS_sched_yield,
         libc::SYS_futex,
         libc::SYS_restart_syscall,
-        libc::SYS_fcntl,
-        libc::SYS_dup,
-        libc::SYS_dup2,
-        libc::SYS_dup3,
         libc::SYS_poll,
         libc::SYS_ppoll,
         libc::SYS_pselect6,
@@ -181,21 +171,11 @@ pub fn apply_worker_seccomp(broker_fd: RawFd) -> Result<(), SandboxError> {
         libc::SYS_epoll_ctl,
         libc::SYS_epoll_wait,
         libc::SYS_epoll_pwait,
-        libc::SYS_sendto,
-        libc::SYS_recvfrom,
-        libc::SYS_shutdown,
-        libc::SYS_getsockopt,
-        libc::SYS_setsockopt,
-        libc::SYS_getpeername,
-        libc::SYS_getsockname,
         libc::SYS_uname,
         libc::SYS_exit,
         libc::SYS_exit_group,
         libc::SYS_fsync,
         libc::SYS_fdatasync,
-        libc::SYS_fchmod,
-        libc::SYS_fchown,
-        libc::SYS_umask,
         libc::SYS_getcwd,
     ];
     for syscall in allowed {
@@ -245,6 +225,12 @@ pub fn enforce_worker(
 mod tests {
     use super::*;
     use crate::{ResourceBudget, SignedCapability};
+    use std::{
+        ffi::CString,
+        os::fd::AsRawFd,
+        os::unix::net::UnixStream,
+        process::Command,
+    };
 
     fn claims() -> CapabilityClaims {
         CapabilityClaims {
@@ -302,5 +288,145 @@ mod tests {
     #[test]
     fn worker_seccomp_requires_the_pinned_broker_descriptor() {
         assert!(apply_worker_seccomp(BROKER_FD + 1).is_err());
+    }
+
+    #[test]
+    fn seccomp_denies_path_open_socket_connect_exec_and_fd_metadata_mutation() {
+        const CHILD_MARKER: &str = "KLYN_SECCOMP_NEGATIVE_CHILD";
+        if std::env::var_os(CHILD_MARKER).is_some() {
+            let (broker, peer) = UnixStream::pair().expect("socketpair for pinned broker fd");
+            let raw = broker.as_raw_fd();
+            if raw != BROKER_FD {
+                let result = unsafe { libc::dup3(raw, BROKER_FD, 0) };
+                assert_eq!(result, BROKER_FD);
+                drop(broker);
+            }
+            drop(peer);
+
+            apply_worker_seccomp(BROKER_FD).expect("install seccomp filter");
+
+            let path = CString::new("/etc/passwd").unwrap();
+            let opened = unsafe {
+                libc::syscall(
+                    libc::SYS_openat,
+                    libc::AT_FDCWD,
+                    path.as_ptr(),
+                    libc::O_RDONLY,
+                    0,
+                )
+            };
+            assert_eq!(opened, -1, "openat unexpectedly succeeded");
+            assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
+
+            let socket = unsafe {
+                libc::syscall(libc::SYS_socket, libc::AF_INET, libc::SOCK_STREAM, 0)
+            };
+            assert_eq!(socket, -1, "socket unexpectedly succeeded");
+            assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
+
+            let address = unsafe { std::mem::zeroed::<libc::sockaddr>() };
+            let connected = unsafe {
+                libc::syscall(
+                    libc::SYS_connect,
+                    BROKER_FD,
+                    &address as *const libc::sockaddr,
+                    std::mem::size_of::<libc::sockaddr>() as libc::socklen_t,
+                )
+            };
+            assert_eq!(connected, -1, "connect unexpectedly succeeded");
+            assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
+
+            let missing = CString::new("/__klyn_seccomp_execve_must_be_denied__").unwrap();
+            let argv = [missing.as_ptr(), std::ptr::null()];
+            let executed = unsafe {
+                libc::syscall(
+                    libc::SYS_execve,
+                    missing.as_ptr(),
+                    argv.as_ptr(),
+                    std::ptr::null::<*const libc::c_char>(),
+                )
+            };
+            assert_eq!(executed, -1, "execve unexpectedly returned from a missing target");
+            assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
+
+            let changed = unsafe { libc::syscall(libc::SYS_fchmod, BROKER_FD, 0o777) };
+            assert_eq!(changed, -1, "fchmod unexpectedly succeeded");
+            assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
+
+            let duplicated = unsafe { libc::syscall(libc::SYS_dup, BROKER_FD) };
+            assert_eq!(duplicated, -1, "dup unexpectedly succeeded");
+            assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
+
+            let mut message = unsafe { std::mem::zeroed::<libc::msghdr>() };
+            let wrong_fd = unsafe { libc::syscall(libc::SYS_recvmsg, BROKER_FD + 1, &mut message, 0) };
+            assert_eq!(wrong_fd, -1, "recvmsg on a non-broker fd unexpectedly succeeded");
+            assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
+            return;
+        }
+
+        let output = Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("landlock_seccomp::tests::seccomp_denies_path_open_socket_connect_exec_and_fd_metadata_mutation")
+            .arg("--nocapture")
+            .env(CHILD_MARKER, "1")
+            .output()
+            .expect("spawn isolated seccomp test process");
+        assert!(
+            output.status.success(),
+            "seccomp negative-case child failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn landlock_enforces_granted_paths_and_denies_writes_to_read_only_grants() {
+        const CHILD_ROOT: &str = "KLYN_LANDLOCK_TEST_ROOT";
+        if let Some(root) = std::env::var_os(CHILD_ROOT) {
+            let root = PathBuf::from(root);
+            let mut policy = claims();
+            policy.file_grants.push(crate::FileGrant {
+                root_id: "workspace".into(),
+                prefix: "allowed".into(),
+                access: FileAccess::Read,
+            });
+            let roots = BTreeMap::from([("workspace".to_string(), root.clone())]);
+            apply_landlock(&policy, &roots).expect("install Landlock policy");
+
+            assert_eq!(
+                std::fs::read(root.join("allowed/data.txt")).unwrap(),
+                b"allowed"
+            );
+            assert!(
+                std::fs::read(root.join("denied/data.txt")).is_err(),
+                "Landlock allowed a read outside the grant"
+            );
+            assert!(
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(root.join("allowed/data.txt"))
+                    .is_err(),
+                "Landlock allowed a write under a read-only grant"
+            );
+            return;
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("allowed")).unwrap();
+        std::fs::create_dir(dir.path().join("denied")).unwrap();
+        std::fs::write(dir.path().join("allowed/data.txt"), b"allowed").unwrap();
+        std::fs::write(dir.path().join("denied/data.txt"), b"denied").unwrap();
+
+        let output = Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("landlock_seccomp::tests::landlock_enforces_granted_paths_and_denies_writes_to_read_only_grants")
+            .arg("--nocapture")
+            .env(CHILD_ROOT, dir.path())
+            .output()
+            .expect("spawn isolated Landlock test process");
+        assert!(
+            output.status.success(),
+            "Landlock negative-case child failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }
