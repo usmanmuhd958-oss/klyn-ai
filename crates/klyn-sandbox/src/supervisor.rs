@@ -52,13 +52,22 @@ pub struct SpawnedWorker {
 
 impl Drop for SpawnedWorker {
     fn drop(&mut self) {
-        // Dropping a std::process::Child does not terminate its process. Always
-        // kill the whole cgroup, reap stage-0, and wait for cgroup emptiness so
-        // an early-return/error path cannot orphan the namespace worker.
+        // Dropping a std::process::Child does not terminate its process. Kill
+        // the whole cgroup first and use the bounded cgroup-empty wait before
+        // reaping stage-0. Never block an arbitrary destructor indefinitely.
         let _ = self.cgroup.kill_all();
         let _ = self.child.kill();
-        let _ = self.child.wait();
-        let _ = self.cgroup.terminate_and_wait(WORKER_LIFECYCLE_TIMEOUT);
+        if self
+            .cgroup
+            .terminate_and_wait(WORKER_LIFECYCLE_TIMEOUT)
+            .is_ok()
+        {
+            let _ = self.child.wait();
+        } else {
+            // Best-effort nonblocking reap if kernel cleanup itself failed.
+            // Explicit terminate()/wait() report cleanup errors to the caller.
+            let _ = self.child.try_wait();
+        }
     }
 }
 
