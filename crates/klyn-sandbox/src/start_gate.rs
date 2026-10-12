@@ -47,7 +47,7 @@ impl StartGate {
         verifying_key: &VerifyingKey,
     ) -> Result<(), SandboxError> {
         manifest.verify_signature(verifying_key)?;
-        if manifest.cgroup_path != cgroup.path() {
+        if manifest.cgroup_path.as_path() != cgroup.path() {
             return Err(SandboxError::Enforcement(
                 "sealed manifest cgroup path does not match the supervisor cgroup".into(),
             ));
