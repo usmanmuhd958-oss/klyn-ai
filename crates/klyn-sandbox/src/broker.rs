@@ -635,8 +635,7 @@ fn receive_fd(socket: RawFd) -> io::Result<OwnedFd> {
             }
         }
 
-        // Release the receive message and iovec borrows before reading marker.
-        drop(msg);
+        // Release the iovec borrow before reading the marker.
         drop(iov);
         (bytes, flags, marker[0], received)
     };
@@ -661,13 +660,6 @@ mod tests {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
     use std::os::fd::AsRawFd;
-
-    struct NeverRevoked;
-    impl RevocationOracle for NeverRevoked {
-        fn is_revoked(&self, _: &str) -> Result<bool, String> {
-            Ok(false)
-        }
-    }
 
     fn test_claims(uid: u32, gid: u32) -> CapabilityClaims {
         crate::CapabilityClaims {

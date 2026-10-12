@@ -24,13 +24,15 @@ concurrency:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: Report Linux kernel
+        run: uname -a
       - name: Format workspace
         run: cargo fmt --all -- --check
       - name: Sandbox unit and integration tests

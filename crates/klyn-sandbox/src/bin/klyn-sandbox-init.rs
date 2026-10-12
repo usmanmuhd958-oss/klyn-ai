@@ -8,7 +8,7 @@
 
 use std::{
     ffi::{CString, OsString},
-    io::{Read, Write},
+    io::Read,
     os::fd::FromRawFd,
     os::unix::process::CommandExt,
     process::Command,
