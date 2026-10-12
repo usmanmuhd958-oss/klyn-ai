@@ -10,9 +10,12 @@ use std::{
     ffi::{CString, OsString},
     io::Read,
     os::fd::FromRawFd,
-    os::unix::process::CommandExt,
+    os::unix::{fs::MetadataExt, process::CommandExt},
+    path::PathBuf,
     process::Command,
 };
+
+use klyn_sandbox::validate_trusted_executable;
 
 const GATE_FD: i32 = 5;
 const MANIFEST_FD: i32 = 4;
@@ -66,6 +69,19 @@ fn run() -> Result<(), String> {
     if uid == 0 || command.is_empty() {
         return Err("UID 0 and empty worker command are forbidden".into());
     }
+
+    // This privileged helper must never become a generic command runner. The
+    // executable must be an absolute, daemon-controlled regular file whose
+    // parent directory chain cannot be replaced by an untrusted principal.
+    let requested_executable = PathBuf::from(&command[0]);
+    if !requested_executable.is_absolute() {
+        return Err("worker executable path must be absolute".into());
+    }
+    let trusted_executable = validate_trusted_executable(&requested_executable)
+        .map_err(|error| format!("refusing untrusted worker executable: {error}"))?;
+    command[0] = trusted_executable.into_os_string();
+    validate_standard_streams()?;
+
     if unsafe { libc::fcntl(MANIFEST_FD, libc::F_GETFD) } < 0 {
         return Err("sealed manifest FD 4 is not inherited".into());
     }
@@ -188,18 +204,53 @@ fn run() -> Result<(), String> {
     process.env("LANG", "C");
     let error = unsafe {
         process.pre_exec(|| {
-            // Keep FD 4 for the trusted worker bootstrap to read the sealed
-            // manifest, but remove ambient descriptors from this exec boundary.
-            for fd in 3..1024 {
-                if fd != MANIFEST_FD {
-                    libc::close(fd);
-                }
+            // Preserve only the sealed manifest FD 4 plus standard streams.
+            // close_range avoids silently leaking descriptors >= 1024. No
+            // fallback is allowed: an old kernel must fail closed.
+            let low = libc::syscall(libc::SYS_close_range, 3u32, 3u32, 0u32);
+            if low != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            let high = libc::syscall(
+                libc::SYS_close_range,
+                (MANIFEST_FD + 1) as u32,
+                u32::MAX,
+                0u32,
+            );
+            if high != 0 {
+                return Err(std::io::Error::last_os_error());
             }
             Ok(())
         })
     }
     .exec();
     child_fail(&format!("exec trusted worker failed: {error}"));
+}
+
+fn validate_standard_streams() -> Result<(), String> {
+    let null_device = std::fs::metadata("/dev/null")
+        .map_err(|error| format!("cannot validate /dev/null: {error}"))?
+        .rdev();
+
+    for fd in 0..=2 {
+        let mut stat = std::mem::MaybeUninit::<libc::stat>::zeroed();
+        if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } != 0 {
+            return Err(format!(
+                "standard descriptor {fd} is not open: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        let stat = unsafe { stat.assume_init() };
+        let kind = stat.st_mode & libc::S_IFMT;
+        let safe_pipe_or_socket = kind == libc::S_IFIFO || kind == libc::S_IFSOCK;
+        let safe_null_device = kind == libc::S_IFCHR && stat.st_rdev == null_device;
+        if !safe_pipe_or_socket && !safe_null_device {
+            return Err(format!(
+                "standard descriptor {fd} must be a pipe/socket or /dev/null, not an inherited file or device"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn child_fail(message: &str) -> ! {
