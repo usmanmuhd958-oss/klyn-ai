@@ -48,7 +48,7 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Check all workspace targets with warnings denied
         run: RUSTFLAGS="-D warnings" cargo check --locked --workspace --all-targets
-      - name: Sandbox unit and integration tests
-        run: cargo test --locked -p klyn-sandbox
-      - name: Sandbox Clippy
-        run: cargo clippy --locked -p klyn-sandbox --all-targets -- -D warnings
+      - name: Workspace unit and integration tests
+        run: cargo test --locked --workspace -- --nocapture
+      - name: Workspace Clippy
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
