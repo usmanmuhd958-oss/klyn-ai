@@ -254,12 +254,32 @@ mod tests {
 
     #[test]
     fn landlock_requires_supported_abi_and_all_threads() {
-        let roots = BTreeMap::new();
-        let status =
-            apply_landlock(&claims(), &roots).expect("required Landlock features are unavailable");
-        assert_eq!(status.ruleset, RulesetStatus::FullyEnforced);
-        assert!(status.no_new_privs);
-        assert!(status.all_threads);
+        const CHILD_MARKER: &str = "KLYN_LANDLOCK_STATUS_CHILD";
+        if std::env::var_os(CHILD_MARKER).is_some() {
+            let roots = BTreeMap::new();
+            let status = apply_landlock(&claims(), &roots)
+                .expect("required Landlock features are unavailable");
+            assert_eq!(status.ruleset, RulesetStatus::FullyEnforced);
+            assert!(status.no_new_privs);
+            assert!(status.all_threads);
+            return;
+        }
+
+        // Landlock with all_threads(true) intentionally confines the current
+        // process. Run this assertion in a subprocess so parallel Rust tests
+        // don't inherit the restricted process-wide filesystem policy.
+        let output = Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("landlock_seccomp::tests::landlock_requires_supported_abi_and_all_threads")
+            .arg("--nocapture")
+            .env(CHILD_MARKER, "1")
+            .output()
+            .expect("spawn isolated Landlock status test process");
+        assert!(
+            output.status.success(),
+            "Landlock status child failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]
