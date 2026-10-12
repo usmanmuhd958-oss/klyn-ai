@@ -424,7 +424,7 @@ pub mod worker_bootstrap {
 mod tests {
     use crate::{
         broker::{
-            self, BrokerClient, BrokerConfig, CapabilityVerifier, ResourceBroker, RevocationOracle,
+            BrokerClient, BrokerConfig, CapabilityVerifier, ResourceBroker, RevocationOracle,
         },
         cgroup::CgroupV2Boundary,
         landlock_seccomp,
@@ -569,7 +569,7 @@ mod tests {
         // Keep this module import exercised by the test surface without
         // introducing any real verifier/launch operation.
         assert!(matches!(
-            broker::landlock_seccomp::apply_worker_seccomp(3),
+            landlock_seccomp::apply_worker_seccomp(3),
             Err(SandboxError::UnsupportedPlatform)
         ));
     }
