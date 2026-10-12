@@ -7,11 +7,9 @@
 //! worker behind a start gate until cgroup membership is confirmed.
 
 use std::{
-    collections::BTreeMap,
     fs::{self, OpenOptions},
     io::Read,
     os::unix::fs::{MetadataExt, OpenOptionsExt},
-    path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -21,7 +19,7 @@ pub use crate::manifest::{WorkerManifest, WORKER_MANIFEST_VERSION};
 
 use crate::{
     broker::{BrokerClient, CapabilityVerifier, Ed25519CapabilityVerifier},
-    landlock_seccomp, validate_trusted_root, CapabilityClaims, SandboxError, SignedCapability,
+    landlock_seccomp, validate_trusted_root, CapabilityClaims, SandboxError,
     BROKER_FD, MANIFEST_FD, OCAP_VERSION,
 };
 
@@ -185,6 +183,8 @@ pub fn load_trusted_verifying_key() -> Result<VerifyingKey, SandboxError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{collections::BTreeMap, path::PathBuf};
+    use crate::SignedCapability;
 
     #[test]
     fn rejects_relative_broker_socket() {
