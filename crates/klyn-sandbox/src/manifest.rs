@@ -186,6 +186,26 @@ impl WorkerManifest {
             .map_err(|_| SandboxError::Enforcement("worker manifest signature is invalid".into()))
     }
 
+    /// Verify the actual soft and hard RLIMIT_NOFILE values against the
+    /// signed manifest. The stage-0 launcher sets these before exec, and the
+    /// worker checks again before installing seccomp.
+    pub fn verify_current_fd_limit(&self) -> Result<(), SandboxError> {
+        let expected = libc::rlim_t::try_from(self.max_open_fds).map_err(|_| {
+            SandboxError::InvalidConfig("manifest FD limit is not representable".into())
+        })?;
+        let mut actual = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+        if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, actual.as_mut_ptr()) } != 0 {
+            return Err(SandboxError::Io(io::Error::last_os_error()));
+        }
+        let actual = unsafe { actual.assume_init() };
+        if actual.rlim_cur != expected || actual.rlim_max != expected {
+            return Err(SandboxError::Enforcement(
+                "effective RLIMIT_NOFILE differs from the sealed worker manifest".into(),
+            ));
+        }
+        Ok(())
+    }
+
     pub fn verify_worker_executable(
         &self,
         executable: impl AsRef<Path>,
