@@ -280,16 +280,25 @@ fn run() -> Result<(), String> {
     process.env("LANG", "C");
     let error = unsafe {
         process.pre_exec(|| {
-            // Preserve only the sealed manifest FD 4 plus standard streams.
-            // close_range avoids silently leaking descriptors >= 1024. No
-            // fallback is allowed: an old kernel must fail closed.
+            // Preserve FD 4 (sealed manifest) and FD 6 (policy gate). Close FD 5
+            // and every other descriptor; no fallback for kernels lacking
+            // close_range is allowed.
             let low = libc::syscall(libc::SYS_close_range, 3u32, 3u32, 0u32);
             if low != 0 {
                 return Err(std::io::Error::last_os_error());
             }
+            let stage0_gate = libc::syscall(
+                libc::SYS_close_range,
+                START_GATE_FD as u32,
+                START_GATE_FD as u32,
+                0u32,
+            );
+            if stage0_gate != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
             let high = libc::syscall(
                 libc::SYS_close_range,
-                (MANIFEST_FD + 1) as u32,
+                (WORKER_POLICY_GATE_FD + 1) as u32,
                 u32::MAX,
                 0u32,
             );
