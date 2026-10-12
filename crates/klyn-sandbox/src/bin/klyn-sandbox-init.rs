@@ -146,9 +146,6 @@ fn run() -> Result<(), String> {
         return Err("worker capability has expired".into());
     }
 
-
-
-
     // The ACK permits only trusted bootstrap progress. Re-check the actual
     // cgroup before changing namespaces or execing the worker image.
     CgroupV2Boundary::verify_current(
