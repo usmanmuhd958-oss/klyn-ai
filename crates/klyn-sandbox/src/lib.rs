@@ -23,7 +23,10 @@ use std::{
     io::{self, Write},
     os::{
         fd::{AsRawFd, FromRawFd, OwnedFd},
-        unix::{ffi::OsStrExt, fs::MetadataExt},
+        unix::{
+            ffi::OsStrExt,
+            fs::{MetadataExt, OpenOptionsExt},
+        },
     },
     path::{Path, PathBuf},
     time::{Duration, Instant},
