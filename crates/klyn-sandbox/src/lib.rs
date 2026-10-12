@@ -726,6 +726,27 @@ mod tests {
     }
 
     #[test]
+    fn pinned_path_open_rejects_symlink_components() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = tempfile::tempdir().unwrap();
+        fs::create_dir(workspace.path().join("real")).unwrap();
+        fs::write(workspace.path().join("real/data.txt"), b"safe").unwrap();
+        symlink("real", workspace.path().join("alias")).unwrap();
+
+        let real = open_path_no_symlinks(workspace.path().join("real"), true).unwrap();
+        assert!(real.metadata().unwrap().is_dir());
+        assert!(
+            open_path_no_symlinks(workspace.path().join("alias"), true).is_err(),
+            "pinned root open followed a symbolic link"
+        );
+        assert!(
+            open_path_no_symlinks(workspace.path().join("alias/data.txt"), false).is_err(),
+            "pinned file open followed a symbolic link component"
+        );
+    }
+
+    #[test]
     fn capability_rejects_ambiguous_duplicate_grants() {
         let mut claims = CapabilityClaims {
             version: OCAP_VERSION,
