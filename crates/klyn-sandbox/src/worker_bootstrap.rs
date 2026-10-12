@@ -23,8 +23,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     broker::{BrokerClient, CapabilityVerifier, Ed25519CapabilityVerifier},
-    landlock_seccomp, CapabilityClaims, SandboxError, SignedCapability, BROKER_FD, MANIFEST_FD,
-    validate_trusted_root, MAX_BROKER_FRAME_BYTES, OCAP_VERSION,
+    landlock_seccomp, validate_trusted_root, CapabilityClaims, SandboxError, SignedCapability,
+    BROKER_FD, MANIFEST_FD, MAX_BROKER_FRAME_BYTES, OCAP_VERSION,
 };
 
 /// The key must be provisioned by the trusted image/configuration manager.
@@ -196,10 +196,7 @@ fn load_trusted_verifying_key() -> Result<VerifyingKey, SandboxError> {
     let mut parent = path.parent();
     while let Some(directory) = parent {
         let metadata = fs::symlink_metadata(directory)?;
-        if !metadata.file_type().is_dir()
-            || metadata.uid() != 0
-            || metadata.mode() & 0o022 != 0
-        {
+        if !metadata.file_type().is_dir() || metadata.uid() != 0 || metadata.mode() & 0o022 != 0 {
             return Err(SandboxError::InvalidConfig(format!(
                 "verification-key directory is not root-controlled: {}",
                 directory.display()
