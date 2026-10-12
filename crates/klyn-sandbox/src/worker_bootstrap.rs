@@ -22,7 +22,7 @@ pub use crate::manifest::{WorkerManifest, WORKER_MANIFEST_VERSION};
 use crate::{
     broker::{BrokerClient, CapabilityVerifier, Ed25519CapabilityVerifier},
     landlock_seccomp, validate_trusted_root, CapabilityClaims, SandboxError, SignedCapability,
-    BROKER_FD, MANIFEST_FD, MAX_BROKER_FRAME_BYTES, OCAP_VERSION,
+    BROKER_FD, MANIFEST_FD, OCAP_VERSION,
 };
 
 /// The key must be provisioned by the trusted image/configuration manager.
@@ -38,13 +38,14 @@ pub struct WorkerBootstrapContext {
 /// must exit without processing mission input.
 pub fn initialize() -> Result<WorkerBootstrapContext, SandboxError> {
     let manifest = crate::manifest::read_sealed_manifest_fd(MANIFEST_FD)?;
-    validate_manifest_shape(&manifest)?;
 
     // A sealed memfd prevents mutation after sealing; the Ed25519 signature
     // establishes who authorized its contents. Both checks are mandatory.
     let verification_key = load_trusted_verifying_key()?;
     manifest.verify_signature(&verification_key)?;
     manifest.verify_worker_executable("/proc/self/exe")?;
+    // Filesystem root resolution happens only after the signer is trusted.
+    validate_manifest_shape(&manifest)?;
 
     let verifier = Ed25519CapabilityVerifier::new(verification_key);
     verifier
