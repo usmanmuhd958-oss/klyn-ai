@@ -291,7 +291,7 @@ pub fn read_sealed_manifest_fd(fd: RawFd) -> Result<WorkerManifest, SandboxError
     }
     let metadata = file.metadata()?;
     if !metadata.is_file()
-        || metadata.mode() & libc::S_IFMT as u32 != libc::S_IFREG as u32
+        || metadata.mode() & libc::S_IFMT != libc::S_IFREG
         || metadata.len() == 0
         || metadata.len() > MAX_BROKER_FRAME_BYTES as u64
     {
