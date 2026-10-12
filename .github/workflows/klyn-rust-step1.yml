@@ -34,3 +34,11 @@ jobs:
         run: cargo test --package klyn-protocol --package klyn-daemon
       - name: Clippy
         run: cargo clippy --package klyn-protocol --package klyn-daemon --all-targets -- -D warnings
+      - name: Reject foreign-owned socket parent (privileged integration test)
+        run: >-
+          sudo -E env
+          "HOME=$HOME"
+          "PATH=$PATH"
+          "CARGO_HOME=$HOME/.cargo"
+          "RUSTUP_HOME=$HOME/.rustup"
+          cargo test --package klyn-daemon --test socket_parent_security
