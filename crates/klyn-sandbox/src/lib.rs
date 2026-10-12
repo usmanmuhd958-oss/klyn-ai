@@ -22,6 +22,7 @@ use std::{
     io::{self, Write},
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
 
 use serde::{Deserialize, Serialize};
@@ -29,6 +30,9 @@ use thiserror::Error;
 
 pub const OCAP_VERSION: u32 = 1;
 pub const MAX_BROKER_FRAME_BYTES: usize = 64 * 1024;
+pub const MAX_SANDBOX_PATH_BYTES: usize = 4096;
+pub const MAX_SANDBOX_PATH_COMPONENT_BYTES: usize = 255;
+pub const MAX_IO_DEVICE_LIMITS: usize = 64;
 pub const BROKER_FD: i32 = 3;
 pub const MANIFEST_FD: i32 = 4;
 
@@ -145,8 +149,18 @@ impl ResourceBudget {
                 "pids_max must be greater than zero".into(),
             ));
         }
+        if self.io_limits.len() > MAX_IO_DEVICE_LIMITS {
+            return Err(SandboxError::InvalidConfig(format!(
+                "I/O budget may contain at most {MAX_IO_DEVICE_LIMITS} devices"
+            )));
+        }
         let mut devices = BTreeSet::new();
         for limit in &self.io_limits {
+            if limit.major == 0 && limit.minor == 0 {
+                return Err(SandboxError::InvalidConfig(
+                    "I/O device 0:0 is not a valid block-device limit target".into(),
+                ));
+            }
             if limit.rbps == Some(0)
                 || limit.wbps == Some(0)
                 || limit.riops == Some(0)
@@ -195,6 +209,7 @@ impl CapabilityClaims {
         }
         self.budget.validate()?;
 
+        let mut file_scopes = BTreeSet::new();
         for grant in &self.file_grants {
             if grant.root_id.is_empty() || grant.root_id.len() > 128 {
                 return Err(SandboxError::InvalidConfig(
@@ -202,14 +217,28 @@ impl CapabilityClaims {
                 ));
             }
             validate_relative_path(&grant.prefix, true)?;
+            // Duplicate scopes with different access modes are ambiguous and
+            // can merge into broader Landlock rules. Use one explicit mode per scope.
+            if !file_scopes.insert((grant.root_id.as_str(), grant.prefix.as_str())) {
+                return Err(SandboxError::InvalidConfig(
+                    "duplicate filesystem grant scope; combine access into one explicit grant"
+                        .into(),
+                ));
+            }
         }
+        let mut network_scopes = BTreeSet::new();
         for grant in &self.network_grants {
-            grant.address.parse::<std::net::SocketAddr>().map_err(|_| {
+            let address = grant.address.parse::<std::net::SocketAddr>().map_err(|_| {
                 SandboxError::InvalidConfig(format!(
                     "network grant must be a literal socket address: {}",
                     grant.address
                 ))
             })?;
+            if !network_scopes.insert(address) {
+                return Err(SandboxError::InvalidConfig(
+                    "duplicate network destination in capability".into(),
+                ));
+            }
         }
         Ok(())
     }
@@ -227,6 +256,11 @@ pub fn validate_relative_path(path: &str, allow_empty: bool) -> Result<(), Sandb
             ))
         };
     }
+    if path.len() > MAX_SANDBOX_PATH_BYTES {
+        return Err(SandboxError::InvalidConfig(format!(
+            "path exceeds {MAX_SANDBOX_PATH_BYTES} bytes"
+        )));
+    }
     if path.starts_with('/') || path.contains('\0') || path.contains('\\') {
         return Err(SandboxError::InvalidConfig(
             "path must be a relative POSIX path without NUL or backslash".into(),
@@ -238,8 +272,41 @@ pub fn validate_relative_path(path: &str, allow_empty: bool) -> Result<(), Sandb
                 "path contains an empty, dot, or parent component".into(),
             ));
         }
+        if component.len() > MAX_SANDBOX_PATH_COMPONENT_BYTES {
+            return Err(SandboxError::InvalidConfig(format!(
+                "path component exceeds {MAX_SANDBOX_PATH_COMPONENT_BYTES} bytes"
+            )));
+        }
     }
     Ok(())
+}
+
+/// Resolve and validate a daemon-configured filesystem root.
+pub fn validate_trusted_root(path: impl AsRef<Path>) -> Result<PathBuf, SandboxError> {
+    let canonical = fs::canonicalize(path.as_ref())?;
+    if !fs::metadata(&canonical)?.is_dir() {
+        return Err(SandboxError::InvalidConfig(format!(
+            "trusted root is not a directory: {}",
+            canonical.display()
+        )));
+    }
+
+    // Never let a capability root expose the host root or virtual kernel APIs.
+    // Path::starts_with is component-aware (so /dev-workspace is not /dev).
+    let protected = [
+        Path::new("/"),
+        Path::new("/proc"),
+        Path::new("/sys"),
+        Path::new("/dev"),
+        Path::new("/run"),
+    ];
+    if protected.iter().any(|prefix| canonical == *prefix || (prefix != &Path::new("/") && canonical.starts_with(prefix))) {
+        return Err(SandboxError::InvalidConfig(format!(
+            "trusted root points at a protected filesystem tree: {}",
+            canonical.display()
+        )));
+    }
+    Ok(canonical)
 }
 
 /// Component-aware subtree check (e.g. src2 is not beneath src).
@@ -274,16 +341,32 @@ impl CgroupV2 {
             ));
         }
         let available = fs::read_to_string(root.join("cgroup.controllers"))?;
-        for controller in ["cpu", "memory", "pids"] {
+        let enabled = fs::read_to_string(root.join("cgroup.subtree_control"))?;
+        let mut required_controllers = vec!["cpu", "memory", "pids"];
+        if !budget.io_limits.is_empty() {
+            required_controllers.push("io");
+        }
+        for controller in required_controllers {
             if !available.split_whitespace().any(|c| c == controller) {
                 return Err(SandboxError::InvalidConfig(format!(
                     "required cgroup-v2 controller is unavailable: {controller}"
                 )));
             }
+            if !enabled.split_whitespace().any(|c| c == controller) {
+                return Err(SandboxError::Enforcement(format!(
+                    "required cgroup-v2 controller is not enabled in cgroup.subtree_control: {controller}"
+                )));
+            }
         }
-        if !budget.io_limits.is_empty() && !available.split_whitespace().any(|c| c == "io") {
+        if fs::read_to_string(root.join("cgroup.type"))?.trim() != "domain" {
             return Err(SandboxError::InvalidConfig(
-                "I/O budget requested but cgroup-v2 io controller is unavailable".into(),
+                "sandbox cgroups require a domain cgroup subtree".into(),
+            ));
+        }
+        if !root.join("cgroup.kill").exists() {
+            return Err(SandboxError::Enforcement(
+                "cgroup.kill is unavailable; refusing a cgroup without reliable kill support"
+                    .into(),
             ));
         }
 
@@ -314,6 +397,13 @@ impl CgroupV2 {
                 );
                 write_control(&path.join("io.max"), &line)?;
             }
+            if !path.join("cgroup.kill").exists() {
+                return Err(SandboxError::Enforcement(
+                    "new cgroup has no cgroup.kill control; refusing incomplete lifecycle cleanup"
+                        .into(),
+                ));
+            }
+            verify_budget_controls(&path, budget)?;
             Ok(())
         })();
 
@@ -348,13 +438,111 @@ impl CgroupV2 {
         write_control(&path, "1")?;
         Ok(())
     }
+
+    /// Kill every task in the sandbox and wait until the kernel reports the
+    /// cgroup empty. Timeout or an unavailable control is an enforcement error.
+    pub fn terminate_and_wait(&self, timeout: Duration) -> Result<(), SandboxError> {
+        self.kill_all()?;
+        let deadline = Instant::now() + timeout;
+        let events_path = self.path.join("cgroup.events");
+        loop {
+            let events = fs::read_to_string(&events_path)?;
+            if events.lines().any(|line| line.trim() == "populated 0") {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(SandboxError::Enforcement(
+                    "sandbox cgroup remained populated after kill timeout".into(),
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
 }
 
 impl Drop for CgroupV2 {
     fn drop(&mut self) {
-        // A non-empty cgroup cannot be removed; cleanup is best effort here.
+        // Dropping the supervisor handle must not leave a runaway worker behind.
+        // Explicit terminate_and_wait is preferred because Drop cannot report errors.
+        let kill = self.path.join("cgroup.kill");
+        if kill.exists() {
+            let _ = write_control(&kill, "1");
+        }
         let _ = fs::remove_dir(&self.path);
     }
+}
+
+fn verify_budget_controls(path: &Path, budget: &ResourceBudget) -> Result<(), SandboxError> {
+    fn read_numeric(path: &Path, label: &str) -> Result<u64, SandboxError> {
+        let value = fs::read_to_string(path)?;
+        value.trim().parse::<u64>().map_err(|_| {
+            SandboxError::Enforcement(format!(
+                "kernel did not report a finite numeric {label} limit"
+            ))
+        })
+    }
+
+    if read_numeric(&path.join("memory.max"), "memory.max")? != budget.memory_max_bytes {
+        return Err(SandboxError::Enforcement(
+            "effective memory.max differs from the requested resource budget".into(),
+        ));
+    }
+    if read_numeric(&path.join("memory.swap.max"), "memory.swap.max")? != 0 {
+        return Err(SandboxError::Enforcement(
+            "swap is not disabled for the sandbox cgroup".into(),
+        ));
+    }
+    if fs::read_to_string(path.join("memory.oom.group"))?.trim() != "1" {
+        return Err(SandboxError::Enforcement(
+            "memory.oom.group is not enabled for the sandbox cgroup".into(),
+        ));
+    }
+    let cpu = fs::read_to_string(path.join("cpu.max"))?;
+    let cpu: Vec<_> = cpu.split_whitespace().collect();
+    if cpu.len() != 2
+        || cpu[0].parse::<u64>().ok() != Some(budget.cpu_quota_micros)
+        || cpu[1].parse::<u64>().ok() != Some(budget.cpu_period_micros)
+    {
+        return Err(SandboxError::Enforcement(
+            "effective cpu.max differs from the requested resource budget".into(),
+        ));
+    }
+    if read_numeric(&path.join("pids.max"), "pids.max")? != u64::from(budget.pids_max) {
+        return Err(SandboxError::Enforcement(
+            "effective pids.max differs from the requested resource budget".into(),
+        ));
+    }
+
+    if !budget.io_limits.is_empty() {
+        let contents = fs::read_to_string(path.join("io.max"))?;
+        for limit in &budget.io_limits {
+            let device = format!("{}:{}", limit.major, limit.minor);
+            let line = contents
+                .lines()
+                .find(|line| line.split_whitespace().next() == Some(device.as_str()))
+                .ok_or_else(|| {
+                    SandboxError::Enforcement(format!(
+                        "kernel did not report the requested I/O device limit: {device}"
+                    ))
+                })?;
+            for (key, expected) in [
+                ("rbps", limit.rbps.map_or_else(|| "max".into(), |v| v.to_string())),
+                ("wbps", limit.wbps.map_or_else(|| "max".into(), |v| v.to_string())),
+                ("riops", limit.riops.map_or_else(|| "max".into(), |v| v.to_string())),
+                ("wiops", limit.wiops.map_or_else(|| "max".into(), |v| v.to_string())),
+            ] {
+                let actual = line.split_whitespace().find_map(|field| {
+                    field.strip_prefix(&format!("{key}="))
+                });
+                if actual != Some(expected.as_str()) {
+                    return Err(SandboxError::Enforcement(format!(
+                        "effective io.max {key} limit differs for device {device}"
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn write_control(path: &Path, value: &str) -> io::Result<()> {
@@ -417,13 +605,90 @@ mod tests {
     }
 
     #[test]
-    fn path_validation_rejects_traversal_and_absolute_paths() {
+    fn path_validation_rejects_traversal_absolute_and_overlong_paths() {
         assert!(validate_relative_path("../etc/passwd", false).is_err());
         assert!(validate_relative_path("/etc/passwd", false).is_err());
         assert!(validate_relative_path("a//b", false).is_err());
         assert!(validate_relative_path("a/./b", false).is_err());
         assert!(validate_relative_path("workspace/a.rs", false).is_ok());
         assert!(validate_relative_path("", true).is_ok());
+        assert!(validate_relative_path(&"a".repeat(MAX_SANDBOX_PATH_BYTES + 1), false).is_err());
+        assert!(validate_relative_path(&format!("dir/{}", "x".repeat(MAX_SANDBOX_PATH_COMPONENT_BYTES + 1)), false).is_err());
+    }
+
+    #[test]
+    fn trusted_root_rejects_host_root_and_virtual_kernel_trees() {
+        assert!(validate_trusted_root("/").is_err());
+        assert!(validate_trusted_root("/proc").is_err());
+        assert!(validate_trusted_root("/sys").is_err());
+        assert!(validate_trusted_root("/dev").is_err());
+        assert!(validate_trusted_root("/run").is_err());
+
+        let workspace = tempfile::tempdir().unwrap();
+        assert_eq!(
+            validate_trusted_root(workspace.path()).unwrap(),
+            fs::canonicalize(workspace.path()).unwrap()
+        );
+    }
+
+    #[test]
+    fn capability_rejects_ambiguous_duplicate_grants() {
+        let mut claims = CapabilityClaims {
+            version: OCAP_VERSION,
+            token_id: "duplicate-scope".into(),
+            subject_uid: 1000,
+            subject_gid: 1000,
+            expires_at_unix: u64::MAX,
+            file_grants: vec![
+                FileGrant { root_id: "workspace".into(), prefix: "src".into(), access: FileAccess::Read },
+                FileGrant { root_id: "workspace".into(), prefix: "src".into(), access: FileAccess::Write },
+            ],
+            network_grants: vec![],
+            budget: ResourceBudget {
+                memory_max_bytes: 1024 * 1024,
+                cpu_quota_micros: 100_000,
+                cpu_period_micros: 100_000,
+                pids_max: 4,
+                io_limits: vec![],
+            },
+        };
+        assert!(claims.validate().is_err());
+
+        claims.file_grants.clear();
+        claims.network_grants = vec![
+            NetworkGrant { address: "127.0.0.1:8080".into() },
+            NetworkGrant { address: "127.0.0.1:8080".into() },
+        ];
+        assert!(claims.validate().is_err());
+    }
+
+    #[test]
+    fn cgroup_limit_readback_must_match_the_signed_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let budget = ResourceBudget {
+            memory_max_bytes: 4096,
+            cpu_quota_micros: 50_000,
+            cpu_period_micros: 100_000,
+            pids_max: 8,
+            io_limits: vec![IoDeviceLimit {
+                major: 8,
+                minor: 0,
+                rbps: Some(1024),
+                wbps: None,
+                riops: None,
+                wiops: None,
+            }],
+        };
+        fs::write(dir.path().join("memory.max"), "4096").unwrap();
+        fs::write(dir.path().join("memory.swap.max"), "0").unwrap();
+        fs::write(dir.path().join("memory.oom.group"), "1").unwrap();
+        fs::write(dir.path().join("cpu.max"), "50000 100000").unwrap();
+        fs::write(dir.path().join("pids.max"), "8").unwrap();
+        fs::write(dir.path().join("io.max"), "8:0 rbps=1024 wbps=max riops=max wiops=max\n").unwrap();
+        assert!(verify_budget_controls(dir.path(), &budget).is_ok());
+
+        fs::write(dir.path().join("memory.max"), "max").unwrap();
+        assert!(verify_budget_controls(dir.path(), &budget).is_err());
     }
 
     #[test]
