@@ -13,13 +13,20 @@ use std::{
     os::unix::{fs::MetadataExt, process::CommandExt},
     path::PathBuf,
     process::Command,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
-use klyn_sandbox::validate_trusted_executable;
+use klyn_sandbox::{
+    broker::{CapabilityVerifier, Ed25519CapabilityVerifier},
+    cgroup::CgroupV2Boundary,
+    manifest::read_sealed_manifest_fd,
+    validate_trusted_executable,
+    worker_bootstrap::{load_trusted_verifying_key, validate_manifest_shape},
+    MANIFEST_FD,
+};
 
-const GATE_FD: i32 = 5;
-const MANIFEST_FD: i32 = 4;
-const GATE_RELEASE: u8 = 0xA5;
+const GATE_FD: i32 = klyn_sandbox::start_gate::START_GATE_FD;
+const GATE_RELEASE: u8 = klyn_sandbox::start_gate::START_GATE_RELEASE;
 
 fn main() {
     if let Err(error) = run() {
@@ -88,6 +95,44 @@ fn run() -> Result<(), String> {
         return Err("sealed manifest FD 4 is not inherited".into());
     }
 
+    // Validate the sealed manifest, signer, capability, and exact worker image
+    // while still in trusted stage-0. This does not apply Landlock or seccomp;
+    // those restrictions remain the worker bootstrap's responsibility after ACK.
+    let duplicate = unsafe { libc::fcntl(MANIFEST_FD, libc::F_DUPFD_CLOEXEC, 10) };
+    if duplicate < 0 {
+        return Err(format!(
+            "cannot duplicate sealed manifest FD: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let manifest = read_sealed_manifest_fd(duplicate)
+        .map_err(|error| format!("sealed worker manifest rejected: {error}"))?;
+    let verification_key = load_trusted_verifying_key()
+        .map_err(|error| format!("trusted verification key rejected: {error}"))?;
+    manifest
+        .verify_signature(&verification_key)
+        .map_err(|error| format!("manifest signature rejected: {error}"))?;
+    validate_manifest_shape(&manifest)
+        .map_err(|error| format!("manifest policy rejected: {error}"))?;
+    manifest
+        .verify_worker_executable(&trusted_executable)
+        .map_err(|error| format!("worker binary identity rejected: {error}"))?;
+
+    let claims = &manifest.capability.claims;
+    if claims.subject_uid != uid || claims.subject_gid != gid {
+        return Err("launcher UID/GID does not match the signed capability subject".into());
+    }
+    Ed25519CapabilityVerifier::new(verification_key.clone())
+        .verify(&manifest.capability)
+        .map_err(|error| format!("capability signature rejected: {error}"))?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "system clock is before UNIX epoch")?
+        .as_secs();
+    if claims.expires_at_unix <= now {
+        return Err("worker capability has expired".into());
+    }
+
     let mut gate = unsafe { std::fs::File::from_raw_fd(GATE_FD) };
     let mut signal = [0u8; 1];
     gate.read_exact(&mut signal)
@@ -96,6 +141,15 @@ fn run() -> Result<(), String> {
         return Err("invalid start gate signal".into());
     }
     drop(gate);
+
+    // The ACK permits only trusted bootstrap progress. Re-check the actual
+    // cgroup before changing namespaces or execing the worker image.
+    CgroupV2Boundary::verify_current(
+        &manifest.cgroup_path,
+        &manifest.capability.claims.budget,
+        manifest.cpu_weight,
+    )
+    .map_err(|error| format!("effective cgroup boundary rejected: {error}"))?;
 
     // No namespace fallback is allowed. In particular, missing privileges or
     // namespaces must terminate launch instead of continuing without isolation.
