@@ -214,6 +214,82 @@ mod tests {
     }
 
     #[test]
+    fn real_cgroup_attachment_is_read_back_when_a_delegated_root_is_configured() {
+        const ROOT_ENV: &str = "KLYN_TEST_CGROUP_ROOT";
+        const CHILD_ENV: &str = "KLYN_CGROUP_ATTACHMENT_CHILD";
+
+        // The child mode runs only this test and waits until its parent moves
+        // it into the real delegated cgroup. This keeps the test runner itself
+        // outside the target cgroup so kill/cleanup cannot kill parallel tests.
+        if std::env::var_os(CHILD_ENV).is_some() {
+            std::thread::sleep(Duration::from_secs(30));
+            return;
+        }
+
+        let Some(root) = std::env::var_os(ROOT_ENV) else {
+            eprintln!(
+                "skipping privileged cgroup integration: set {ROOT_ENV} to a writable delegated cgroup-v2 root"
+            );
+            return;
+        };
+
+        use std::process::{Command, Stdio};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after Unix epoch")
+            .as_nanos();
+        let worker_id = format!("test-{}-{nonce}", std::process::id());
+        let budget = ResourceBudget {
+            memory_max_bytes: 256 * 1024 * 1024,
+            cpu_quota_micros: 100_000,
+            cpu_period_micros: 100_000,
+            pids_max: 64,
+            io_limits: vec![],
+        };
+        let boundary = CgroupV2Boundary::create(root, &worker_id, &budget, 100)
+            .expect("create and configure a real delegated cgroup");
+
+        let mut child = Command::new(std::env::current_exe().expect("test executable path"))
+            .arg("--exact")
+            .arg(
+                "cgroup::tests::real_cgroup_attachment_is_read_back_when_a_delegated_root_is_configured",
+            )
+            .env(CHILD_ENV, "1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn a dedicated child for cgroup attachment");
+
+        if let Err(error) = boundary.attach_and_verify(child.id()) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = boundary.terminate_and_wait(Duration::from_secs(3));
+            panic!("real cgroup PID attachment/readback failed: {error}");
+        }
+
+        let members = fs::read_to_string(boundary.path().join("cgroup.procs"))
+            .expect("read back kernel cgroup.procs");
+        assert!(
+            members
+                .lines()
+                .any(|line| line.trim().parse::<u32>().ok() == Some(child.id())),
+            "kernel cgroup.procs does not contain the attached child PID"
+        );
+
+        boundary
+            .terminate_and_wait(Duration::from_secs(3))
+            .expect("kill and reap the target cgroup");
+        let status = child.wait().expect("reap the cgroup-attached child");
+        assert!(
+            !status.success(),
+            "child survived cgroup.kill; resource boundary cleanup was not enforced"
+        );
+    }
+
+    #[test]
     fn empty_cgroup_path_never_resolves_as_a_valid_worker_boundary() {
         assert!(CgroupV2Boundary::verify_current(
             Path::new("/"),
