@@ -555,9 +555,10 @@ fn verify_budget_controls(path: &Path, budget: &ResourceBudget) -> Result<(), Sa
         })
     }
 
-    if read_numeric(&path.join("memory.max"), "memory.max")? != budget.memory_max_bytes {
+    let effective_memory = read_numeric(&path.join("memory.max"), "memory.max")?;
+    if effective_memory == 0 || effective_memory > budget.memory_max_bytes {
         return Err(SandboxError::Enforcement(
-            "effective memory.max differs from the requested resource budget".into(),
+            "effective memory.max exceeds the requested resource budget".into(),
         ));
     }
     if read_numeric(&path.join("memory.swap.max"), "memory.swap.max")? != 0 {
