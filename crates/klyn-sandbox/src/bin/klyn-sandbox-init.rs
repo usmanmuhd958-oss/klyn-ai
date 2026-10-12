@@ -177,6 +177,9 @@ fn run() -> Result<(), String> {
     {
         child_fail("mounting isolated procfs failed");
     }
+    if let Err(error) = drop_capability_authority() {
+        child_fail(&format!("dropping capability authority failed: {error}"));
+    }
     if unsafe { libc::setgroups(0, std::ptr::null()) } != 0 {
         child_fail("clearing supplementary groups failed");
     }
@@ -185,6 +188,9 @@ fn run() -> Result<(), String> {
     }
     if unsafe { libc::setresuid(uid, uid, uid) } != 0 {
         child_fail("setresuid failed");
+    }
+    if let Err(error) = clear_process_capability_sets() {
+        child_fail(&format!("clearing process capabilities failed: {error}"));
     }
     unsafe {
         libc::umask(0o077);
@@ -225,6 +231,88 @@ fn run() -> Result<(), String> {
     }
     .exec();
     child_fail(&format!("exec trusted worker failed: {error}"));
+}
+
+fn drop_capability_authority() -> Result<(), String> {
+    // Linux PRCTL values are stable UAPI constants. Fail closed if a required
+    // capability transition is unavailable rather than relying on implicit
+    // setuid behavior or inherited daemon securebits.
+    const PR_SET_KEEPCAPS: libc::c_int = 8;
+    const PR_CAPBSET_DROP: libc::c_int = 24;
+    const PR_SET_SECUREBITS: libc::c_int = 28;
+    const PR_CAP_AMBIENT: libc::c_int = 47;
+    const PR_CAP_AMBIENT_CLEAR_ALL: libc::c_ulong = 4;
+    const SECBIT_NOROOT: libc::c_ulong = 1;
+    const SECBIT_NOROOT_LOCKED: libc::c_ulong = 2;
+
+    if unsafe { libc::prctl(PR_SET_KEEPCAPS, 0, 0, 0, 0) } != 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    if unsafe {
+        libc::prctl(
+            PR_SET_SECUREBITS,
+            SECBIT_NOROOT | SECBIT_NOROOT_LOCKED,
+            0,
+            0,
+            0,
+        )
+    } != 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    if unsafe { libc::prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0) } != 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+
+    let last_cap: u32 = std::fs::read_to_string("/proc/sys/kernel/cap_last_cap")
+        .map_err(|error| format!("cannot read kernel capability bound: {error}"))?
+        .trim()
+        .parse()
+        .map_err(|error| format!("invalid kernel capability bound: {error}"))?;
+    if last_cap > 63 {
+        return Err(format!(
+            "kernel capability index {last_cap} exceeds the supported capability-set width"
+        ));
+    }
+    for capability in 0..=last_cap {
+        if unsafe { libc::prctl(PR_CAPBSET_DROP, capability, 0, 0, 0) } != 0 {
+            return Err(format!(
+                "PR_CAPBSET_DROP({capability}) failed: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn clear_process_capability_sets() -> Result<(), String> {
+    #[repr(C)]
+    struct CapHeader {
+        version: u32,
+        pid: i32,
+    }
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct CapData {
+        effective: u32,
+        permitted: u32,
+        inheritable: u32,
+    }
+
+    const LINUX_CAPABILITY_VERSION_3: u32 = 0x2008_0522;
+    let header = CapHeader {
+        version: LINUX_CAPABILITY_VERSION_3,
+        pid: 0,
+    };
+    let empty = CapData {
+        effective: 0,
+        permitted: 0,
+        inheritable: 0,
+    };
+    let data = [empty, empty];
+    if unsafe { libc::syscall(libc::SYS_capset, &header, data.as_ptr()) } != 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    Ok(())
 }
 
 fn validate_standard_streams() -> Result<(), String> {
