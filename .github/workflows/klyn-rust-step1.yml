@@ -1,0 +1,44 @@
+name: KLYN Rust IPC and Lifecycle
+
+on:
+  push:
+    branches:
+      - feat/klyn-step1-ipc-lifecycle
+  pull_request:
+    branches: [main, master]
+    paths:
+      - Cargo.toml
+      - crates/klyn-protocol/**
+      - crates/klyn-daemon/**
+      - .github/workflows/klyn-rust-step1.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: klyn-rust-step1-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format new Rust crates
+        run: cargo fmt --package klyn-protocol --package klyn-daemon -- --check
+      - name: Unit and IPC integration tests
+        run: cargo test --package klyn-protocol --package klyn-daemon
+      - name: Clippy
+        run: cargo clippy --package klyn-protocol --package klyn-daemon --all-targets -- -D warnings
+      - name: Reject foreign-owned socket parent (privileged integration test)
+        run: >-
+          sudo -E env
+          "HOME=$HOME"
+          "PATH=$PATH"
+          "CARGO_HOME=$HOME/.cargo"
+          "RUSTUP_HOME=$HOME/.rustup"
+          cargo test --package klyn-daemon --test socket_parent_security

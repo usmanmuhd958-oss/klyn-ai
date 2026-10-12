@@ -1,0 +1,15 @@
+[package]
+name = "klyn-daemon"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.78"
+license = "MIT"
+publish = false
+description = "Fail-closed IPC router and lifecycle controller for KLYN OS"
+
+[dependencies]
+klyn-protocol = { path = "../klyn-protocol" }
+nix = { version = "0.30", features = ["socket", "user", "fs"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
