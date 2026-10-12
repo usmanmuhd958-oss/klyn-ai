@@ -8,6 +8,7 @@ use std::{
     fs::{self, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use crate::{CgroupV2, ResourceBudget, SandboxError};
@@ -94,6 +95,16 @@ impl CgroupV2Boundary {
             ));
         }
         Ok(())
+    }
+
+    /// Kill every process in this boundary and wait until the kernel reports
+    /// that the cgroup is empty. Delegated to the authoritative cgroup handle.
+    pub fn kill_all(&self) -> Result<(), SandboxError> {
+        self.inner.kill_all()
+    }
+
+    pub fn terminate_and_wait(&self, timeout: Duration) -> Result<(), SandboxError> {
+        self.inner.terminate_and_wait(timeout)
     }
 
     /// Fail-closed worker-side check: match /proc/self/cgroup to the exact
