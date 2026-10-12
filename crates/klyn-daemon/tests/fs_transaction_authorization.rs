@@ -12,7 +12,7 @@ use std::{
 use klyn_daemon::{
     fs_service::FsService,
     lifecycle::Lifecycle,
-    policy::{Permission, PeerIdentity, UidPolicy},
+    policy::{PeerIdentity, Permission, UidPolicy},
     Router,
 };
 use klyn_fs::{FsEngine, DEFAULT_PUBLICATION_REF};
@@ -82,7 +82,10 @@ fn transaction_mutations_are_isolated_by_authenticated_peer_uid() {
     let _cleanup = Cleanup(root.clone());
 
     git(&repository, &["init", "--initial-branch=main"]);
-    git(&repository, &["config", "user.name", "KLYN Transaction Test"]);
+    git(
+        &repository,
+        &["config", "user.name", "KLYN Transaction Test"],
+    );
     git(
         &repository,
         &["config", "user.email", "klyn-transaction-test@invalid"],
@@ -130,7 +133,10 @@ fn transaction_mutations_are_isolated_by_authenticated_peer_uid() {
             }),
         ),
         (Method::FsStage, json!({"transaction_id": transaction_id})),
-        (Method::FsValidate, json!({"transaction_id": transaction_id})),
+        (
+            Method::FsValidate,
+            json!({"transaction_id": transaction_id}),
+        ),
         (Method::FsCommit, json!({"transaction_id": transaction_id})),
         (Method::FsAbort, json!({"transaction_id": transaction_id})),
     ];
@@ -157,7 +163,10 @@ fn transaction_mutations_are_isolated_by_authenticated_peer_uid() {
             }),
         ),
         (Method::FsStage, json!({"transaction_id": transaction_id})),
-        (Method::FsValidate, json!({"transaction_id": transaction_id})),
+        (
+            Method::FsValidate,
+            json!({"transaction_id": transaction_id}),
+        ),
         (Method::FsCommit, json!({"transaction_id": transaction_id})),
     ] {
         let response = dispatch(&router, OWNER_UID, method, params);
