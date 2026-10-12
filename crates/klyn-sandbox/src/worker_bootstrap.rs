@@ -183,8 +183,8 @@ pub fn load_trusted_verifying_key() -> Result<VerifyingKey, SandboxError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{collections::BTreeMap, path::PathBuf};
     use crate::SignedCapability;
+    use std::{collections::BTreeMap, path::PathBuf};
 
     #[test]
     fn rejects_relative_broker_socket() {
