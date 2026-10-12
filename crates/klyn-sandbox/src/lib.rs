@@ -30,8 +30,7 @@ mod unsupported;
 
 #[cfg(not(target_os = "linux"))]
 pub use unsupported::{
-    broker, cgroup, landlock_seccomp, manifest, start_gate, supervisor, worker_bootstrap,
-    CgroupV2,
+    broker, cgroup, landlock_seccomp, manifest, start_gate, supervisor, worker_bootstrap, CgroupV2,
 };
 
 use std::{

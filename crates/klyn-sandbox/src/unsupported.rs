@@ -104,8 +104,10 @@ pub mod broker {
 
     impl BrokerClient {
         pub fn connect_reserved(_path: impl AsRef<Path>) -> io::Result<Self> {
-            Err(io::Error::new(io::ErrorKind::Unsupported,
-                SandboxError::UnsupportedPlatform.to_string()))
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                SandboxError::UnsupportedPlatform.to_string(),
+            ))
         }
 
         #[cfg(unix)]
