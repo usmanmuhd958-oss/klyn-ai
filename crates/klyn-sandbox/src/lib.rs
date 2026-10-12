@@ -771,35 +771,32 @@ fn validate_cgroup_id(id: &str) -> Result<(), SandboxError> {
     Ok(())
 }
 
-/// Verify that a configured executable is not writable by group or other users.
-/// The directory containing it must also be controlled by the daemon operator.
+/// Verify that a configured worker executable is root-owned, non-writable,
+/// and stored beneath directories that untrusted worker identities cannot alter.
 pub fn validate_trusted_executable(path: impl AsRef<Path>) -> Result<PathBuf, SandboxError> {
     let canonical = fs::canonicalize(path)?;
     let metadata = fs::metadata(&canonical)?;
     let mode = metadata.mode();
-    let owner = metadata.uid();
-    let euid = unsafe { libc::geteuid() };
     if !metadata.is_file()
         || mode & 0o111 == 0
-        || mode & 0o022 != 0
-        || (owner != 0 && owner != euid)
+        || mode & 0o222 != 0
+        || mode & (libc::S_ISUID | libc::S_ISGID) != 0
+        || metadata.uid() != 0
     {
         return Err(SandboxError::InvalidConfig(format!(
-            "trusted executable has unsafe type, mode, or owner: {}",
+            "trusted executable must be root-owned, executable, non-writable, and not setuid/setgid: {}",
             canonical.display()
         )));
     }
 
-    // A protected file inside a writable parent is still replaceable between
-    // validation and exec. Require every directory component to be controlled
-    // by root or the daemon's effective identity.
+    // A protected file inside a writable or user-owned parent is still
+    // replaceable before exec. Every parent must be root-owned and not
+    // group/world writable. This intentionally excludes binaries installed
+    // inside home directories or temporary build trees.
     let mut parent = canonical.parent();
     while let Some(directory) = parent {
         let metadata = fs::metadata(directory)?;
-        if !metadata.is_dir()
-            || metadata.mode() & 0o022 != 0
-            || (metadata.uid() != 0 && metadata.uid() != euid)
-        {
+        if !metadata.is_dir() || metadata.mode() & 0o022 != 0 || metadata.uid() != 0 {
             return Err(SandboxError::InvalidConfig(format!(
                 "trusted executable has an unsafe parent directory: {}",
                 directory.display()
@@ -845,6 +842,20 @@ mod tests {
             false
         )
         .is_err());
+    }
+
+    #[test]
+    fn trusted_executable_rejects_temporary_user_controlled_paths() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let executable = temp.path().join("klyn-worker");
+        fs::write(&executable, b"not-an-executable-worker").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(
+            validate_trusted_executable(&executable).is_err(),
+            "temporary or user-controlled worker binary was accepted"
+        );
     }
 
     #[test]
