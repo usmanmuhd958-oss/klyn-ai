@@ -20,7 +20,10 @@ use std::{
 use klyn_protocol::{
     decode_request, read_frame, write_response, FrameError, Response, RpcErrorCode,
 };
-use nix::sys::socket::{getsockopt, sockopt::PeerCredentials};
+use nix::{
+    sys::socket::{getsockopt, sockopt::PeerCredentials},
+    unistd::Uid,
+};
 use thiserror::Error;
 
 use crate::{
@@ -47,7 +50,7 @@ pub enum DaemonError {
     SocketPathExists,
     #[error("socket path is invalid or too long")]
     InvalidSocketPath,
-    #[error("socket parent directory is writable by group or other users")]
+    #[error("socket parent directory is not trusted: it must be owned by the effective UID and not writable by group or other users")]
     InsecureSocketDirectory,
     #[error("daemon worker thread could not be started")]
     WorkerSpawn,
@@ -79,7 +82,8 @@ impl BoundSocket {
         if !parent_metadata.is_dir() {
             return Err(DaemonError::InvalidSocketPath);
         }
-        if parent_metadata.mode() & 0o022 != 0 {
+        let effective_uid = Uid::effective().as_raw();
+        if parent_metadata.uid() != effective_uid || parent_metadata.mode() & 0o022 != 0 {
             return Err(DaemonError::InsecureSocketDirectory);
         }
 
