@@ -4,24 +4,18 @@
 //! runtime initialization that requires direct path opens or process creation,
 //! but before interpreting untrusted agent instructions.
 
-use std::{
-    collections::BTreeMap,
-    os::fd::RawFd,
-    path::PathBuf,
-};
+use std::{collections::BTreeMap, os::fd::RawFd, path::PathBuf};
 
 use landlock::{
-    make_bitflags, AccessFs, ABI, CompatLevel, PathBeneath, PathFd, RestrictionStatus,
-    Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus, RestrictSelfAttr,
+    make_bitflags, AccessFs, CompatLevel, PathBeneath, PathFd, RestrictSelfAttr, RestrictionStatus,
+    Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus, ABI,
 };
 use seccompiler::{
-    BpfProgram, SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition,
-    SeccompFilter, SeccompRule,
+    BpfProgram, SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition, SeccompFilter,
+    SeccompRule,
 };
 
-use crate::{
-    validate_relative_path, CapabilityClaims, FileAccess, SandboxError, BROKER_FD,
-};
+use crate::{validate_relative_path, CapabilityClaims, FileAccess, SandboxError, BROKER_FD};
 
 /// Apply a hard-required ABI-v3 Landlock ruleset.
 ///
@@ -43,7 +37,9 @@ pub fn apply_landlock(
     let mut normalized_roots = BTreeMap::new();
     for (id, path) in roots {
         if id.is_empty() || id.len() > 128 {
-            return Err(SandboxError::InvalidConfig("invalid trusted root id".into()));
+            return Err(SandboxError::InvalidConfig(
+                "invalid trusted root id".into(),
+            ));
         }
         let canonical = std::fs::canonicalize(path)?;
         if !std::fs::metadata(&canonical)?.is_dir() {
@@ -57,12 +53,14 @@ pub fn apply_landlock(
 
     for grant in &claims.file_grants {
         validate_relative_path(&grant.prefix, true)?;
-        let root = normalized_roots.get(grant.root_id.as_str()).ok_or_else(|| {
-            SandboxError::InvalidConfig(format!(
-                "OCap references an unconfigured filesystem root: {}",
-                grant.root_id
-            ))
-        })?;
+        let root = normalized_roots
+            .get(grant.root_id.as_str())
+            .ok_or_else(|| {
+                SandboxError::InvalidConfig(format!(
+                    "OCap references an unconfigured filesystem root: {}",
+                    grant.root_id
+                ))
+            })?;
         let requested = if grant.prefix.is_empty() {
             root.clone()
         } else {
@@ -84,13 +82,11 @@ pub fn apply_landlock(
             }
         };
         ruleset = ruleset
-            .add_rule(
-                PathBeneath::new(
-                    PathFd::new(&canonical)
-                        .map_err(|e| SandboxError::Enforcement(format!("Landlock PathFd: {e}")))?,
-                    access,
-                ),
-            )
+            .add_rule(PathBeneath::new(
+                PathFd::new(&canonical)
+                    .map_err(|e| SandboxError::Enforcement(format!("Landlock PathFd: {e}")))?,
+                access,
+            ))
             .map_err(|e| SandboxError::Enforcement(format!("Landlock add_rule: {e}")))?;
     }
 
@@ -101,9 +97,7 @@ pub fn apply_landlock(
     let status = ruleset
         .restrict_self()
         .map_err(|e| SandboxError::Enforcement(format!("Landlock restrict_self: {e}")))?;
-    if status.ruleset != RulesetStatus::FullyEnforced
-        || !status.no_new_privs
-        || !status.all_threads
+    if status.ruleset != RulesetStatus::FullyEnforced || !status.no_new_privs || !status.all_threads
     {
         return Err(SandboxError::Enforcement(format!(
             "Landlock returned incomplete enforcement status: {status:?}"
@@ -208,15 +202,13 @@ pub fn apply_worker_seccomp(broker_fd: RawFd) -> Result<(), SandboxError> {
     }
 
     // Only allow descriptor reception on the broker channel. sendmsg is denied.
-    let broker_only_recvmsg = SeccompRule::new(vec![
-        SeccompCondition::new(
-            0,
-            SeccompCmpArgLen::Dword,
-            SeccompCmpOp::Eq,
-            BROKER_FD as u64,
-        )
-        .map_err(|e| SandboxError::Enforcement(format!("seccomp condition: {e}")))?,
-    ])
+    let broker_only_recvmsg = SeccompRule::new(vec![SeccompCondition::new(
+        0,
+        SeccompCmpArgLen::Dword,
+        SeccompCmpOp::Eq,
+        BROKER_FD as u64,
+    )
+    .map_err(|e| SandboxError::Enforcement(format!("seccomp condition: {e}")))?])
     .map_err(|e| SandboxError::Enforcement(format!("seccomp rule: {e}")))?;
     rules.insert(libc::SYS_recvmsg, vec![broker_only_recvmsg]);
 
@@ -275,8 +267,8 @@ mod tests {
     #[test]
     fn landlock_requires_supported_abi_and_all_threads() {
         let roots = BTreeMap::new();
-        let status = apply_landlock(&claims(), &roots)
-            .expect("required Landlock features are unavailable");
+        let status =
+            apply_landlock(&claims(), &roots).expect("required Landlock features are unavailable");
         assert_eq!(status.ruleset, RulesetStatus::FullyEnforced);
         assert!(status.no_new_privs);
         assert!(status.all_threads);
@@ -299,7 +291,8 @@ mod tests {
         let wire = serde_json::to_vec(&SignedCapability {
             claims: c.clone(),
             signature: vec![0; 64],
-        }).unwrap();
+        })
+        .unwrap();
         let decoded: SignedCapability = serde_json::from_slice(&wire).unwrap();
         assert_eq!(decoded.claims, c);
         assert_eq!(decoded.signature.len(), 64);

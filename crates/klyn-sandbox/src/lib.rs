@@ -134,9 +134,7 @@ impl ResourceBudget {
                 "memory_max_bytes must be greater than zero".into(),
             ));
         }
-        if self.cpu_quota_micros == 0
-            || !(1_000..=1_000_000).contains(&self.cpu_period_micros)
-        {
+        if self.cpu_quota_micros == 0 || !(1_000..=1_000_000).contains(&self.cpu_period_micros) {
             return Err(SandboxError::InvalidConfig(
                 "cpu quota must be positive and cpu period must be in 1000..=1000000 microseconds"
                     .into(),
@@ -283,9 +281,7 @@ impl CgroupV2 {
                 )));
             }
         }
-        if !budget.io_limits.is_empty()
-            && !available.split_whitespace().any(|c| c == "io")
-        {
+        if !budget.io_limits.is_empty() && !available.split_whitespace().any(|c| c == "io") {
             return Err(SandboxError::InvalidConfig(
                 "I/O budget requested but cgroup-v2 io controller is unavailable".into(),
             ));
@@ -294,7 +290,10 @@ impl CgroupV2 {
         let path = root.join(id);
         fs::create_dir(&path)?;
         let result = (|| -> Result<(), SandboxError> {
-            write_control(&path.join("memory.max"), &budget.memory_max_bytes.to_string())?;
+            write_control(
+                &path.join("memory.max"),
+                &budget.memory_max_bytes.to_string(),
+            )?;
             write_control(&path.join("memory.oom.group"), "1")?;
             write_control(&path.join("memory.swap.max"), "0")?;
             write_control(
@@ -403,9 +402,15 @@ mod tests {
 
     #[test]
     fn path_scope_is_component_aware() {
-        assert!(path_is_within_grant("workspace/src/main.rs", "workspace/src"));
+        assert!(path_is_within_grant(
+            "workspace/src/main.rs",
+            "workspace/src"
+        ));
         assert!(path_is_within_grant("workspace/src", "workspace/src"));
-        assert!(!path_is_within_grant("workspace/src2/main.rs", "workspace/src"));
+        assert!(!path_is_within_grant(
+            "workspace/src2/main.rs",
+            "workspace/src"
+        ));
         assert!(!path_is_within_grant("../etc/passwd", ""));
     }
 

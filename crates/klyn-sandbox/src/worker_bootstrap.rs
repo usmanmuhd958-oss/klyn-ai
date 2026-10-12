@@ -10,10 +10,7 @@ use std::{
     collections::BTreeMap,
     fs::{self, File},
     io::{Read, Seek, SeekFrom},
-    os::{
-        fd::FromRawFd,
-        unix::fs::MetadataExt,
-    },
+    os::{fd::FromRawFd, unix::fs::MetadataExt},
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -23,8 +20,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     broker::{BrokerClient, CapabilityVerifier, Ed25519CapabilityVerifier},
-    landlock_seccomp, CapabilityClaims, SandboxError, SignedCapability,
-    BROKER_FD, MANIFEST_FD, MAX_BROKER_FRAME_BYTES, OCAP_VERSION,
+    landlock_seccomp, CapabilityClaims, SandboxError, SignedCapability, BROKER_FD, MANIFEST_FD,
+    MAX_BROKER_FRAME_BYTES, OCAP_VERSION,
 };
 
 /// The key must be provisioned by the trusted image/configuration manager.
@@ -68,11 +65,7 @@ pub fn initialize() -> Result<WorkerBootstrapContext, SandboxError> {
     let broker = BrokerClient::connect_reserved(&manifest.broker_socket)
         .map_err(|e| SandboxError::Enforcement(format!("broker connection failed: {e}")))?;
 
-    landlock_seccomp::enforce_worker(
-        &manifest.capability.claims,
-        &manifest.roots,
-        BROKER_FD,
-    )?;
+    landlock_seccomp::enforce_worker(&manifest.capability.claims, &manifest.roots, BROKER_FD)?;
 
     // Keep this reference explicit: the signed claims are the policy input,
     // not values independently supplied by the worker.
@@ -92,10 +85,7 @@ fn read_sealed_manifest() -> Result<WorkerManifest, SandboxError> {
         ));
     }
 
-    let required = libc::F_SEAL_WRITE
-        | libc::F_SEAL_GROW
-        | libc::F_SEAL_SHRINK
-        | libc::F_SEAL_SEAL;
+    let required = libc::F_SEAL_WRITE | libc::F_SEAL_GROW | libc::F_SEAL_SHRINK | libc::F_SEAL_SEAL;
     if seals & required != required {
         return Err(SandboxError::Enforcement(
             "manifest memfd is missing required immutability seals".into(),
