@@ -236,7 +236,7 @@ mod tests {
         CapabilityClaims {
             version: crate::OCAP_VERSION,
             token_id: "landlock-test".into(),
-            subject_uid: unsafe { libc::geteuid() } as u32,
+            subject_uid: (unsafe { libc::geteuid() }).max(1) as u32,
             subject_gid: unsafe { libc::getegid() } as u32,
             expires_at_unix: u64::MAX,
             file_grants: vec![],
