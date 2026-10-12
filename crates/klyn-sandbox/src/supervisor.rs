@@ -163,8 +163,9 @@ pub fn launch_worker(
         .env("PATH", "/usr/bin:/bin")
         .env("LANG", "C");
 
-    // FD 4 is the sealed memfd and FD 5 is the private gate socket. All other
-    // descriptors >= 3 are closed before exec; close_range failure aborts spawn.
+    // FD 4 is the sealed memfd, FD 5 gates stage-0, and FD 6 is the final
+    // policy/mission gate. All other descriptors >= 3 are closed before exec;
+    // close_range failure aborts spawn.
     unsafe {
         command.pre_exec(move || {
             if libc::dup3(manifest_source_fd, MANIFEST_FD, 0) < 0 {
@@ -173,10 +174,18 @@ pub fn launch_worker(
             if libc::dup3(gate_source_fd, crate::start_gate::START_GATE_FD, 0) < 0 {
                 return Err(io::Error::last_os_error());
             }
+            if libc::dup3(
+                policy_gate_source_fd,
+                crate::start_gate::WORKER_POLICY_GATE_FD,
+                0,
+            ) < 0
+            {
+                return Err(io::Error::last_os_error());
+            }
             if libc::syscall(libc::SYS_close_range, 3u32, 3u32, 0u32) != 0 {
                 return Err(io::Error::last_os_error());
             }
-            if libc::syscall(libc::SYS_close_range, 6u32, u32::MAX, 0u32) != 0 {
+            if libc::syscall(libc::SYS_close_range, 7u32, u32::MAX, 0u32) != 0 {
                 return Err(io::Error::last_os_error());
             }
             Ok(())
