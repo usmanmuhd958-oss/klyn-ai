@@ -19,7 +19,10 @@ use std::{
         },
     },
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -241,6 +244,54 @@ impl ResourceBroker {
                 Err(e) => return Err(SandboxError::Io(e)),
             }
         }
+    }
+
+    /// Serve connections until the trusted supervisor requests shutdown.
+    ///
+    /// The supervisor must terminate the associated worker before setting the
+    /// stop flag so active broker connections close and worker threads can be
+    /// joined. The listener is nonblocking so shutdown never depends on a new
+    /// client connection arriving.
+    pub fn serve_until(self, stop: Arc<AtomicBool>) -> Result<(), SandboxError> {
+        self.listener.set_nonblocking(true)?;
+        let (tx, rx): (Sender<UnixStream>, Receiver<UnixStream>) = bounded(self.queue_capacity);
+        let mut workers = Vec::with_capacity(self.max_workers);
+        for _ in 0..self.max_workers {
+            let rx = rx.clone();
+            let inner = Arc::clone(&self.inner);
+            workers.push(std::thread::spawn(move || {
+                while let Ok(stream) = rx.recv() {
+                    let _ = handle_connection(stream, &inner);
+                }
+            }));
+        }
+
+        let result = loop {
+            if stop.load(Ordering::Acquire) {
+                break Ok(());
+            }
+            match self.listener.accept() {
+                Ok((stream, _)) => match tx.try_send(stream) {
+                    Ok(()) => {}
+                    Err(TrySendError::Full(stream)) | Err(TrySendError::Disconnected(stream)) => {
+                        drop(stream);
+                    }
+                },
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => break Err(SandboxError::Io(error)),
+            }
+        };
+
+        drop(tx);
+        for worker in workers {
+            worker.join().map_err(|_| {
+                SandboxError::Enforcement("broker connection worker panicked".into())
+            })?;
+        }
+        result
     }
 }
 

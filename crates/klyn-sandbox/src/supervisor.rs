@@ -7,13 +7,13 @@
 use std::{
     ffi::OsStr,
     fs::{self, File},
-    io::{self, Read},
+    io::{self, BufRead, BufReader, Read, Write},
     os::{
         fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
         unix::{fs::MetadataExt, process::CommandExt},
     },
     path::{Path, PathBuf},
-    process::{Child, Command, ExitStatus},
+    process::{Child, ChildStdin, ChildStdout, Command, ExitStatus, Stdio},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -48,6 +48,8 @@ pub struct WorkerLaunchConfig {
 pub struct SpawnedWorker {
     child: Child,
     cgroup: CgroupV2Boundary,
+    stdin: Option<ChildStdin>,
+    stdout: Option<BufReader<ChildStdout>>,
 }
 
 impl Drop for SpawnedWorker {
@@ -76,6 +78,47 @@ impl SpawnedWorker {
         self.child.id()
     }
 
+    /// Write one bounded JSON-line command to the already-confined worker.
+    pub fn send_json(&mut self, value: &serde_json::Value) -> Result<(), SandboxError> {
+        let writer = self.stdin.as_mut().ok_or_else(|| {
+            SandboxError::Enforcement("worker stdin is unavailable".into())
+        })?;
+        let encoded = serde_json::to_vec(value)?;
+        if encoded.len() > crate::MAX_BROKER_FRAME_BYTES {
+            return Err(SandboxError::InvalidConfig(
+                "worker command exceeds the frame limit".into(),
+            ));
+        }
+        writer.write_all(&encoded)?;
+        writer.write_all(b"\\n")?;
+        writer.flush()?;
+        Ok(())
+    }
+
+    /// Read one bounded JSON-line response from the worker.
+    pub fn read_json_response(&mut self) -> Result<Option<serde_json::Value>, SandboxError> {
+        let reader = self.stdout.as_mut().ok_or_else(|| {
+            SandboxError::Enforcement("worker stdout is unavailable".into())
+        })?;
+        let mut line = String::new();
+        let bytes = (&mut *reader)
+            .take((crate::MAX_BROKER_FRAME_BYTES + 1) as u64)
+            .read_line(&mut line)?;
+        if bytes == 0 {
+            return Ok(None);
+        }
+        if line.len() > crate::MAX_BROKER_FRAME_BYTES {
+            return Err(SandboxError::Enforcement(
+                "worker response exceeds the frame limit".into(),
+            ));
+        }
+        Ok(Some(serde_json::from_str(&line)?))
+    }
+
+    pub fn close_stdin(&mut self) {
+        self.stdin.take();
+    }
+
     pub fn cgroup_path(&self) -> &Path {
         self.cgroup.path()
     }
@@ -85,6 +128,8 @@ impl SpawnedWorker {
     }
 
     pub fn wait(&mut self) -> Result<ExitStatus, SandboxError> {
+        self.stdin.take();
+        self.stdout.take();
         let status = self.child.wait()?;
         self.cgroup.terminate_and_wait(WORKER_LIFECYCLE_TIMEOUT)?;
         Ok(status)
@@ -93,6 +138,8 @@ impl SpawnedWorker {
     /// Explicit cancellation. The cgroup kill is authoritative and includes
     /// the PID-namespace init and every descendant, not just the direct child.
     pub fn terminate(&mut self) -> Result<(), SandboxError> {
+        self.stdin.take();
+        self.stdout.take();
         let _ = self.child.kill();
         self.cgroup.terminate_and_wait(WORKER_LIFECYCLE_TIMEOUT)?;
         let _ = self.child.wait();
@@ -182,7 +229,10 @@ pub fn launch_worker(
         .arg(&worker_executable)
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
-        .env("LANG", "C");
+        .env("LANG", "C")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
 
     // FD 4 is the sealed memfd, FD 5 gates stage-0, and FD 6 is the final
     // policy/mission gate. All other descriptors >= 3 are closed before exec;
@@ -214,6 +264,28 @@ pub fn launch_worker(
     }
 
     let mut child = command.spawn()?;
+    let worker_stdin = match child.stdin.take() {
+        Some(stdin) => stdin,
+        None => {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = cgroup.terminate_and_wait(WORKER_LIFECYCLE_TIMEOUT);
+            return Err(SandboxError::Enforcement(
+                "supervised worker stdin pipe was not created".into(),
+            ));
+        }
+    };
+    let worker_stdout = match child.stdout.take() {
+        Some(stdout) => stdout,
+        None => {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = cgroup.terminate_and_wait(WORKER_LIFECYCLE_TIMEOUT);
+            return Err(SandboxError::Enforcement(
+                "supervised worker stdout pipe was not created".into(),
+            ));
+        }
+    };
     // Closing the supervisor's duplicate child endpoint is required; otherwise
     // a failed launcher would not observe EOF on the private gate channel.
     drop(child_gate);
@@ -244,7 +316,7 @@ pub fn launch_worker(
         };
     }
 
-    Ok(SpawnedWorker { child, cgroup })
+    Ok(SpawnedWorker { child, cgroup, stdin: Some(worker_stdin), stdout: Some(BufReader::new(worker_stdout)) })
 }
 
 fn duplicate_cloexec(fd: RawFd) -> Result<OwnedFd, SandboxError> {
