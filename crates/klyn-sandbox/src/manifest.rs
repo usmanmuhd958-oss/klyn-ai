@@ -304,7 +304,7 @@ pub fn sha256_file(path: impl AsRef<Path>) -> Result<String, SandboxError> {
     for byte in bytes {
         use std::fmt::Write as _;
         // Writing into String is infallible.
-        let _ = write!(&mut encoded, "{byte:02x}");
+        write!(&mut encoded, "{byte:02x}").expect("writing hex to String cannot fail");
     }
     Ok(encoded)
 }
