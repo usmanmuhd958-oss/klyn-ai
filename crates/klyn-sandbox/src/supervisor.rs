@@ -143,10 +143,13 @@ pub fn launch_worker(
     let manifest_fd = manifest.seal_memfd(&key)?;
 
     let (mut gate, child_gate) = StartGate::pair()?;
+    let (mut policy_gate, child_policy_gate) = WorkerPolicyGate::pair()?;
     let manifest_source = duplicate_cloexec(manifest_fd.as_raw_fd())?;
     let gate_source = duplicate_cloexec(child_gate.as_raw_fd())?;
+    let policy_gate_source = duplicate_cloexec(child_policy_gate.as_raw_fd())?;
     let manifest_source_fd = manifest_source.as_raw_fd();
     let gate_source_fd = gate_source.as_raw_fd();
+    let policy_gate_source_fd = policy_gate_source.as_raw_fd();
 
     let mut command = Command::new(&init_executable);
     command
