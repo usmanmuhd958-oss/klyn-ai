@@ -33,5 +33,5 @@ validate_sandbox:
 test_sandbox:
   stage: test
   script:
-    - cargo test --locked -p klyn-sandbox
-    - cargo clippy --locked -p klyn-sandbox --all-targets -- -D warnings
+    - cargo test --locked --workspace -- --nocapture
+    - cargo clippy --locked --workspace --all-targets -- -D warnings
