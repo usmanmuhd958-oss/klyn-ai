@@ -803,6 +803,10 @@ mod tests {
         fs::write(dir.path().join("io.max"), "8:0 rbps=1024 wbps=max riops=max wiops=max\n").unwrap();
         assert!(verify_budget_controls(dir.path(), &budget).is_ok());
 
+        // A kernel-rounded-down memory value is stricter and therefore safe.
+        fs::write(dir.path().join("memory.max"), "2048").unwrap();
+        assert!(verify_budget_controls(dir.path(), &budget).is_ok());
+
         fs::write(dir.path().join("memory.max"), "max").unwrap();
         assert!(verify_budget_controls(dir.path(), &budget).is_err());
     }
