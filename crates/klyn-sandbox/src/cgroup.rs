@@ -227,8 +227,15 @@ mod tests {
         }
 
         let Some(root) = std::env::var_os(ROOT_ENV) else {
+            let mandatory = std::env::var("KLYN_REQUIRE_NATIVE_LINUX_QUALIFICATION")
+                .is_ok_and(|value| value == "1");
+            if mandatory {
+                panic!(
+                    "native Linux qualification requires {ROOT_ENV} to name a writable delegated cgroup-v2 root"
+                );
+            }
             eprintln!(
-                "skipping privileged cgroup integration: set {ROOT_ENV} to a writable delegated cgroup-v2 root"
+                "SKIP: privileged cgroup integration is not enabled; set {ROOT_ENV} to a writable delegated cgroup-v2 root"
             );
             return;
         };

@@ -2,6 +2,12 @@ name: KLYN Rust Sandbox and Worker Bootstrap
 
 on:
   workflow_dispatch:
+    inputs:
+      run_native_linux_qualification:
+        description: "Run privileged sandbox qualification on a dedicated ephemeral Linux runner"
+        required: true
+        type: boolean
+        default: false
   push:
     branches:
       - feat/step3-worker-bootstrap
@@ -11,6 +17,7 @@ on:
       - main
       - master
       - feat/klyn-step2-transactional-fs
+      - reconcile/step3-platform-daemon
     paths:
       - Cargo.toml
       - Cargo.lock
@@ -62,3 +69,22 @@ jobs:
         run: cargo test --locked --workspace -- --nocapture
       - name: Workspace Clippy
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+  # Opt-in only: this job needs an ephemeral, isolated Linux runner with
+  # delegated cgroup v2 and pre-provisioned trusted native worker files.
+  native-linux-qualification:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_native_linux_qualification == true }}
+    runs-on: [self-hosted, linux, klyn-native-qualification]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
+        with:
+          toolchain: 1.99.0
+          components: rustfmt, clippy
+      - name: Run mandatory native Linux kernel qualification
+        env:
+          KLYN_REQUIRE_NATIVE_LINUX_QUALIFICATION: "1"
+        run: scripts/qualify-native-linux.sh
