@@ -73,7 +73,7 @@ jobs:
   # Opt-in only: this job needs an ephemeral, isolated Linux runner with
   # delegated cgroup v2 and pre-provisioned trusted native worker files.
   native-linux-qualification:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_native_linux_qualification == true }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/reconcile/step3-platform-daemon' && inputs.run_native_linux_qualification == true }}
     runs-on: [self-hosted, linux, klyn-native-qualification]
     timeout-minutes: 45
     steps:

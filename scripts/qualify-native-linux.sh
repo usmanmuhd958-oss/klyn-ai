@@ -55,6 +55,7 @@ fi
 public_key=/etc/klyn/ocap-ed25519.pub
 [[ -f "$public_key" && ! -L "$public_key" ]] || fail "$public_key must be provisioned before qualification"
 [[ "$(stat -c %u "$public_key")" == "0" ]] || fail "$public_key must be root-owned"
+[[ -r "$public_key" ]] || fail "$public_key must be readable by the non-root worker"
 public_key_mode=$((8#$(stat -c %a "$public_key")))
 (( (public_key_mode & 022) == 0 )) || fail "$public_key must not be group/world writable"
 [[ "$(stat -c %s "$public_key")" == "32" ]] || fail "$public_key must contain exactly 32 raw Ed25519 public-key bytes"
