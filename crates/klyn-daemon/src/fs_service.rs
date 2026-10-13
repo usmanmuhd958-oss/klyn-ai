@@ -44,6 +44,28 @@ impl FsService {
             transactions: Mutex::new(BTreeMap::new()),
         }
     }
+    /// Resolve an active candidate only for its authenticated transaction owner.
+    ///
+    /// Callers must not expose this path to untrusted workers. The reconciled
+    /// sandbox uses a separately provisioned read-only root until write mediation
+    /// is integrated and qualified.
+    pub fn candidate_path_for_transaction(
+        &self,
+        transaction_id: &str,
+        peer: PeerIdentity,
+    ) -> Result<std::path::PathBuf, FsServiceError> {
+        let registry = self
+            .transactions
+            .lock()
+            .map_err(|_| FsServiceError::RegistryUnavailable)?;
+        let owned = registry
+            .get(transaction_id)
+            .ok_or(FsServiceError::NotFound)?;
+        if owned.owner_uid != peer.uid {
+            return Err(FsServiceError::PermissionDenied);
+        }
+        Ok(owned.transaction.candidate_path().to_path_buf())
+    }
 
     /// Execute one already-policy-authorized operation for a peer whose UID was
     /// obtained from kernel Unix-socket credentials, never from request JSON.
