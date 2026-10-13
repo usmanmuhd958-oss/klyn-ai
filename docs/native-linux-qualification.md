@@ -41,9 +41,11 @@ The script fails if it is not running on Linux, if the cgroup root/controllers a
 
 The real worker smoke test verifies the end-to-end start gate, namespace-init PID, trusted stage-0 bootstrap, cgroup boundary, signed manifest and capability, Landlock, seccomp, broker setup, mission release, and worker shutdown. The in-crate Landlock/seccomp child tests separately assert that prohibited operations are rejected. Logs must be retained with the kernel/toolchain identity and exact commit SHA.
 
-## CI dispatch
+## CI dispatch and pre-merge gate
 
-The ordinary hosted workflow keeps its unprivileged compilation and test job. To run native qualification, invoke **KLYN Rust Sandbox and Worker Bootstrap** with `run_native_linux_qualification=true` against a reviewed commit on the dedicated ephemeral runner. The job intentionally remains queued if no runner with the required label is registered; do not interpret that as a pass.
+For the pre-merge qualification of this draft PR, run `scripts/qualify-native-linux.sh` directly on the dedicated ephemeral host and attach the full log to the PR. GitHub only makes `workflow_dispatch` available after the workflow definition is present on the repository's default branch, so the opt-in self-hosted job may not be dispatchable before that point.
+
+Once this workflow version exists on the default branch, invoke **KLYN Rust Sandbox and Worker Bootstrap** with `run_native_linux_qualification=true` while selecting the reviewed `reconcile/step3-platform-daemon` branch. The job intentionally remains queued if no runner with the required label is registered; do not interpret that as a pass.
 
 ## Phase gate
 
