@@ -53,6 +53,8 @@ jobs:
           rustc --version
           cargo --version
           uname -a
+      - name: Syntax-check native qualification harness
+        run: bash -n scripts/qualify-native-linux.sh
       - name: Install Android target for platform-boundary check
         run: rustup target add aarch64-linux-android
       - name: Check workspace for Android with warnings denied

@@ -252,7 +252,10 @@ mod tests {
             return true;
         }
 
-        if std::env::var("KLYN_REQUIRE_NATIVE_LINUX_QUALIFICATION").is_ok_and(|value| value == "1") {
+        let native_qualification_required =
+            std::env::var("KLYN_REQUIRE_NATIVE_LINUX_QUALIFICATION")
+                .is_ok_and(|value| value == "1");
+        if native_qualification_required {
             panic!(
                 "native Linux qualification requires Landlock ABI v8 or newer; kernel reported ABI {abi}"
             );
