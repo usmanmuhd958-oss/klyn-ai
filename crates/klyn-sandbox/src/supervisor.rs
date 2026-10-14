@@ -379,7 +379,8 @@ mod tests {
         let key = SigningKey::from_bytes(&[21; 32]);
         let expired = capability(&key, 1);
         let error = launch_worker(invalid_launch_config(expired), &key)
-            .expect_err("expired capability must prevent worker launch");
+            .err()
+            .expect("expired capability must prevent worker launch");
         let message = error.to_string();
         assert!(
             message.contains("expired OCap capability"),
@@ -393,7 +394,8 @@ mod tests {
         let mut malformed = capability(&key, u64::MAX);
         malformed.signature = vec![0; 64];
         let error = launch_worker(invalid_launch_config(malformed), &key)
-            .expect_err("invalid signature must prevent worker launch");
+            .err()
+            .expect("invalid signature must prevent worker launch");
         let message = error.to_string();
         assert!(
             message.contains("invalid OCap signature"),
