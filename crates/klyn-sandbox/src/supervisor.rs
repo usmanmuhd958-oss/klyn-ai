@@ -169,9 +169,29 @@ impl SpawnedWorker {
     }
 
     pub fn wait(&mut self) -> Result<ExitStatus, SandboxError> {
-        let status = self.child.wait()?;
-        self.cgroup.terminate_and_wait(WORKER_LIFECYCLE_TIMEOUT)?;
-        Ok(status)
+        let deadline = std::time::Instant::now()
+            .checked_add(WORKER_LIFECYCLE_TIMEOUT)
+            .ok_or_else(|| {
+                SandboxError::InvalidConfig("worker shutdown timeout is invalid".into())
+            })?;
+        loop {
+            if let Some(status) = self.child.try_wait()? {
+                self.cgroup.terminate_and_wait(WORKER_LIFECYCLE_TIMEOUT)?;
+                return Ok(status);
+            }
+            if std::time::Instant::now() >= deadline {
+                let timeout_error = SandboxError::Enforcement(
+                    "worker did not exit before the bounded shutdown deadline".into(),
+                );
+                return match self.terminate() {
+                    Ok(()) => Err(timeout_error),
+                    Err(cleanup_error) => Err(SandboxError::Enforcement(format!(
+                        "{timeout_error}; cgroup termination failed: {cleanup_error}"
+                    ))),
+                };
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     /// Explicit cancellation. The cgroup kill is authoritative and includes
