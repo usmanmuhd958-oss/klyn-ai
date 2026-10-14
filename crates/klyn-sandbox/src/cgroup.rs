@@ -227,6 +227,11 @@ mod tests {
         }
 
         let Some(root) = std::env::var_os(ROOT_ENV) else {
+            if std::env::var_os("KLYN_REQUIRE_KERNEL_ISOLATION").is_some() {
+                panic!(
+                    "KLYN_REQUIRE_KERNEL_ISOLATION is set, but {ROOT_ENV} is missing;                      refusing to report privileged cgroup coverage as passing without a real delegated cgroup-v2 root"
+                );
+            }
             eprintln!(
                 "skipping privileged cgroup integration: set {ROOT_ENV} to a writable delegated cgroup-v2 root"
             );
