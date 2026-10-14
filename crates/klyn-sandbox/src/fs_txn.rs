@@ -5,6 +5,10 @@
 //! broker and confined to this private root. Once the cgroup is empty, broker
 //! admission is stopped before the transaction tree is discarded.
 
+use std::os::unix::{
+    ffi::OsStrExt,
+    fs::{DirBuilderExt, MetadataExt, PermissionsExt},
+};
 use std::{
     fs::{self, File},
     io,
@@ -15,10 +19,6 @@ use std::{
     },
     thread,
     time::{Duration, Instant},
-};
-use std::os::unix::{
-    ffi::OsStrExt,
-    fs::{DirBuilderExt, MetadataExt, PermissionsExt},
 };
 
 use crate::SandboxError;
@@ -97,11 +97,7 @@ impl FsTransaction {
 
     /// The broker thread sets stopped only after it has drained and joined
     /// every serving thread. Rollback waits for that acknowledgement.
-    pub fn register_broker_shutdown(
-        &mut self,
-        stop: Arc<AtomicBool>,
-        stopped: Arc<AtomicBool>,
-    ) {
+    pub fn register_broker_shutdown(&mut self, stop: Arc<AtomicBool>, stopped: Arc<AtomicBool>) {
         self.broker_shutdown = Some((stop, stopped));
     }
 
@@ -188,7 +184,9 @@ impl Drop for FsTransaction {
 fn validate_label(label: &str) -> Result<(), SandboxError> {
     if label.is_empty()
         || label.len() > 64
-        || !label.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        || !label
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
     {
         return Err(SandboxError::InvalidConfig(
             "filesystem transaction label must be 1..=64 safe ASCII bytes".into(),
@@ -209,8 +207,8 @@ mod tests {
         let sentinel = outside.path().join("must-survive.txt");
         fs::write(&sentinel, b"outside transaction").expect("write outside sentinel");
 
-        let mut transaction = FsTransaction::create(parent.path(), "rollback-artifacts")
-            .expect("create transaction");
+        let mut transaction =
+            FsTransaction::create(parent.path(), "rollback-artifacts").expect("create transaction");
         let workspace = transaction.workspace_path().to_path_buf();
         fs::create_dir(workspace.join("nested")).expect("create nested directory");
         fs::write(workspace.join("nested/artifact.db"), b"ephemeral mutation")
@@ -221,15 +219,21 @@ mod tests {
 
         transaction.rollback().expect("rollback transaction");
         assert!(!workspace.exists(), "workspace survived rollback");
-        assert!(!transaction.transaction_root().exists(), "transaction root survived rollback");
-        assert_eq!(fs::read(&sentinel).expect("read outside sentinel"), b"outside transaction");
+        assert!(
+            !transaction.transaction_root().exists(),
+            "transaction root survived rollback"
+        );
+        assert_eq!(
+            fs::read(&sentinel).expect("read outside sentinel"),
+            b"outside transaction"
+        );
     }
 
     #[test]
     fn rollback_is_idempotent_and_leaves_no_residual_files() {
         let parent = tempfile::tempdir().expect("private transaction parent");
-        let mut transaction = FsTransaction::create(parent.path(), "forced-termination")
-            .expect("create transaction");
+        let mut transaction =
+            FsTransaction::create(parent.path(), "forced-termination").expect("create transaction");
         let workspace = transaction.workspace_path().to_path_buf();
         fs::write(workspace.join("worker-output.bin"), [0x5a; 64]).expect("create output");
         transaction.rollback_after_cgroup_empty().expect("rollback");
@@ -265,7 +269,9 @@ mod tests {
             }
             thread_stopped.store(true, Ordering::Release);
         });
-        transaction.rollback_after_cgroup_empty().expect("stop broker then rollback");
+        transaction
+            .rollback_after_cgroup_empty()
+            .expect("stop broker then rollback");
         thread.join().expect("join broker simulation");
         assert!(stop.load(Ordering::Acquire));
         assert!(!transaction.workspace_path().exists());
