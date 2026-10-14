@@ -58,7 +58,7 @@ fuzz_targets:
     policy: pull-push
   script:
     - export PATH="$CARGO_HOME/bin:$PATH"
-    - rustup toolchain install nightly --profile minimal --component rustfmt
+    - rustup toolchain install nightly --profile minimal --component rustfmt --component clippy
     - |
       installed_version="$(cargo-fuzz --version 2>/dev/null || true)"
       if [[ "$installed_version" == "cargo-fuzz 0.13.2" ]]; then
@@ -67,4 +67,5 @@ fuzz_targets:
         cargo +nightly install cargo-fuzz --version 0.13.2 --locked --force
       fi
     - cargo +nightly fmt --manifest-path crates/klyn-sandbox/fuzz/Cargo.toml -- --check
+    - cargo +nightly clippy --manifest-path crates/klyn-sandbox/fuzz/Cargo.toml --all-targets -- -D warnings
     - cd crates/klyn-sandbox/fuzz && cargo +nightly fuzz build fuzz_ipc_frame && cargo +nightly fuzz build fuzz_kel_parser
