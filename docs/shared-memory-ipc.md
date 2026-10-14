@@ -62,7 +62,7 @@ These invariants protect the trusted endpoints against invalid geometry and malf
 
 ## Checkpoint tests
 
-The ring module includes bounded-capacity/recovery, payload length checks, both attachment directions, an empty-ring timeout check, and an ordered 20,000-frame producer/consumer stress test. The supervisor's binary response parser tests valid control frames and rejects unknown opcodes, invalid lengths, invalid flags, and unexpected trailing bytes.
+The ring module includes bounded-capacity/recovery, payload length checks, both attachment directions, an empty-ring timeout check, an isolated subprocess round-trip over inherited memfds, and an ordered 20,000-frame producer/consumer stress test. The supervisor's binary response parser tests valid control frames and rejects unknown opcodes, invalid lengths, invalid flags, and unexpected trailing bytes.
 
 Required CI gate for this branch:
 
