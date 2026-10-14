@@ -22,6 +22,8 @@ pub mod start_gate;
 #[cfg(target_os = "linux")]
 pub mod supervisor;
 #[cfg(target_os = "linux")]
+pub mod ipc_ring;
+#[cfg(target_os = "linux")]
 pub mod worker_bootstrap;
 
 #[cfg(not(target_os = "linux"))]
