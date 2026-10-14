@@ -8,6 +8,11 @@ on:
         required: true
         type: boolean
         default: false
+      run_fuzz_campaign:
+        description: "Run one million iterations for each cargo-fuzz target"
+        required: true
+        type: boolean
+        default: false
   push:
     branches:
       - feat/step3-worker-bootstrap
@@ -16,6 +21,7 @@ on:
       - feat/phase2-step2-ebpf-telemetry
       - feat/phase2-step3-kel-attestation
       - feat/phase2-step4-fs-rollback
+      - feat/phase2-step5-fuzz-native-qualification
   pull_request:
     branches:
       - main
@@ -25,6 +31,7 @@ on:
       - feat/step4-shared-memory-ipc
       - feat/phase2-step2-ebpf-telemetry
       - feat/phase2-step3-kel-attestation
+      - feat/phase2-step4-fs-rollback
     paths:
       - Cargo.toml
       - Cargo.lock
@@ -61,8 +68,8 @@ jobs:
           rustc --version
           cargo --version
           uname -a
-      - name: Syntax-check native qualification harness
-        run: bash -n scripts/qualify-native-linux.sh
+      - name: Syntax-check native and fuzz harnesses
+        run: bash -n scripts/qualify-native-linux.sh scripts/qualify_native_linux.sh scripts/run_fuzz_campaign.sh
       - name: Install Android target for platform-boundary check
         run: rustup target add aarch64-linux-android
       - name: Check workspace for Android with warnings denied
@@ -83,7 +90,7 @@ jobs:
   # Opt-in only: this job needs an ephemeral, isolated Linux runner with
   # delegated cgroup v2 and pre-provisioned trusted native worker files.
   native-linux-qualification:
-    if: ${{ github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/reconcile/step3-platform-daemon' || github.ref == 'refs/heads/feat/step4-shared-memory-ipc' || github.ref == 'refs/heads/feat/phase2-step3-kel-attestation') && inputs.run_native_linux_qualification == true }}
+    if: ${{ github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/reconcile/step3-platform-daemon' || github.ref == 'refs/heads/feat/step4-shared-memory-ipc' || github.ref == 'refs/heads/feat/phase2-step3-kel-attestation' || github.ref == 'refs/heads/feat/phase2-step4-fs-rollback' || github.ref == 'refs/heads/feat/phase2-step5-fuzz-native-qualification') && inputs.run_native_linux_qualification == true }}
     runs-on: [self-hosted, linux, klyn-native-qualification]
     timeout-minutes: 45
     steps:
@@ -97,7 +104,42 @@ jobs:
       - name: Run mandatory native Linux kernel qualification
         env:
           KLYN_REQUIRE_NATIVE_LINUX_QUALIFICATION: "1"
-        run: scripts/qualify-native-linux.sh
+        run: scripts/qualify_native_linux.sh
+  fuzz-targets:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install nightly and cargo-fuzz
+        run: |
+          rustup toolchain install nightly --profile minimal
+          cargo +nightly install cargo-fuzz --locked
+      - name: Compile both fuzz targets
+        working-directory: crates/klyn-sandbox/fuzz
+        run: |
+          cargo +nightly fuzz build fuzz_ipc_frame
+          cargo +nightly fuzz build fuzz_kel_parser
+
+  fuzz-campaign:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_fuzz_campaign == true }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install nightly and cargo-fuzz
+        run: |
+          rustup toolchain install nightly --profile minimal
+          cargo +nightly install cargo-fuzz --locked
+      - name: Run million-iteration fuzz campaign
+        env:
+          CARGO: cargo +nightly
+          KLYN_FUZZ_RUNS: "1000000"
+        run: scripts/run_fuzz_campaign.sh
+
   ebpf-object-compile:
     runs-on: ubuntu-26.04
     timeout-minutes: 10
