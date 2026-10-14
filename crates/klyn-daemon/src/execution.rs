@@ -17,8 +17,8 @@ use klyn_protocol::{
 };
 use klyn_sandbox::{
     supervisor::{launch_worker, WorkerLaunchConfig},
-    validate_trusted_root, CapabilityClaims, FileGrant, NetworkGrant, ResourceBudget,
-    SandboxError, SignedCapability, OCAP_VERSION,
+    validate_trusted_root, CapabilityClaims, FileGrant, NetworkGrant, ResourceBudget, SandboxError,
+    SignedCapability, OCAP_VERSION,
 };
 use thiserror::Error;
 
