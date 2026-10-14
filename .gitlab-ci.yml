@@ -17,7 +17,6 @@ cache:
   paths:
     - .cargo/registry/index/
     - .cargo/registry/cache/
-    - .cargo/git/
     - target/
 
 before_script:
@@ -54,7 +53,6 @@ fuzz_targets:
     paths:
       - .cargo/registry/index/
       - .cargo/registry/cache/
-      - .cargo/git/
       - .cargo/bin/cargo-fuzz
       - crates/klyn-sandbox/fuzz/target/
     policy: pull-push
