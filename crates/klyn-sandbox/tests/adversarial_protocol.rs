@@ -77,6 +77,7 @@ fn kel_transition_and_encoded_signature_tampering_fail_closed() {
     assert!(KelJournal::verify_encoded_chain(&corrupt, &key.verifying_key(), None).is_err());
     assert!(KelEvent::decode_record(&corrupt[..KEL_EVENT_ENCODED_LEN]).is_ok());
     assert!(KelEvent::decode_record(&corrupt[..KEL_EVENT_ENCODED_LEN - 1]).is_err());
+}
 
 #[test]
 fn malformed_capability_claims_are_rejected_before_authorization() {
