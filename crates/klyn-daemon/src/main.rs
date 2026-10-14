@@ -11,9 +11,7 @@ use std::{
     env,
     fs::{self, OpenOptions},
     io::Read,
-    os::unix::{
-        fs::{MetadataExt, OpenOptionsExt},
-    },
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
@@ -85,13 +83,15 @@ fn run() -> Result<(), String> {
     let router = assemble_router(
         lifecycle.clone(),
         Arc::new(policy),
-        execution_runtime.as_ref().map(|runtime| Arc::clone(&runtime.service)),
+        execution_runtime
+            .as_ref()
+            .map(|runtime| Arc::clone(&runtime.service)),
     );
 
     // Bind the daemon socket before launching auxiliary threads, so a bad
     // deployment path fails startup instead of leaving an orphan broker.
-    let socket = BoundSocket::bind(&socket_path)
-        .map_err(|error| format!("bind daemon socket: {error}"))?;
+    let socket =
+        BoundSocket::bind(&socket_path).map_err(|error| format!("bind daemon socket: {error}"))?;
 
     if let Some(runtime) = execution_runtime {
         let broker_lifecycle = lifecycle.clone();
@@ -147,8 +147,10 @@ fn build_execution_runtime() -> Result<Option<ExecutionRuntime>, String> {
     let broker_socket = required_path("KLYN_BROKER_SOCKET")?;
     let workspace_root = required_path("KLYN_WORKSPACE_ROOT")?;
     let signing_key_path = required_path("KLYN_OCAP_SIGNING_KEY")?;
-    let permitted_uids =
-        parse_uid_list(&required_string("KLYN_EXECUTION_UIDS")?, "KLYN_EXECUTION_UIDS")?;
+    let permitted_uids = parse_uid_list(
+        &required_string("KLYN_EXECUTION_UIDS")?,
+        "KLYN_EXECUTION_UIDS",
+    )?;
 
     let worker_uid = required_number::<u32>("KLYN_WORKER_UID")?;
     let worker_gid = required_number::<u32>("KLYN_WORKER_GID")?;
@@ -157,11 +159,9 @@ fn build_execution_runtime() -> Result<Option<ExecutionRuntime>, String> {
     let cpu_period_micros = required_number::<u64>("KLYN_CPU_PERIOD_MICROS")?;
     let pids_max = required_number::<u32>("KLYN_PIDS_MAX")?;
     let cpu_weight = required_number::<u32>("KLYN_CPU_WEIGHT")?;
-    let execution_timeout = Duration::from_secs(required_number::<u64>(
-        "KLYN_EXECUTION_TIMEOUT_SECS",
-    )?);
-    let capability_ttl =
-        Duration::from_secs(required_number::<u64>("KLYN_CAPABILITY_TTL_SECS")?);
+    let execution_timeout =
+        Duration::from_secs(required_number::<u64>("KLYN_EXECUTION_TIMEOUT_SECS")?);
+    let capability_ttl = Duration::from_secs(required_number::<u64>("KLYN_CAPABILITY_TTL_SECS")?);
     let worker_id_prefix = required_string("KLYN_WORKER_ID_PREFIX")?;
 
     let init_executable = validate_trusted_init_executable(init_executable)
@@ -177,9 +177,7 @@ fn build_execution_runtime() -> Result<Option<ExecutionRuntime>, String> {
         .map_err(|error| format!("worker verification key validation failed: {error}"))?;
     let derived_public_key = signing_key.verifying_key();
     if worker_public_key.to_bytes() != derived_public_key.to_bytes() {
-        return Err(
-            "OCap private signing key does not match /etc/klyn/ocap-ed25519.pub".into(),
-        );
+        return Err("OCap private signing key does not match /etc/klyn/ocap-ed25519.pub".into());
     }
 
     let budget = ResourceBudget {
@@ -238,14 +236,13 @@ fn execution_enabled(value: Option<&str>) -> Result<bool, String> {
     match value {
         None | Some("0") | Some("false") => Ok(false),
         Some("1") | Some("true") => Ok(true),
-        Some(_) => Err(
-            "KLYN_EXECUTION_ENABLED must be exactly 0, 1, false, or true".into(),
-        ),
+        Some(_) => Err("KLYN_EXECUTION_ENABLED must be exactly 0, 1, false, or true".into()),
     }
 }
 
 fn required_string(name: &str) -> Result<String, String> {
-    let value = env::var(name).map_err(|_| format!("required environment variable {name} is missing"))?;
+    let value =
+        env::var(name).map_err(|_| format!("required environment variable {name} is missing"))?;
     if value.trim().is_empty() {
         return Err(format!("required environment variable {name} is empty"));
     }
@@ -276,7 +273,9 @@ fn parse_uid_list(value: &str, name: &str) -> Result<BTreeSet<u32>, String> {
     for item in value.split(',') {
         let item = item.trim();
         if item.is_empty() {
-            return Err(format!("{name} must be a non-empty comma-separated list of UIDs"));
+            return Err(format!(
+                "{name} must be a non-empty comma-separated list of UIDs"
+            ));
         }
         let uid = item
             .parse::<u32>()
@@ -311,10 +310,14 @@ fn validate_delegated_cgroup_root(path: &Path) -> Result<PathBuf, String> {
         .map_err(|error| format!("read cgroup.subtree_control: {error}"))?;
     for controller in ["cpu", "memory", "pids"] {
         if !available.split_whitespace().any(|name| name == controller) {
-            return Err(format!("required cgroup controller {controller} is unavailable"));
+            return Err(format!(
+                "required cgroup controller {controller} is unavailable"
+            ));
         }
         if !enabled.split_whitespace().any(|name| name == controller) {
-            return Err(format!("required cgroup controller {controller} is not enabled"));
+            return Err(format!(
+                "required cgroup controller {controller} is not enabled"
+            ));
         }
     }
 
@@ -322,7 +325,9 @@ fn validate_delegated_cgroup_root(path: &Path) -> Result<PathBuf, String> {
         OpenOptions::new()
             .write(true)
             .open(canonical.join(control))
-            .map_err(|error| format!("KLYN_CGROUP_ROOT control {control} is not writable: {error}"))?;
+            .map_err(|error| {
+                format!("KLYN_CGROUP_ROOT control {control} is not writable: {error}")
+            })?;
     }
     Ok(canonical)
 }
@@ -358,12 +363,13 @@ fn load_root_signing_key(path: &Path) -> Result<SigningKey, String> {
 fn validate_root_controlled_parent_chain(path: &Path) -> Result<(), String> {
     let mut parent = path.parent();
     while let Some(directory) = parent {
-        let metadata = fs::symlink_metadata(directory)
-            .map_err(|error| format!("stat signing-key directory {}: {error}", directory.display()))?;
-        if !metadata.file_type().is_dir()
-            || metadata.uid() != 0
-            || metadata.mode() & 0o022 != 0
-        {
+        let metadata = fs::symlink_metadata(directory).map_err(|error| {
+            format!(
+                "stat signing-key directory {}: {error}",
+                directory.display()
+            )
+        })?;
+        if !metadata.file_type().is_dir() || metadata.uid() != 0 || metadata.mode() & 0o022 != 0 {
             return Err(format!(
                 "signing-key directory is not root-controlled: {}",
                 directory.display()
@@ -381,8 +387,7 @@ fn validate_root_controlled_parent_chain(path: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
     use klyn_protocol::{
-        ExecuteTaskParams, Method, Request, Response, RpcErrorCode, TaskOperation,
-        PROTOCOL_VERSION,
+        ExecuteTaskParams, Method, Request, Response, RpcErrorCode, TaskOperation, PROTOCOL_VERSION,
     };
     use serde_json::json;
 
@@ -432,7 +437,10 @@ mod tests {
             },
         );
         assert_eq!(
-            response.error.expect("missing service must reject task").code,
+            response
+                .error
+                .expect("missing service must reject task")
+                .code,
             RpcErrorCode::ExecutionUnavailable
         );
     }
