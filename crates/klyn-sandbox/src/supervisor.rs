@@ -325,10 +325,79 @@ fn validate_trusted_init_executable(path: impl AsRef<Path>) -> Result<PathBuf, S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{CapabilityClaims, ResourceBudget, SignedCapability, OCAP_VERSION};
+    use ed25519_dalek::Signer;
+    use std::collections::BTreeMap;
+
+    fn capability(key: &SigningKey, expires_at_unix: u64) -> SignedCapability {
+        let claims = CapabilityClaims {
+            version: OCAP_VERSION,
+            token_id: "supervisor-fault-injection".into(),
+            subject_uid: 1_000,
+            subject_gid: 1_000,
+            expires_at_unix,
+            file_grants: vec![],
+            network_grants: vec![],
+            budget: ResourceBudget {
+                memory_max_bytes: 16 * 1024 * 1024,
+                cpu_quota_micros: 100_000,
+                cpu_period_micros: 100_000,
+                pids_max: 4,
+                io_limits: vec![],
+            },
+        };
+        let bytes = serde_json::to_vec(&claims).expect("serialize capability claims");
+        SignedCapability {
+            claims,
+            signature: key.sign(&bytes).to_bytes().to_vec(),
+        }
+    }
+
+    fn invalid_launch_config(capability: SignedCapability) -> WorkerLaunchConfig {
+        WorkerLaunchConfig {
+            // Deliberately absent files prove capability failures are rejected
+            // before executable path resolution and before cgroup creation.
+            init_executable: "/missing/klyn-sandbox-init".into(),
+            worker_executable: "/missing/klyn-worker".into(),
+            delegated_cgroup_root: "/missing/klyn-cgroups".into(),
+            worker_id: "fault-injection".into(),
+            broker_socket: "/run/klyn/broker.sock".into(),
+            roots: BTreeMap::new(),
+            capability,
+            cpu_weight: 100,
+        }
+    }
 
     #[test]
     fn stage0_path_must_be_a_fixed_trusted_binary_name() {
         assert!(validate_trusted_init_executable("/bin/sh").is_err());
         assert!(validate_trusted_init_executable("/definitely/not/klyn-sandbox-init").is_err());
+    }
+
+    #[test]
+    fn expired_capability_is_rejected_before_executable_or_cgroup_access() {
+        let key = SigningKey::from_bytes(&[21; 32]);
+        let expired = capability(&key, 1);
+        let error = launch_worker(invalid_launch_config(expired), &key)
+            .expect_err("expired capability must prevent worker launch");
+        let message = error.to_string();
+        assert!(
+            message.contains("expired OCap capability"),
+            "expiry must be the rejecting condition, not a later missing executable: {message}"
+        );
+    }
+
+    #[test]
+    fn malformed_capability_signature_is_rejected_before_executable_or_cgroup_access() {
+        let key = SigningKey::from_bytes(&[22; 32]);
+        let mut malformed = capability(&key, u64::MAX);
+        malformed.signature = vec![0; 64];
+        let error = launch_worker(invalid_launch_config(malformed), &key)
+            .expect_err("invalid signature must prevent worker launch");
+        let message = error.to_string();
+        assert!(
+            message.contains("invalid OCap signature"),
+            "signature must be rejected before touching launch paths: {message}"
+        );
     }
 }
