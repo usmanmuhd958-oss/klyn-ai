@@ -535,8 +535,6 @@ fn monitor_loop(config: MonitorConfig) {
                                 detail: detail.clone(),
                             },
                         );
-                        pending_kill = None;
-                        pending_kill_logged = false;
                         // CgroupDestroy is terminal in KEL. Do not keep sampling
                         // a dead worker and emit a second post-terminal anomaly.
                         break;
