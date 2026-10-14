@@ -739,6 +739,31 @@ mod tests {
     }
 
     #[test]
+    fn consumer_created_ring_supports_attaching_the_remote_producer() {
+        let (mut consumer, producer_fds) = RingConsumer::create().expect("create consumer ring");
+        let mut producer =
+            RingProducer::attach(producer_fds).expect("attach remote producer endpoint");
+
+        assert!(producer.try_push(b"reverse-direction").expect("publish"));
+        let frame = consumer
+            .wait_peek(Some(Duration::from_secs(1)))
+            .expect("wait")
+            .expect("frame available");
+        assert_eq!(frame.payload(), b"reverse-direction");
+        frame.consume().expect("consume");
+    }
+
+    #[test]
+    fn wait_peek_respects_a_zero_timeout() {
+        let (mut consumer, _producer_fds) =
+            RingConsumer::create().expect("create empty ring");
+        assert!(consumer
+            .wait_peek(Some(Duration::ZERO))
+            .expect("zero-timeout poll")
+            .is_none());
+    }
+
+    #[test]
     fn cross_thread_wait_and_wake_preserves_order_for_many_frames() {
         const TOTAL: u32 = 20_000;
         let (mut producer, consumer_fds) = RingProducer::create().expect("create ring");
