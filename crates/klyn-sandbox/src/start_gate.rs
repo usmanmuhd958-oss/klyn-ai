@@ -231,8 +231,7 @@ mod tests {
 
     #[test]
     fn final_gate_fails_closed_when_worker_exits_before_policy_ready() {
-        let (mut supervisor, worker) =
-            WorkerPolicyGate::pair().expect("create worker policy gate");
+        let (mut supervisor, worker) = WorkerPolicyGate::pair().expect("create worker policy gate");
         // Simulate a bootstrap crash or a missing worker endpoint. EOF must be
         // a hard failure; the supervisor must never manufacture a release ACK.
         drop(worker);
