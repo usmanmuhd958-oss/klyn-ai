@@ -771,7 +771,7 @@ fn transition_allowed(previous: Option<KelEventKind>, next: KelEventKind) -> boo
             KelEventKind::WorkerAttested
                 | KelEventKind::TelemetryAnomaly
                 | KelEventKind::CgroupDestroy
-        )
+        ),
         Some(KelEventKind::WorkerAttested) => {
             matches!(next, KelEventKind::PolicyGateClear | KelEventKind::CgroupDestroy)
         }

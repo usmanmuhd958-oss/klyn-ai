@@ -22,9 +22,10 @@ use std::{
 use ed25519_dalek::{Signer, SigningKey};
 use klyn_sandbox::{
     broker::{BrokerConfig, Ed25519CapabilityVerifier, ResourceBroker, RevocationOracle},
+    kel,
     supervisor::{launch_worker_with_kel, SpawnedWorker, WorkerLaunchConfig},
     validate_trusted_root, CapabilityClaims, FileAccess, FileGrant, ResourceBudget, SandboxError,
-    SignedCapability, WorkerOperation, OCAP_VERSION, kel,
+    SignedCapability, WorkerOperation, OCAP_VERSION,
 };
 use thiserror::Error;
 
