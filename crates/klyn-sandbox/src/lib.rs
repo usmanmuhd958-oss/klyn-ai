@@ -18,6 +18,7 @@ pub mod landlock_seccomp;
 pub mod manifest;
 pub mod start_gate;
 pub mod supervisor;
+pub mod task;
 pub mod worker_bootstrap;
 
 use std::{
