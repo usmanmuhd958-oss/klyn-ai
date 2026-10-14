@@ -16,7 +16,7 @@ cargo +nightly install cargo-fuzz --locked
 RUSTUP_TOOLCHAIN=nightly bash scripts/run_fuzz_campaign.sh
 ```
 
-The default campaign executes 1,000,000 iterations for each target. Set `KLYN_FUZZ_RUNS` to a smaller count for a smoke run. The workflow compiles both targets on each applicable branch/PR; the million-iteration campaign is opt-in through workflow dispatch.
+The default campaign executes 1,000,000 iterations for each target. Set `KLYN_FUZZ_RUNS` to a smaller count for a local smoke run. The workflow compiles both targets on each applicable branch/PR and runs the full million-iteration campaign on pull requests. A manual `workflow_dispatch` can also opt in to the same campaign on a branch.
 
 ## Adversarial tests
 
