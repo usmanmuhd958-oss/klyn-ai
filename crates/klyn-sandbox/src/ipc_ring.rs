@@ -454,6 +454,60 @@ impl RingConsumer {
     }
 
     pub fn try_peek(&mut self) -> Result<Option<ConsumerReservation<'_>>, SandboxError> {
+        let Some((slot, sequence, length)) = self.peek_next_slot()? else {
+            return Ok(None);
+        };
+        Ok(Some(ConsumerReservation {
+            ring: self,
+            slot,
+            sequence,
+            length,
+        }))
+    }
+
+    /// Wait until an item is available or the optional timeout expires.
+    /// Passing None waits until a producer publishes data or the wait is
+    /// interrupted by a protocol error in the calling process.
+    pub fn wait_peek(
+        &mut self,
+        timeout: Option<Duration>,
+    ) -> Result<Option<ConsumerReservation<'_>>, SandboxError> {
+        let deadline = match timeout {
+            Some(duration) => Some(Instant::now().checked_add(duration).ok_or_else(|| {
+                SandboxError::InvalidConfig("shared IPC timeout is too large".into())
+            })?),
+            None => None,
+        };
+        loop {
+            // peek_next_slot returns raw slot metadata, not a reference tied to
+            // this borrow, so the empty path can safely perform another poll.
+            if let Some((slot, sequence, length)) = self.peek_next_slot()? {
+                return Ok(Some(ConsumerReservation {
+                    ring: self,
+                    slot,
+                    sequence,
+                    length,
+                }));
+            }
+            let remaining = match deadline {
+                Some(end) => {
+                    let remaining = end.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        return Ok(None);
+                    }
+                    Some(remaining)
+                }
+                None => None,
+            };
+            let expected_head = unsafe { &*self.head }.load(Ordering::Acquire);
+            futex_wait(self.head, expected_head, remaining)?;
+        }
+    }
+
+    /// Poll the SPSC sequence counters and return bounded slot metadata.
+    /// The returned raw pointer is only converted to a slice in a reservation
+    /// that holds the consumer's exclusive mutable borrow.
+    fn peek_next_slot(&self) -> Result<Option<(*mut u8, u32, usize)>, SandboxError> {
         let head = unsafe { &*self.head }.load(Ordering::Acquire);
         let tail = unsafe { &*self.tail }.load(Ordering::Relaxed);
         let available = head.wrapping_sub(tail);
@@ -474,44 +528,7 @@ impl RingConsumer {
                 "shared IPC slot contains an invalid frame length".into(),
             ));
         }
-        Ok(Some(ConsumerReservation {
-            ring: self,
-            slot,
-            sequence: tail,
-            length,
-        }))
-    }
-
-    /// Wait until an item is available or the optional timeout expires.
-    /// Passing None waits until a producer publishes data or the wait is
-    /// interrupted by a protocol error in the calling process.
-    pub fn wait_peek(
-        &mut self,
-        timeout: Option<Duration>,
-    ) -> Result<Option<ConsumerReservation<'_>>, SandboxError> {
-        let deadline = match timeout {
-            Some(duration) => Some(Instant::now().checked_add(duration).ok_or_else(|| {
-                SandboxError::InvalidConfig("shared IPC timeout is too large".into())
-            })?),
-            None => None,
-        };
-        loop {
-            if let Some(slot) = self.try_peek()? {
-                return Ok(Some(slot));
-            }
-            let remaining = match deadline {
-                Some(end) => {
-                    let remaining = end.saturating_duration_since(Instant::now());
-                    if remaining.is_zero() {
-                        return Ok(None);
-                    }
-                    Some(remaining)
-                }
-                None => None,
-            };
-            let expected_head = unsafe { &*self.head }.load(Ordering::Acquire);
-            futex_wait(self.head, expected_head, remaining)?;
-        }
+        Ok(Some((slot, tail, length)))
     }
 }
 
