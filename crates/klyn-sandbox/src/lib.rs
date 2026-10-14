@@ -14,6 +14,8 @@ pub mod broker;
 #[cfg(target_os = "linux")]
 pub mod cgroup;
 #[cfg(target_os = "linux")]
+pub mod ipc_ring;
+#[cfg(target_os = "linux")]
 pub mod landlock_seccomp;
 #[cfg(target_os = "linux")]
 pub mod manifest;
@@ -21,8 +23,6 @@ pub mod manifest;
 pub mod start_gate;
 #[cfg(target_os = "linux")]
 pub mod supervisor;
-#[cfg(target_os = "linux")]
-pub mod ipc_ring;
 #[cfg(target_os = "linux")]
 pub mod worker_bootstrap;
 
