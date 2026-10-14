@@ -456,7 +456,10 @@ fn execute_request(
             validate_relative_path(&path, false)
                 .map_err(|_| "invalid relative path".to_string())?;
             authorize_write_path(claims, &root_id, &path)?;
-            let root = inner.roots.get(&root_id).ok_or_else(|| "unknown filesystem root".to_string())?;
+            let root = inner
+                .roots
+                .get(&root_id)
+                .ok_or_else(|| "unknown filesystem root".to_string())?;
             let fd = open_beneath_create(root.file.as_raw_fd(), &path)
                 .map_err(|_| "kernel rejected secure exclusive file creation".to_string())?;
             Ok(Some(fd))
@@ -465,7 +468,10 @@ fn execute_request(
             validate_relative_path(&path, false)
                 .map_err(|_| "invalid relative path".to_string())?;
             authorize_write_path(claims, &root_id, &path)?;
-            let root = inner.roots.get(&root_id).ok_or_else(|| "unknown filesystem root".to_string())?;
+            let root = inner
+                .roots
+                .get(&root_id)
+                .ok_or_else(|| "unknown filesystem root".to_string())?;
             let fd = create_directory_beneath(root.file.as_raw_fd(), &path)
                 .map_err(|_| "kernel rejected secure directory creation".to_string())?;
             Ok(Some(fd))
@@ -565,16 +571,27 @@ fn open_beneath_create(root_fd: RawFd, path: &str) -> io::Result<OwnedFd> {
     let path = std::ffi::CString::new(path)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "NUL in path"))?;
     let how = OpenHow {
-        flags: (libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC
-            | libc::O_NOFOLLOW | libc::O_NONBLOCK) as u64,
+        flags: (libc::O_WRONLY
+            | libc::O_CREAT
+            | libc::O_EXCL
+            | libc::O_CLOEXEC
+            | libc::O_NOFOLLOW
+            | libc::O_NONBLOCK) as u64,
         mode: 0o600,
         resolve: RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_SYMLINKS | RESOLVE_NO_XDEV,
     };
     let fd = unsafe {
-        libc::syscall(libc::SYS_openat2, root_fd, path.as_ptr(), &how as *const OpenHow,
-            std::mem::size_of::<OpenHow>()) as RawFd
+        libc::syscall(
+            libc::SYS_openat2,
+            root_fd,
+            path.as_ptr(),
+            &how as *const OpenHow,
+            std::mem::size_of::<OpenHow>(),
+        ) as RawFd
     };
-    if fd < 0 { return Err(io::Error::last_os_error()); }
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
     Ok(unsafe { OwnedFd::from_raw_fd(fd) })
 }
 
@@ -593,10 +610,17 @@ fn open_beneath_directory(root_fd: RawFd, path: &str) -> io::Result<OwnedFd> {
         resolve: RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_SYMLINKS | RESOLVE_NO_XDEV,
     };
     let fd = unsafe {
-        libc::syscall(libc::SYS_openat2, root_fd, path.as_ptr(), &how as *const OpenHow,
-            std::mem::size_of::<OpenHow>()) as RawFd
+        libc::syscall(
+            libc::SYS_openat2,
+            root_fd,
+            path.as_ptr(),
+            &how as *const OpenHow,
+            std::mem::size_of::<OpenHow>(),
+        ) as RawFd
     };
-    if fd < 0 { return Err(io::Error::last_os_error()); }
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
     Ok(unsafe { OwnedFd::from_raw_fd(fd) })
 }
 
@@ -611,7 +635,9 @@ fn create_directory_beneath(root_fd: RawFd, path: &str) -> io::Result<OwnedFd> {
         Some(parent) => open_beneath_directory(root_fd, parent)?,
         None => {
             let fd = unsafe { libc::fcntl(root_fd, libc::F_DUPFD_CLOEXEC, 3) };
-            if fd < 0 { return Err(io::Error::last_os_error()); }
+            if fd < 0 {
+                return Err(io::Error::last_os_error());
+            }
             unsafe { OwnedFd::from_raw_fd(fd) }
         }
     };
@@ -732,9 +758,13 @@ impl BrokerClient {
         root_id: impl Into<String>,
         path: impl Into<String>,
     ) -> Result<OwnedFd, String> {
-        self.request_fd(capability, BrokerOperation::CreateFile {
-            root_id: root_id.into(), path: path.into(),
-        })
+        self.request_fd(
+            capability,
+            BrokerOperation::CreateFile {
+                root_id: root_id.into(),
+                path: path.into(),
+            },
+        )
     }
 
     pub fn create_directory(
@@ -743,9 +773,13 @@ impl BrokerClient {
         root_id: impl Into<String>,
         path: impl Into<String>,
     ) -> Result<OwnedFd, String> {
-        self.request_fd(capability, BrokerOperation::CreateDirectory {
-            root_id: root_id.into(), path: path.into(),
-        })
+        self.request_fd(
+            capability,
+            BrokerOperation::CreateDirectory {
+                root_id: root_id.into(),
+                path: path.into(),
+            },
+        )
     }
 
     pub fn connect_tcp(
@@ -974,7 +1008,6 @@ mod tests {
         assert!(!FileAccess::Read.permits(FileAccess::Write));
     }
 
-
     #[test]
     fn exclusive_workspace_creation_rejects_existing_paths_and_traversal() {
         use std::io::Write;
@@ -984,12 +1017,17 @@ mod tests {
         let fd = open_beneath_create(root_file.as_raw_fd(), "artifact.txt").expect("create file");
         let mut file = File::from(fd);
         file.write_all(b"ephemeral").expect("write artifact");
-        assert_eq!(std::fs::read(root.path().join("artifact.txt")).unwrap(), b"ephemeral");
+        assert_eq!(
+            std::fs::read(root.path().join("artifact.txt")).unwrap(),
+            b"ephemeral"
+        );
         assert!(open_beneath_create(root_file.as_raw_fd(), "artifact.txt").is_err());
         assert!(create_directory_beneath(root_file.as_raw_fd(), "../escape").is_err());
-        let directory = create_directory_beneath(root_file.as_raw_fd(), "nested").expect("directory");
+        let directory =
+            create_directory_beneath(root_file.as_raw_fd(), "nested").expect("directory");
         drop(directory);
-        let nested = open_beneath_create(root_file.as_raw_fd(), "nested/output.bin").expect("nested file");
+        let nested =
+            open_beneath_create(root_file.as_raw_fd(), "nested/output.bin").expect("nested file");
         drop(nested);
         assert!(root.path().join("nested/output.bin").is_file());
     }
