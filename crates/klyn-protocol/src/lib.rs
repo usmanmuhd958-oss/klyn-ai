@@ -12,6 +12,8 @@ use thiserror::Error;
 
 pub const PROTOCOL_VERSION: u16 = 1;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
+pub const MAX_EXECUTION_TASK_BYTES: usize = 16 * 1024;
+pub const MAX_EXECUTION_RESULT_BYTES: usize = 16 * 1024;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -25,6 +27,8 @@ pub enum Method {
     FsValidate,
     FsCommit,
     FsAbort,
+    /// Submit a bounded typed task to the fixed sandbox worker.
+    ExecuteTask,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -63,6 +67,11 @@ impl Request {
                 }) {
                     return Err(ProtocolError::InvalidParams);
                 }
+            }
+            Method::ExecuteTask => {
+                let params: ExecuteTaskParams = serde_json::from_value(self.params.clone())
+                    .map_err(|_| ProtocolError::InvalidParams)?;
+                params.validate()?;
             }
             Method::FsWriteFile => {
                 let object = self
@@ -127,6 +136,50 @@ pub struct TransactionIdParams {
     pub transaction_id: String,
 }
 
+/// Explicitly registered operations. Arbitrary command execution is not a protocol operation.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskOperation {
+    HashJson,
+    DescribeJson,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ExecuteTaskParams {
+    pub task_id: String,
+    pub operation: TaskOperation,
+    pub payload: Value,
+}
+
+impl ExecuteTaskParams {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        if self.task_id.is_empty()
+            || self.task_id.len() > 64
+            || !self
+                .task_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+        {
+            return Err(ProtocolError::InvalidParams);
+        }
+        let encoded =
+            serde_json::to_vec(&self.payload).map_err(|_| ProtocolError::InvalidParams)?;
+        if encoded.len() > MAX_EXECUTION_TASK_BYTES {
+            return Err(ProtocolError::InvalidParams);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ExecuteTaskResult {
+    pub task_id: String,
+    pub operation: TaskOperation,
+    pub output: Value,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum RpcErrorCode {
@@ -141,6 +194,9 @@ pub enum RpcErrorCode {
     InvalidPath,
     InvalidState,
     FilesystemUnavailable,
+    ExecutionUnavailable,
+    ExecutionFailed,
+    ExecutionTimeout,
     Internal,
 }
 
@@ -270,6 +326,68 @@ pub fn write_response<W: Write>(writer: &mut W, response: &Response) -> Result<(
     writer.write_all(b"\n")?;
     writer.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod execution_request_validation_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn request(params: Value) -> Request {
+        Request {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 42,
+            method: Method::ExecuteTask,
+            params,
+        }
+    }
+
+    #[test]
+    fn execution_accepts_only_bounded_registered_operations() {
+        assert!(request(json!({
+            "task_id": "task_01",
+            "operation": "hash_json",
+            "payload": {"source": "fn main() {}"}
+        }))
+        .validate()
+        .is_ok());
+
+        assert!(request(json!({
+            "task_id": "task-2",
+            "operation": "hash_json",
+            "payload": {},
+            "command": "/bin/sh"
+        }))
+        .validate()
+        .is_err());
+
+        assert!(request(json!({
+            "task_id": "task-3",
+            "operation": "execute_shell",
+            "payload": {}
+        }))
+        .validate()
+        .is_err());
+    }
+
+    #[test]
+    fn execution_rejects_invalid_ids_and_oversized_payloads() {
+        assert!(request(json!({
+            "task_id": "../escape",
+            "operation": "hash_json",
+            "payload": {}
+        }))
+        .validate()
+        .is_err());
+
+        assert!(request(json!({
+            "task_id": "task-oversized",
+            "operation": "hash_json",
+            "payload": {"data": "x".repeat(MAX_EXECUTION_TASK_BYTES)}
+        }))
+        .validate()
+        .is_err());
+    }
 }
 
 #[cfg(test)]

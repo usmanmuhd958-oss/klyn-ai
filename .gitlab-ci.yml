@@ -1,19 +1,79 @@
-default:
-  image: node:20-slim
+image: rust:1.99.0-slim-bookworm
 
 stages:
   - validate
-  - build
+  - test
+  - privileged-e2e
 
-validate_klyn:
+variables:
+  CARGO_HOME: "$CI_PROJECT_DIR/.cargo"
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: "always"
+
+cache:
+  key: "klyn-rust-${CI_COMMIT_REF_SLUG}"
+  paths:
+    - .cargo/registry/index/
+    - .cargo/registry/cache/
+    - .cargo/git/
+    - target/
+
+before_script:
+  - apt-get update -qq
+  - DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git
+  - rm -rf /var/lib/apt/lists/*
+  - git --version
+  - rustup component add rustfmt clippy
+  - rustc --version
+  - cargo --version
+  - uname -a
+
+validate_sandbox:
   stage: validate
   script:
-    - echo "⚡ Validating Klyn OS Agentic Core..."
-    - node -v
-    - echo "✓ Core validation successful!"
+    - cargo fmt --all -- --check
+    - cargo metadata --locked --format-version 1 > /dev/null
+    - RUSTFLAGS="-D warnings" cargo check --locked --workspace --all-targets
 
-build_klyn:
-  stage: build
+test_sandbox:
+  stage: test
   script:
-    - echo "🚀 Executing Klyn build process..."
-    - echo "✓ Klyn build successfully completed!"
+    - cargo test --locked --workspace -- --nocapture
+    - cargo clippy --locked --workspace --all-targets -- -D warnings
+
+# Runs only on a dedicated Linux runner that actually exposes Landlock ABI v8
+# and a writable delegated cgroup-v2 subtree. This is intentionally not mapped
+# to the shared SaaS runner; unavailable kernel capabilities must not be mocked.
+privileged_sandbox_e2e:
+  stage: privileged-e2e
+  tags:
+    - klyn-sandbox-e2e
+  timeout: 25m
+  variables:
+    KLYN_REQUIRE_KERNEL_ISOLATION: "1"
+    KLYN_E2E_INIT_EXECUTABLE: "/usr/libexec/klyn/klyn-sandbox-init"
+    KLYN_E2E_WORKER_EXECUTABLE: "/usr/libexec/klyn/klyn-worker"
+    KLYN_E2E_TIMEOUT_WORKER_EXECUTABLE: "/usr/libexec/klyn/e2e-timeout/klyn-worker"
+    CARGO_TERM_COLOR: "always"
+    RUSTFLAGS: "-D warnings"
+  script:
+    - test "$(id -u)" = "0" || { echo "klyn-sandbox-e2e runner must execute jobs as root on an ephemeral VM"; exit 1; }
+    - test -n "${KLYN_TEST_CGROUP_ROOT:-}" || { echo "KLYN_TEST_CGROUP_ROOT must name a writable delegated cgroup-v2 subtree"; exit 1; }
+    - test -d "${KLYN_TEST_CGROUP_ROOT}"
+    - test "$(stat -f -c %T /sys/fs/cgroup)" = "cgroup2fs"
+    - uname -a
+    - cat "${KLYN_TEST_CGROUP_ROOT}/cgroup.controllers"
+    - grep -w memory "${KLYN_TEST_CGROUP_ROOT}/cgroup.subtree_control"
+    - grep -w cpu "${KLYN_TEST_CGROUP_ROOT}/cgroup.subtree_control"
+    - grep -w pids "${KLYN_TEST_CGROUP_ROOT}/cgroup.subtree_control"
+    - cargo build --locked -p klyn-sandbox --bins
+    - install -d -o root -g root -m 0755 /usr/libexec/klyn
+    - install -o root -g root -m 0755 target/debug/klyn-sandbox-init /usr/libexec/klyn/klyn-sandbox-init
+    - install -o root -g root -m 0755 target/debug/klyn-worker /usr/libexec/klyn/klyn-worker
+    - install -d -o root -g root -m 0755 /usr/libexec/klyn/e2e-timeout
+    - install -o root -g root -m 0755 target/debug/klyn-worker-timeout-fixture /usr/libexec/klyn/e2e-timeout/klyn-worker
+    - stat -c '%U:%G %a %n' /usr/libexec/klyn/klyn-sandbox-init /usr/libexec/klyn/klyn-worker /usr/libexec/klyn/e2e-timeout/klyn-worker
+    - cargo fmt --all -- --check
+    - cargo check --locked --workspace --all-targets
+    - cargo test --locked --workspace -- --nocapture
+    - cargo clippy --locked --workspace --all-targets -- -D warnings

@@ -1,0 +1,83 @@
+name: KLYN Privileged Linux Sandbox E2E
+
+on:
+  push:
+    branches: [feat/step3-worker-bootstrap]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: klyn-privileged-sandbox-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  privileged-kernel-enforcement:
+    # This label must only be assigned to a dedicated, ephemeral Linux VM
+    # configured with Landlock ABI >= 8 and a writable delegated cgroup-v2
+    # subtree. Do not run untrusted PR code on a shared privileged host.
+    runs-on: [self-hosted, linux, x64, klyn-sandbox-e2e]
+    timeout-minutes: 25
+    env:
+      KLYN_REQUIRE_KERNEL_ISOLATION: "1"
+      KLYN_TEST_CGROUP_ROOT: ${{ vars.KLYN_TEST_CGROUP_ROOT }}
+      KLYN_E2E_INIT_EXECUTABLE: /usr/libexec/klyn/klyn-sandbox-init
+      KLYN_E2E_WORKER_EXECUTABLE: /usr/libexec/klyn/klyn-worker
+      KLYN_E2E_TIMEOUT_WORKER_EXECUTABLE: /usr/libexec/klyn/e2e-timeout/klyn-worker
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: -D warnings
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust components
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Require real kernel prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(id -u)" = "0" || {
+            echo "::error::The klyn-sandbox-e2e runner must execute jobs as root on an ephemeral VM."
+            exit 1
+          }
+          test -n "${KLYN_TEST_CGROUP_ROOT}" || {
+            echo "::error::Repository variable KLYN_TEST_CGROUP_ROOT must name a writable delegated cgroup-v2 subtree."
+            exit 1
+          }
+          test -d "${KLYN_TEST_CGROUP_ROOT}"
+          test "$(stat -f -c %T /sys/fs/cgroup)" = "cgroup2fs"
+          printf 'uid=%s\n' "$(id -u)"
+          uname -a
+          printf 'cgroup_root=%s\n' "${KLYN_TEST_CGROUP_ROOT}"
+          cat "${KLYN_TEST_CGROUP_ROOT}/cgroup.controllers"
+          grep -w memory "${KLYN_TEST_CGROUP_ROOT}/cgroup.subtree_control"
+          grep -w cpu "${KLYN_TEST_CGROUP_ROOT}/cgroup.subtree_control"
+          grep -w pids "${KLYN_TEST_CGROUP_ROOT}/cgroup.subtree_control"
+
+      - name: Install trusted test executables
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked -p klyn-sandbox --bins
+          install -d -o root -g root -m 0755 /usr/libexec/klyn
+          install -o root -g root -m 0755 target/debug/klyn-sandbox-init /usr/libexec/klyn/klyn-sandbox-init
+          install -o root -g root -m 0755 target/debug/klyn-worker /usr/libexec/klyn/klyn-worker
+          install -d -o root -g root -m 0755 /usr/libexec/klyn/e2e-timeout
+          install -o root -g root -m 0755 target/debug/klyn-worker-timeout-fixture /usr/libexec/klyn/e2e-timeout/klyn-worker
+          stat -c '%U:%G %a %n' /usr/libexec/klyn/klyn-sandbox-init /usr/libexec/klyn/klyn-worker /usr/libexec/klyn/e2e-timeout/klyn-worker
+
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Locked workspace check
+        run: cargo check --locked --workspace --all-targets
+
+      - name: Kernel-qualified workspace tests (no isolation skips)
+        run: cargo test --locked --workspace -- --nocapture
+
+      - name: Strict Clippy
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
