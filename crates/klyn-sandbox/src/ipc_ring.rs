@@ -348,6 +348,12 @@ impl RingProducer {
     }
 }
 
+struct PeekedSlotMetadata {
+    slot: *mut u8,
+    sequence: u32,
+    length: usize,
+}
+
 pub struct RingConsumer {
     payload: Mapping,
     _head_mapping: Mapping,
@@ -454,14 +460,14 @@ impl RingConsumer {
     }
 
     pub fn try_peek(&mut self) -> Result<Option<ConsumerReservation<'_>>, SandboxError> {
-        let Some((slot, sequence, length)) = self.peek_next_slot()? else {
+        let Some(metadata) = self.peek_next_slot()? else {
             return Ok(None);
         };
         Ok(Some(ConsumerReservation {
             ring: self,
-            slot,
-            sequence,
-            length,
+            slot: metadata.slot,
+            sequence: metadata.sequence,
+            length: metadata.length,
         }))
     }
 
@@ -481,12 +487,12 @@ impl RingConsumer {
         loop {
             // peek_next_slot returns raw slot metadata, not a reference tied to
             // this borrow, so the empty path can safely perform another poll.
-            if let Some((slot, sequence, length)) = self.peek_next_slot()? {
+            if let Some(metadata) = self.peek_next_slot()? {
                 return Ok(Some(ConsumerReservation {
                     ring: self,
-                    slot,
-                    sequence,
-                    length,
+                    slot: metadata.slot,
+                    sequence: metadata.sequence,
+                    length: metadata.length,
                 }));
             }
             let remaining = match deadline {
@@ -507,7 +513,7 @@ impl RingConsumer {
     /// Poll the SPSC sequence counters and return bounded slot metadata.
     /// The returned raw pointer is only converted to a slice in a reservation
     /// that holds the consumer's exclusive mutable borrow.
-    fn peek_next_slot(&self) -> Result<Option<(*mut u8, u32, usize)>, SandboxError> {
+    fn peek_next_slot(&self) -> Result<Option<PeekedSlotMetadata>, SandboxError> {
         let head = unsafe { &*self.head }.load(Ordering::Acquire);
         let tail = unsafe { &*self.tail }.load(Ordering::Relaxed);
         let available = head.wrapping_sub(tail);
@@ -528,7 +534,11 @@ impl RingConsumer {
                 "shared IPC slot contains an invalid frame length".into(),
             ));
         }
-        Ok(Some((slot, tail, length)))
+        Ok(Some(PeekedSlotMetadata {
+            slot,
+            sequence: tail,
+            length,
+        }))
     }
 }
 
