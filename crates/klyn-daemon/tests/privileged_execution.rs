@@ -22,9 +22,7 @@ use klyn_daemon::{
     policy::{PeerIdentity, Permission, UidPolicy},
     Router,
 };
-use klyn_protocol::{
-    ExecuteTaskParams, Method, Request, TaskOperation, PROTOCOL_VERSION,
-};
+use klyn_protocol::{ExecuteTaskParams, Method, Request, TaskOperation, PROTOCOL_VERSION};
 use klyn_sandbox::{
     broker::{
         BrokerConfig, CapabilityVerifier, Ed25519CapabilityVerifier, ResourceBroker,
@@ -93,14 +91,18 @@ fn authorized_task_runs_via_real_supervisor_and_kernel_sandbox() {
         .expect("make public verification key readable");
     let key_metadata = fs::metadata(&key_path).expect("stat verification key");
     assert_eq!(key_metadata.uid(), 0, "verification key must be root-owned");
-    assert_eq!(key_metadata.len(), 32, "verification key must be exactly 32 bytes");
+    assert_eq!(
+        key_metadata.len(),
+        32,
+        "verification key must be exactly 32 bytes"
+    );
 
     let roots = BTreeMap::from([("workspace".to_owned(), workspace.clone())]);
     let socket_path = temp.path().join("broker.sock");
-    let verifier: Arc<dyn CapabilityVerifier> =
-        Arc::new(Ed25519CapabilityVerifier::new(VerifyingKey::from_bytes(
-            &signing_key.verifying_key().to_bytes(),
-        ).expect("valid test verification key")));
+    let verifier: Arc<dyn CapabilityVerifier> = Arc::new(Ed25519CapabilityVerifier::new(
+        VerifyingKey::from_bytes(&signing_key.verifying_key().to_bytes())
+            .expect("valid test verification key"),
+    ));
     let broker = ResourceBroker::bind(BrokerConfig {
         socket_path: socket_path.clone(),
         roots: roots.clone(),
