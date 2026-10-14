@@ -62,10 +62,8 @@ fuzz_targets:
     - export PATH="$CARGO_HOME/bin:$PATH"
     - rustup toolchain install nightly --profile minimal --component rustfmt
     - |
-      if cargo-fuzz --version 2>/dev/null | grep -Eq '^cargo-fuzz 0\.13\.2
-    - cargo +nightly fmt --manifest-path crates/klyn-sandbox/fuzz/Cargo.toml -- --check
-    - cd crates/klyn-sandbox/fuzz && cargo +nightly fuzz build fuzz_ipc_frame && cargo +nightly fuzz build fuzz_kel_parser
-; then
+      installed_version="$(cargo-fuzz --version 2>/dev/null || true)"
+      if [[ "$installed_version" == "cargo-fuzz 0.13.2" ]]; then
         echo "Using cached cargo-fuzz 0.13.2"
       else
         cargo +nightly install cargo-fuzz --version 0.13.2 --locked --force
