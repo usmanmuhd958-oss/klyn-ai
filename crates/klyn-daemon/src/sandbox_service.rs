@@ -288,9 +288,6 @@ impl ManagedSandboxedWorker {
         if response.get("ok") != Some(&serde_json::Value::Bool(true)) {
             return Err(SandboxServiceError::ShutdownNotAcknowledged);
         }
-        if let Some(worker) = self.worker.as_mut() {
-            worker.close_stdin();
-        }
         let status = self
             .worker
             .as_mut()
