@@ -305,7 +305,7 @@ impl SpawnedWorker {
     }
 }
 
-fn decode_worker_response(bytes: &[u8]) -> Result<serde_json::Value, SandboxError> {
+pub fn decode_worker_response(bytes: &[u8]) -> Result<serde_json::Value, SandboxError> {
     match bytes {
         [WORKER_RESP_SHUTDOWN] => Ok(serde_json::json!({
             "ok": true,
