@@ -1140,8 +1140,14 @@ mod tests {
         current = previous.clone();
         current.pids_current = 4;
         assert_eq!(
-            detect_anomaly(&previous, &current, Duration::from_millis(250), 10_000, 1_000_000)
-                .map(|value| value.0),
+            detect_anomaly(
+                &previous,
+                &current,
+                Duration::from_millis(250),
+                10_000,
+                1_000_000
+            )
+            .map(|value| value.0),
             Some(AnomalyKind::PidLimitPressure)
         );
     }
