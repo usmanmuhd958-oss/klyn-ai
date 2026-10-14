@@ -1,4 +1,4 @@
-name: Mirror to GitLab
+name: Mirror KLYN branches to GitLab
 
 on:
   push:
@@ -14,28 +14,45 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: gitlab-mirror-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   mirror:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Set up SSH Key
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.GITLAB_SSH_KEY }}
-
-      - name: Add GitLab to Known Hosts
+      - name: Push current branch to GitLab
+        shell: bash
+        env:
+          GITLAB_SSH_KEY: ${{ secrets.GITLAB_SSH_KEY }}
         run: |
-          mkdir -p ~/.ssh
-          ssh-keyscan gitlab.com >> ~/.ssh/known_hosts
+          set -euo pipefail
+          if [[ -z "${GITLAB_SSH_KEY}" ]]; then
+            echo "::error::GITLAB_SSH_KEY is not configured; refusing to mirror." >&2
+            exit 1
+          fi
 
-      - name: Push to GitLab
-        run: |
-          git remote add gitlab git@gitlab.com:usmanmuhd958-oss/klyn-ai.git || git remote set-url gitlab git@gitlab.com:usmanmuhd958-oss/klyn-ai.git
-          git push gitlab "$GITHUB_REF_NAME:$GITHUB_REF_NAME"
+          install -d -m 0700 "${HOME}/.ssh"
+          ssh_key="${HOME}/.ssh/klyn_gitlab_ed25519"
+          trap 'rm -f "${ssh_key}"' EXIT
+          printf '%s\n' "${GITLAB_SSH_KEY}" > "${ssh_key}"
+          chmod 0600 "${ssh_key}"
+
+          # Pin GitLab.com's published ED25519 host key. Do not trust a key
+          # discovered by ssh-keyscan at runtime (MITM risk).
+          printf '%s\n' 'gitlab.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAfuCHKVTjquxvt6CM6tdG4SLp1Btn/nOeHHE5UOzRdf' > "${HOME}/.ssh/known_hosts"
+          chmod 0644 "${HOME}/.ssh/known_hosts"
+
+          export GIT_SSH_COMMAND="ssh -i ${ssh_key} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=${HOME}/.ssh/known_hosts"
+          git remote add gitlab git@gitlab.com:usmanmuhd958-oss/klyn-ai.git
+          git push gitlab "${GITHUB_REF_NAME}:${GITHUB_REF_NAME}"
