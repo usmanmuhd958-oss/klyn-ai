@@ -114,7 +114,7 @@ fn malformed_capability_claims_are_rejected_before_authorization() {
     assert!(empty_token.validate().is_err());
 
     let mut path_escape = valid_claims();
-    path_escape.file_grants[0].prefix = "../host";
+    path_escape.file_grants[0].prefix = "../host".to_string();
     assert!(path_escape.validate().is_err());
 
     let mut unknown_version = valid_claims();
