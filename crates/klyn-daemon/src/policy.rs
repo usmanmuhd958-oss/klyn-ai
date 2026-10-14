@@ -108,7 +108,11 @@ mod execution_policy_tests {
 
     #[test]
     fn task_execution_requires_its_own_permission() {
-        let peer = PeerIdentity { pid: 5, uid: 1000, gid: 1000 };
+        let peer = PeerIdentity {
+            pid: 5,
+            uid: 1000,
+            gid: 1000,
+        };
         let mut policy = UidPolicy::new();
         policy.grant(1000, Permission::ObserveDaemon);
         assert_eq!(
