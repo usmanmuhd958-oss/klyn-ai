@@ -3,6 +3,7 @@ image: rust:1.99.0-slim-bookworm
 stages:
   - validate
   - test
+  - privileged-e2e
 
 variables:
   CARGO_HOME: "$CI_PROJECT_DIR/.cargo"
@@ -37,5 +38,31 @@ validate_sandbox:
 test_sandbox:
   stage: test
   script:
+    - cargo test --locked --workspace -- --nocapture
+    - cargo clippy --locked --workspace --all-targets -- -D warnings
+
+# Runs only on a dedicated Linux runner that actually exposes Landlock ABI v8
+# and a writable delegated cgroup-v2 subtree. This is intentionally not mapped
+# to the shared SaaS runner; unavailable kernel capabilities must not be mocked.
+privileged_sandbox_e2e:
+  stage: privileged-e2e
+  tags:
+    - klyn-sandbox-e2e
+  timeout: 25m
+  variables:
+    KLYN_REQUIRE_KERNEL_ISOLATION: "1"
+    CARGO_TERM_COLOR: "always"
+    RUSTFLAGS: "-D warnings"
+  script:
+    - test -n "${KLYN_TEST_CGROUP_ROOT:-}" || { echo "KLYN_TEST_CGROUP_ROOT must name a writable delegated cgroup-v2 subtree"; exit 1; }
+    - test -d "${KLYN_TEST_CGROUP_ROOT}"
+    - test "$(stat -f -c %T /sys/fs/cgroup)" = "cgroup2fs"
+    - uname -a
+    - cat "${KLYN_TEST_CGROUP_ROOT}/cgroup.controllers"
+    - grep -w memory "${KLYN_TEST_CGROUP_ROOT}/cgroup.subtree_control"
+    - grep -w cpu "${KLYN_TEST_CGROUP_ROOT}/cgroup.subtree_control"
+    - grep -w pids "${KLYN_TEST_CGROUP_ROOT}/cgroup.subtree_control"
+    - cargo fmt --all -- --check
+    - cargo check --locked --workspace --all-targets
     - cargo test --locked --workspace -- --nocapture
     - cargo clippy --locked --workspace --all-targets -- -D warnings
