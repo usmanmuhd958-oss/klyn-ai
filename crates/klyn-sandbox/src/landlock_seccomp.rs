@@ -252,6 +252,12 @@ mod tests {
             return true;
         }
 
+        if std::env::var_os("KLYN_REQUIRE_KERNEL_ISOLATION").is_some() {
+            panic!(
+                "KLYN_REQUIRE_KERNEL_ISOLATION is set, but Landlock ABI v8 is unavailable                  (kernel reported ABI {abi}); refusing to count a skipped kernel-enforcement test as passing"
+            );
+        }
+
         eprintln!(
             "SKIP: Landlock ABI v8 is unavailable (kernel reported ABI {abi}); policy installation must still fail closed"
         );
