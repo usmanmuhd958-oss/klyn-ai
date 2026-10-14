@@ -386,9 +386,7 @@ fn validate_root_controlled_parent_chain(path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use klyn_protocol::{
-        ExecuteTaskParams, Method, Request, Response, RpcErrorCode, TaskOperation, PROTOCOL_VERSION,
-    };
+    use klyn_protocol::{Method, Request, Response, RpcErrorCode, PROTOCOL_VERSION};
     use serde_json::json;
 
     #[test]
