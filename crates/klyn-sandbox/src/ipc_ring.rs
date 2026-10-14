@@ -336,13 +336,21 @@ impl RingProducer {
                 reservation.commit(bytes.len())?;
                 return Ok(());
             }
+            // Snapshot the futex word and recheck the predicate before sleeping.
+            // If the consumer makes space after this snapshot, futex_wait observes
+            // a different word and returns EAGAIN rather than losing the wakeup.
+            let expected_tail = unsafe { &*self.tail }.load(Ordering::Acquire);
+            if let Some(mut reservation) = self.try_reserve()? {
+                reservation.buffer()[..bytes.len()].copy_from_slice(bytes);
+                reservation.commit(bytes.len())?;
+                return Ok(());
+            }
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 return Err(SandboxError::Enforcement(
                     "timed out waiting for shared IPC ring capacity".into(),
                 ));
             }
-            let expected_tail = unsafe { &*self.tail }.load(Ordering::Acquire);
             futex_wait(self.tail, expected_tail, Some(remaining))?;
         }
     }
@@ -495,6 +503,18 @@ impl RingConsumer {
                     length: metadata.length,
                 }));
             }
+            // Snapshot the futex word and recheck availability before sleeping.
+            // If the producer publishes after this snapshot, futex_wait observes
+            // a different word and returns EAGAIN instead of losing the wakeup.
+            let expected_head = unsafe { &*self.head }.load(Ordering::Acquire);
+            if let Some(metadata) = self.peek_next_slot()? {
+                return Ok(Some(ConsumerReservation {
+                    ring: self,
+                    slot: metadata.slot,
+                    sequence: metadata.sequence,
+                    length: metadata.length,
+                }));
+            }
             let remaining = match deadline {
                 Some(end) => {
                     let remaining = end.saturating_duration_since(Instant::now());
@@ -505,7 +525,6 @@ impl RingConsumer {
                 }
                 None => None,
             };
-            let expected_head = unsafe { &*self.head }.load(Ordering::Acquire);
             futex_wait(self.head, expected_head, remaining)?;
         }
     }
