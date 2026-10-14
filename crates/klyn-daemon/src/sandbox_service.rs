@@ -146,7 +146,10 @@ impl SandboxService {
         budget: ResourceBudget,
     ) -> Result<ManagedSandboxedWorker, SandboxServiceError> {
         self.launch_candidate_worker_for_operation(
-            transaction_id, peer, budget, WorkerOperation::Control,
+            transaction_id,
+            peer,
+            budget,
+            WorkerOperation::Control,
         )
     }
 
@@ -271,7 +274,7 @@ impl SandboxService {
                     broker_thread: Some(broker_thread),
                     telemetry: Some(telemetry),
                 })
-            },
+            }
             Err(error) => {
                 stop.store(true, Ordering::Release);
                 let _ = broker_thread.join();
@@ -334,7 +337,9 @@ impl ManagedSandboxedWorker {
 
     /// Receive one bounded asynchronous kernel/cgroup telemetry event.
     pub fn try_telemetry_event(&self) -> Option<klyn_sandbox::telemetry::TelemetryEvent> {
-        self.telemetry.as_ref().and_then(|telemetry| telemetry.try_recv())
+        self.telemetry
+            .as_ref()
+            .and_then(|telemetry| telemetry.try_recv())
     }
 
     fn stop_telemetry(&mut self) -> Result<(), SandboxServiceError> {
