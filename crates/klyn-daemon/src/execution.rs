@@ -138,9 +138,10 @@ impl ExecutionService {
         }
         if config.worker_id_prefix.is_empty()
             || config.worker_id_prefix.len() > 16
-            || !config.worker_id_prefix.bytes().all(|byte| {
-                byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'
-            })
+            || !config
+                .worker_id_prefix
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
         {
             return Err(ExecutionError::InvalidConfig(
                 "worker ID prefix must contain 1..=16 safe ASCII bytes".into(),
@@ -191,10 +192,15 @@ impl ExecutionService {
         );
         let claims = CapabilityClaims {
             version: OCAP_VERSION,
-            token_id: format!("exec-{}-{}-{:x}-{:x}", peer.uid, peer.pid, time_component, nonce),
+            token_id: format!(
+                "exec-{}-{}-{:x}-{:x}",
+                peer.uid, peer.pid, time_component, nonce
+            ),
             subject_uid: self.config.worker_uid,
             subject_gid: self.config.worker_gid,
-            expires_at_unix: now.as_secs().saturating_add(self.config.capability_ttl.as_secs()),
+            expires_at_unix: now
+                .as_secs()
+                .saturating_add(self.config.capability_ttl.as_secs()),
             file_grants: self.config.file_grants.clone(),
             network_grants: self.config.network_grants.clone(),
             budget: self.config.budget.clone(),
@@ -283,13 +289,12 @@ impl ExecutionService {
             return Err(ExecutionError::InvalidWorkerResponse);
         }
         let mut cursor = Cursor::new(output.as_slice());
-        let frame =
-            read_frame(&mut cursor).map_err(|_| ExecutionError::InvalidWorkerResponse)?;
+        let frame = read_frame(&mut cursor).map_err(|_| ExecutionError::InvalidWorkerResponse)?;
         if cursor.position() as usize != output.len() {
             return Err(ExecutionError::InvalidWorkerResponse);
         }
-        let result: ExecuteTaskResult = serde_json::from_slice(&frame)
-            .map_err(|_| ExecutionError::InvalidWorkerResponse)?;
+        let result: ExecuteTaskResult =
+            serde_json::from_slice(&frame).map_err(|_| ExecutionError::InvalidWorkerResponse)?;
         if result.task_id != params.task_id || result.operation != params.operation {
             return Err(ExecutionError::InvalidWorkerResponse);
         }
