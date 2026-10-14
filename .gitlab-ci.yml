@@ -22,7 +22,7 @@ cache:
 
 before_script:
   - apt-get update -qq
-  - DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git
+  - DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git build-essential
   - rm -rf /var/lib/apt/lists/*
   - git --version
   - rustup component add rustfmt clippy
