@@ -13,7 +13,7 @@ Install cargo-fuzz with a nightly toolchain, then run:
 
 ```bash
 cargo +nightly install cargo-fuzz --locked
-bash scripts/run_fuzz_campaign.sh
+RUSTUP_TOOLCHAIN=nightly bash scripts/run_fuzz_campaign.sh
 ```
 
 The default campaign executes 1,000,000 iterations for each target. Set `KLYN_FUZZ_RUNS` to a smaller count for a smoke run. The workflow compiles both targets on each applicable branch/PR; the million-iteration campaign is opt-in through workflow dispatch.
