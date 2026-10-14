@@ -13,7 +13,7 @@ use std::{
     process::ExitStatus,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc,
+        Arc, Mutex,
     },
     thread::JoinHandle,
     time::{SystemTime, UNIX_EPOCH},
@@ -22,8 +22,9 @@ use std::{
 use ed25519_dalek::{Signer, SigningKey};
 use klyn_sandbox::{
     broker::{BrokerConfig, Ed25519CapabilityVerifier, ResourceBroker, RevocationOracle},
+    fs_txn::{FsTransaction, SharedFsTransaction},
     kel,
-    supervisor::{launch_worker_with_kel, SpawnedWorker, WorkerLaunchConfig},
+    supervisor::{launch_worker_with_kel_and_fs_transaction, SpawnedWorker, WorkerLaunchConfig},
     validate_trusted_root, CapabilityClaims, FileAccess, FileGrant, ResourceBudget, SandboxError,
     SignedCapability, WorkerOperation, OCAP_VERSION,
 };
@@ -203,11 +204,18 @@ impl SandboxService {
             subject_gid: host_gid,
             expires_at_unix,
             operation,
-            file_grants: vec![FileGrant {
-                root_id: "runtime".into(),
-                prefix: String::new(),
-                access: FileAccess::Read,
-            }],
+            file_grants: vec![
+                FileGrant {
+                    root_id: "runtime".into(),
+                    prefix: String::new(),
+                    access: FileAccess::Read,
+                },
+                FileGrant {
+                    root_id: "workspace".into(),
+                    prefix: String::new(),
+                    access: FileAccess::ReadWrite,
+                },
+            ],
             network_grants: Vec::new(),
             budget,
         };
@@ -222,10 +230,21 @@ impl SandboxService {
             .broker_directory
             .join(format!("{worker_id}.sock"));
         let kel_path = self.kel_directory.join(format!("{worker_id}.kel"));
-        let roots = BTreeMap::from([(
-            "runtime".to_owned(),
-            self.config.trusted_read_only_root.clone(),
-        )]);
+        let filesystem_transaction: SharedFsTransaction = Arc::new(Mutex::new(
+            FsTransaction::create(&self.config.broker_directory, &worker_id)?,
+        ));
+        let workspace_root = filesystem_transaction
+            .lock()
+            .map_err(|_| SandboxError::Enforcement("filesystem transaction lock is poisoned".into()))?
+            .workspace_path()
+            .to_path_buf();
+        let roots = BTreeMap::from([
+            (
+                "runtime".to_owned(),
+                self.config.trusted_read_only_root.clone(),
+            ),
+            ("workspace".to_owned(), workspace_root),
+        ]);
         let broker = ResourceBroker::bind(BrokerConfig {
             socket_path: socket_path.clone(),
             roots: roots.clone(),
@@ -238,13 +257,23 @@ impl SandboxService {
         })?;
 
         let stop = Arc::new(AtomicBool::new(false));
+        let broker_stopped = Arc::new(AtomicBool::new(false));
+        filesystem_transaction
+            .lock()
+            .map_err(|_| SandboxError::Enforcement("filesystem transaction lock is poisoned".into()))?
+            .register_broker_shutdown(Arc::clone(&stop), Arc::clone(&broker_stopped));
         let thread_stop = Arc::clone(&stop);
+        let thread_stopped = Arc::clone(&broker_stopped);
         let broker_thread = std::thread::Builder::new()
             .name(format!("klyn-broker-{sequence:x}"))
-            .spawn(move || broker.serve_until(thread_stop))
+            .spawn(move || {
+                let result = broker.serve_until(thread_stop);
+                thread_stopped.store(true, Ordering::Release);
+                result
+            })
             .map_err(|_| SandboxServiceError::BrokerThreadStart)?;
 
-        let launch = launch_worker_with_kel(
+        let launch = launch_worker_with_kel_and_fs_transaction(
             WorkerLaunchConfig {
                 init_executable: self.config.init_executable.clone(),
                 worker_executable: self.config.worker_executable.clone(),
@@ -258,6 +287,7 @@ impl SandboxService {
             &self.signing_key,
             &kel_path,
             session_id,
+            Arc::clone(&filesystem_transaction),
         );
 
         match launch {
