@@ -739,6 +739,17 @@ mod tests {
     }
 
     #[test]
+    fn payload_bounds_are_checked_before_any_ring_publication() {
+        let (mut producer, consumer_fds) = RingProducer::create().expect("create ring");
+        let mut consumer = RingConsumer::attach(consumer_fds).expect("attach consumer");
+        let oversized = vec![0u8; RING_MAX_PAYLOAD_BYTES + 1];
+
+        assert!(producer.try_push(&[]).is_err());
+        assert!(producer.try_push(&oversized).is_err());
+        assert!(consumer.try_peek().expect("ring state remains valid").is_none());
+    }
+
+    #[test]
     fn consumer_created_ring_supports_attaching_the_remote_producer() {
         let (mut consumer, producer_fds) = RingConsumer::create().expect("create consumer ring");
         let mut producer =
