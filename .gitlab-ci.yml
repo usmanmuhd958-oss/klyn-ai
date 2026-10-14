@@ -51,9 +51,12 @@ privileged_sandbox_e2e:
   timeout: 25m
   variables:
     KLYN_REQUIRE_KERNEL_ISOLATION: "1"
+    KLYN_E2E_INIT_EXECUTABLE: "/usr/libexec/klyn/klyn-sandbox-init"
+    KLYN_E2E_WORKER_EXECUTABLE: "/usr/libexec/klyn/klyn-worker"
     CARGO_TERM_COLOR: "always"
     RUSTFLAGS: "-D warnings"
   script:
+    - test "$(id -u)" = "0" || { echo "klyn-sandbox-e2e runner must execute jobs as root on an ephemeral VM"; exit 1; }
     - test -n "${KLYN_TEST_CGROUP_ROOT:-}" || { echo "KLYN_TEST_CGROUP_ROOT must name a writable delegated cgroup-v2 subtree"; exit 1; }
     - test -d "${KLYN_TEST_CGROUP_ROOT}"
     - test "$(stat -f -c %T /sys/fs/cgroup)" = "cgroup2fs"
@@ -62,6 +65,11 @@ privileged_sandbox_e2e:
     - grep -w memory "${KLYN_TEST_CGROUP_ROOT}/cgroup.subtree_control"
     - grep -w cpu "${KLYN_TEST_CGROUP_ROOT}/cgroup.subtree_control"
     - grep -w pids "${KLYN_TEST_CGROUP_ROOT}/cgroup.subtree_control"
+    - cargo build --locked -p klyn-sandbox --bins
+    - install -d -o root -g root -m 0755 /usr/libexec/klyn
+    - install -o root -g root -m 0755 target/debug/klyn-sandbox-init /usr/libexec/klyn/klyn-sandbox-init
+    - install -o root -g root -m 0755 target/debug/klyn-worker /usr/libexec/klyn/klyn-worker
+    - stat -c '%U:%G %a %n' /usr/libexec/klyn/klyn-sandbox-init /usr/libexec/klyn/klyn-worker
     - cargo fmt --all -- --check
     - cargo check --locked --workspace --all-targets
     - cargo test --locked --workspace -- --nocapture
