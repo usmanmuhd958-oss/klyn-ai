@@ -487,14 +487,14 @@ mod tests {
     fn binary_worker_response_parser_accepts_only_known_wire_shapes() {
         let ping = decode_worker_response(&[WORKER_RESP_PING, 7, 0, 0, 0, 1])
             .expect("well-formed ping response");
-        assert_eq!(ping["ok"], true);
-        assert_eq!(ping["pid"], 7);
-        assert_eq!(ping["namespace_init"], true);
+        assert_eq!(ping["ok"].as_bool(), Some(true));
+        assert_eq!(ping["pid"].as_u64(), Some(7));
+        assert_eq!(ping["namespace_init"].as_bool(), Some(true));
 
         let shutdown = decode_worker_response(&[WORKER_RESP_SHUTDOWN])
             .expect("well-formed shutdown response");
-        assert_eq!(shutdown["ok"], true);
-        assert_eq!(shutdown["state"], "stopping");
+        assert_eq!(shutdown["ok"].as_bool(), Some(true));
+        assert_eq!(shutdown["state"].as_str(), Some("stopping"));
     }
 
     #[test]
