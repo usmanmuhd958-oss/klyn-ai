@@ -138,7 +138,7 @@ jobs:
       - name: Install nightly and cargo-fuzz
         run: |
           rustup toolchain install nightly --profile minimal --component rustfmt
-          cargo +nightly install cargo-fuzz --version 0.13.2 --locked
+          if cargo-fuzz --version 2>/dev/null | grep -Eq '^cargo-fuzz 0\.13\.2
       - name: Format fuzz workspace
         run: cargo +nightly fmt --manifest-path crates/klyn-sandbox/fuzz/Cargo.toml -- --check
       - name: Compile both fuzz targets
@@ -173,6 +173,112 @@ jobs:
         run: |
           rustup toolchain install nightly --profile minimal --component rustfmt
           cargo +nightly install cargo-fuzz --version 0.13.2 --locked
+      - name: Run million-iteration fuzz campaign
+        env:
+          RUSTUP_TOOLCHAIN: nightly
+          KLYN_FUZZ_RUNS: "1000000"
+        run: bash scripts/run_fuzz_campaign.sh
+
+  ebpf-object-compile:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install BPF build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang llvm bpftool libbpf-dev
+      - name: Compile CO-RE telemetry object when runner BTF is available
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -r /sys/kernel/btf/vmlinux ]]; then
+            echo "::warning::/sys/kernel/btf/vmlinux unavailable; native eBPF compile skipped"
+            exit 0
+          fi
+          mkdir -p "$RUNNER_TEMP/klyn-bpf"
+          bpftool btf dump file /sys/kernel/btf/vmlinux format c > "$RUNNER_TEMP/klyn-bpf/vmlinux.h"
+          clang -O2 -g -target bpf -D__TARGET_ARCH_x86 \
+            -I"$RUNNER_TEMP/klyn-bpf" -I/usr/include/bpf -I/usr/include/x86_64-linux-gnu \
+            -c crates/klyn-sandbox/ebpf/klyn_telemetry.bpf.c \
+            -o "$RUNNER_TEMP/klyn-bpf/klyn_telemetry.bpf.o"
+; then
+            echo "Using cached cargo-fuzz 0.13.2"
+          else
+            cargo +nightly install cargo-fuzz --version 0.13.2 --locked --force
+          fi
+      - name: Format fuzz workspace
+        run: cargo +nightly fmt --manifest-path crates/klyn-sandbox/fuzz/Cargo.toml -- --check
+      - name: Compile both fuzz targets
+        working-directory: crates/klyn-sandbox/fuzz
+        run: |
+          cargo +nightly fuzz build fuzz_ipc_frame
+          cargo +nightly fuzz build fuzz_kel_parser
+
+  fuzz-campaign:
+    # Every PR runs the full fuzz budget; workflow_dispatch can opt in on a
+    # branch even without a PR. Pushes do not duplicate the expensive campaign.
+    if: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.run_fuzz_campaign == true) }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Cache cargo-fuzz dependencies and build artifacts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ~/.cargo/bin/cargo-fuzz
+            crates/klyn-sandbox/fuzz/target
+          key: ${{ runner.os }}-nightly-cargo-fuzz-0.13.2-${{ hashFiles('Cargo.lock', 'crates/klyn-sandbox/Cargo.toml', 'crates/klyn-sandbox/fuzz/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-nightly-cargo-fuzz-0.13.2-
+      - name: Install nightly and cargo-fuzz
+        run: |
+          rustup toolchain install nightly --profile minimal --component rustfmt
+          if cargo-fuzz --version 2>/dev/null | grep -Eq '^cargo-fuzz 0\.13\.2
+      - name: Run million-iteration fuzz campaign
+        env:
+          RUSTUP_TOOLCHAIN: nightly
+          KLYN_FUZZ_RUNS: "1000000"
+        run: bash scripts/run_fuzz_campaign.sh
+
+  ebpf-object-compile:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install BPF build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang llvm bpftool libbpf-dev
+      - name: Compile CO-RE telemetry object when runner BTF is available
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -r /sys/kernel/btf/vmlinux ]]; then
+            echo "::warning::/sys/kernel/btf/vmlinux unavailable; native eBPF compile skipped"
+            exit 0
+          fi
+          mkdir -p "$RUNNER_TEMP/klyn-bpf"
+          bpftool btf dump file /sys/kernel/btf/vmlinux format c > "$RUNNER_TEMP/klyn-bpf/vmlinux.h"
+          clang -O2 -g -target bpf -D__TARGET_ARCH_x86 \
+            -I"$RUNNER_TEMP/klyn-bpf" -I/usr/include/bpf -I/usr/include/x86_64-linux-gnu \
+            -c crates/klyn-sandbox/ebpf/klyn_telemetry.bpf.c \
+            -o "$RUNNER_TEMP/klyn-bpf/klyn_telemetry.bpf.o"
+; then
+            echo "Using cached cargo-fuzz 0.13.2"
+          else
+            cargo +nightly install cargo-fuzz --version 0.13.2 --locked --force
+          fi
       - name: Run million-iteration fuzz campaign
         env:
           RUSTUP_TOOLCHAIN: nightly
