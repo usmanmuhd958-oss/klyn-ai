@@ -9,11 +9,10 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     env,
-    fs::{self, File, OpenOptions},
+    fs::{self, OpenOptions},
     io::Read,
     os::unix::{
-        fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
-        net::UnixListener,
+        fs::{MetadataExt, OpenOptionsExt},
     },
     path::{Path, PathBuf},
     str::FromStr,
@@ -22,7 +21,7 @@ use std::{
     time::Duration,
 };
 
-use ed25519_dalek::{SigningKey, VerifyingKey};
+use ed25519_dalek::SigningKey;
 use klyn_daemon::{
     execution::{ExecutionService, ExecutionServiceConfig},
     lifecycle::Lifecycle,
@@ -30,7 +29,6 @@ use klyn_daemon::{
     server::{self, BoundSocket},
     Router,
 };
-use klyn_protocol::{ExecuteTaskParams, Method, Request, RpcErrorCode, TaskOperation, PROTOCOL_VERSION};
 use klyn_sandbox::{
     broker::{
         BrokerConfig, CapabilityVerifier, Ed25519CapabilityVerifier, ResourceBroker,
@@ -382,7 +380,10 @@ fn validate_root_controlled_parent_chain(path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use klyn_protocol::Response;
+    use klyn_protocol::{
+        ExecuteTaskParams, Method, Request, Response, RpcErrorCode, TaskOperation,
+        PROTOCOL_VERSION,
+    };
     use serde_json::json;
 
     #[test]
