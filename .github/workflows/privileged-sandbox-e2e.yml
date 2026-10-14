@@ -3,8 +3,6 @@ name: KLYN Privileged Linux Sandbox E2E
 on:
   push:
     branches: [feat/step3-worker-bootstrap]
-  pull_request:
-    branches: [main, master]
   workflow_dispatch:
 
 permissions:
