@@ -13,7 +13,7 @@ use std::{
         unix::{fs::MetadataExt, process::CommandExt},
     },
     path::{Path, PathBuf},
-    process::{Child, Command, ExitStatus},
+    process::{Child, ChildStdin, ChildStdout, Command, ExitStatus, Stdio},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -78,6 +78,16 @@ impl SpawnedWorker {
 
     pub fn cgroup_path(&self) -> &Path {
         self.cgroup.path()
+    }
+
+    /// Input can be written only after launch_worker has verified both gates.
+    pub fn take_stdin(&mut self) -> Option<ChildStdin> {
+        self.child.stdin.take()
+    }
+
+    /// Output is consumed by the daemon with a strict result-size limit.
+    pub fn take_stdout(&mut self) -> Option<ChildStdout> {
+        self.child.stdout.take()
     }
 
     pub fn try_wait(&mut self) -> Result<Option<ExitStatus>, SandboxError> {
@@ -182,7 +192,10 @@ pub fn launch_worker(
         .arg(&worker_executable)
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
-        .env("LANG", "C");
+        .env("LANG", "C")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
 
     // FD 4 is the sealed memfd, FD 5 gates stage-0, and FD 6 is the final
     // policy/mission gate. All other descriptors >= 3 are closed before exec;
