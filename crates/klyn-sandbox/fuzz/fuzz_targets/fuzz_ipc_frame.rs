@@ -1,10 +1,10 @@
 #![no_main]
 
-use libfuzzer_sys::fuzz_target;
 use klyn_sandbox::{
     ipc_ring::{decode_ipc_frame, RING_MAX_PAYLOAD_BYTES},
     supervisor::decode_worker_response,
 };
+use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|input: &[u8]| {
     // Bound the maximum allocation/work per testcase. Both decoders are pure
