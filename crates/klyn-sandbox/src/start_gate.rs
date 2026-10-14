@@ -230,6 +230,21 @@ mod tests {
     }
 
     #[test]
+    fn final_gate_fails_closed_when_worker_exits_before_policy_ready() {
+        let (mut supervisor, worker) =
+            WorkerPolicyGate::pair().expect("create worker policy gate");
+        // Simulate a bootstrap crash or a missing worker endpoint. EOF must be
+        // a hard failure; the supervisor must never manufacture a release ACK.
+        drop(worker);
+        assert!(
+            supervisor
+                .verify_policy_and_release(Duration::from_millis(30))
+                .is_err(),
+            "missing POLICY_READY must not release the mission gate"
+        );
+    }
+
+    #[test]
     fn final_gate_rejects_invalid_policy_ready_token_without_releasing() {
         let (mut supervisor, mut worker) =
             WorkerPolicyGate::pair().expect("create worker policy gate");
