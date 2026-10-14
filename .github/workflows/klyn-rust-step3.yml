@@ -205,12 +205,13 @@ jobs:
         run: |
           set -euo pipefail
           if [[ ! -r /sys/kernel/btf/vmlinux ]]; then
-            echo "::warning::/sys/kernel/btf/vmlinux unavailable; native eBPF compile skipped"
+            echo "::notice::/sys/kernel/btf/vmlinux unavailable; native eBPF compile skipped; native qualification remains required on a BTF-enabled host"
             exit 0
           fi
           mkdir -p "$RUNNER_TEMP/klyn-bpf"
           bpftool btf dump file /sys/kernel/btf/vmlinux format c > "$RUNNER_TEMP/klyn-bpf/vmlinux.h"
-          clang -O2 -g -target bpf -D__TARGET_ARCH_x86 \
+          clang -O2 -g -Werror -Wno-missing-declarations -target bpf -D__TARGET_ARCH_x86 \
             -I"$RUNNER_TEMP/klyn-bpf" -I/usr/include/bpf -I/usr/include/x86_64-linux-gnu \
             -c crates/klyn-sandbox/ebpf/klyn_telemetry.bpf.c \
             -o "$RUNNER_TEMP/klyn-bpf/klyn_telemetry.bpf.o"
+          test -s "$RUNNER_TEMP/klyn-bpf/klyn_telemetry.bpf.o"
