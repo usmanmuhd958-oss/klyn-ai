@@ -15,7 +15,7 @@ use std::{
     path::{Path, PathBuf},
     ptr,
     sync::{
-        atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
         mpsc::{self, Receiver, SyncSender, TrySendError},
         Arc,
     },
@@ -188,9 +188,11 @@ impl WorkerTelemetry {
                     kernel_rx,
                 });
             })
-            .map_err(|_| SandboxError::Enforcement(
-                "failed to start mandatory cgroup telemetry monitor".into(),
-            ))?;
+            .map_err(|_| {
+                SandboxError::Enforcement(
+                    "failed to start mandatory cgroup telemetry monitor".into(),
+                )
+            })?;
 
         Ok(Self {
             stop,
@@ -297,9 +299,12 @@ fn monitor_loop(config: MonitorConfig) {
         },
         None => {
             mode.store(TelemetryMode::CgroupV2Fallback as u8, Ordering::Release);
-            send_event(&public_tx, TelemetryEvent::CapabilityWarning(
-                "KLYN_EBPF_OBJECT is unset; using cgroup-v2 metrics and strict seccomp".into(),
-            ));
+            send_event(
+                &public_tx,
+                TelemetryEvent::CapabilityWarning(
+                    "KLYN_EBPF_OBJECT is unset; using cgroup-v2 metrics and strict seccomp".into(),
+                ),
+            );
             None
         }
     };
@@ -315,9 +320,12 @@ fn monitor_loop(config: MonitorConfig) {
     while !stop.load(Ordering::Acquire) {
         let poll_error = ebpf.as_mut().and_then(|session| session.poll(20).err());
         if let Some(error) = poll_error {
-            send_event(&public_tx, TelemetryEvent::CapabilityWarning(format!(
-                "eBPF ring-buffer polling failed ({error}); cgroup-v2 fallback remains active"
-            )));
+            send_event(
+                &public_tx,
+                TelemetryEvent::CapabilityWarning(format!(
+                    "eBPF ring-buffer polling failed ({error}); cgroup-v2 fallback remains active"
+                )),
+            );
             ebpf = None;
             mode.store(TelemetryMode::CgroupV2Fallback as u8, Ordering::Release);
         }
@@ -358,7 +366,9 @@ fn monitor_loop(config: MonitorConfig) {
                 KernelEventKind::ProcessExit if kernel_event.pid == worker_pid => {
                     pending_kill = Some((
                         AnomalyKind::WorkerExitedUnexpectedly,
-                        format!("supervised worker PID {worker_pid} exited before monitor shutdown"),
+                        format!(
+                            "supervised worker PID {worker_pid} exited before monitor shutdown"
+                        ),
                     ));
                 }
                 KernelEventKind::ProcessExit => {}
@@ -375,7 +385,6 @@ fn monitor_loop(config: MonitorConfig) {
                 ));
             }
         }
-
 
         let elapsed = last_sample_at.elapsed();
         if elapsed >= interval {
@@ -411,7 +420,9 @@ fn monitor_loop(config: MonitorConfig) {
             if !Path::new(&format!("/proc/{worker_pid}")).exists() {
                 pending_kill = Some((
                     AnomalyKind::WorkerExitedUnexpectedly,
-                    format!("supervised worker PID {worker_pid} disappeared before monitor shutdown"),
+                    format!(
+                        "supervised worker PID {worker_pid} disappeared before monitor shutdown"
+                    ),
                 ));
             }
             last_sample_at = Instant::now();
@@ -428,13 +439,15 @@ fn monitor_loop(config: MonitorConfig) {
                 );
                 pending_kill = None;
             } else if last_kernel_drop_check.elapsed() >= Duration::from_millis(100) {
-                send_event(&public_tx, TelemetryEvent::EnforcementError(format!(
-                    "cgroup.kill write failed while handling {kind:?}; retrying"
-                )));
+                send_event(
+                    &public_tx,
+                    TelemetryEvent::EnforcementError(format!(
+                        "cgroup.kill write failed while handling {kind:?}; retrying"
+                    )),
+                );
                 last_kernel_drop_check = Instant::now();
             }
         }
-
 
         if last_sample_at.elapsed() < interval && ebpf.is_none() {
             thread::sleep(Duration::from_millis(10));
@@ -459,7 +472,9 @@ fn detect_anomaly(
     }
 
     if current.memory_current_bytes.saturating_mul(100)
-        >= current.memory_max_bytes.saturating_mul(MEMORY_PRESSURE_PERCENT)
+        >= current
+            .memory_max_bytes
+            .saturating_mul(MEMORY_PRESSURE_PERCENT)
     {
         return Some((
             AnomalyKind::MemoryPressure,
@@ -561,7 +576,9 @@ fn read_pairs(path: &Path) -> Result<BTreeMap<String, u64>, SandboxError> {
         })?;
         let value = parts
             .next()
-            .ok_or_else(|| SandboxError::Enforcement(format!("missing value in {}", path.display())))?
+            .ok_or_else(|| {
+                SandboxError::Enforcement(format!("missing value in {}", path.display()))
+            })?
             .parse::<u64>()
             .map_err(|_| {
                 SandboxError::Enforcement(format!("invalid value in {}", path.display()))
@@ -582,9 +599,9 @@ fn read_io_stat(path: &Path) -> Result<(u64, u64), SandboxError> {
     let mut write_bytes = 0_u64;
     for line in content.lines() {
         let mut parts = line.split_whitespace();
-        let _device = parts.next().ok_or_else(|| {
-            SandboxError::Enforcement("missing device in cgroup io.stat".into())
-        })?;
+        let _device = parts
+            .next()
+            .ok_or_else(|| SandboxError::Enforcement("missing device in cgroup io.stat".into()))?;
         for pair in parts {
             let (key, value) = pair.split_once('=').ok_or_else(|| {
                 SandboxError::Enforcement("malformed key/value in cgroup io.stat".into())
@@ -614,9 +631,9 @@ fn configured_u64(
     let value = value.into_string().map_err(|_| {
         SandboxError::InvalidConfig(format!("{name} must be a UTF-8 unsigned integer"))
     })?;
-    let value = value.parse::<u64>().map_err(|_| {
-        SandboxError::InvalidConfig(format!("{name} must be an unsigned integer"))
-    })?;
+    let value = value
+        .parse::<u64>()
+        .map_err(|_| SandboxError::InvalidConfig(format!("{name} must be an unsigned integer")))?;
     if !(minimum..=maximum).contains(&value) {
         return Err(SandboxError::InvalidConfig(format!(
             "{name} must be in {minimum}..={maximum}"
@@ -712,11 +729,14 @@ unsafe extern "C" fn sample_callback(
     0
 }
 
-type ObjectOpenFn = unsafe extern "C" fn(*const libc::c_char, *const libc::c_void) -> *mut libc::c_void;
+type ObjectOpenFn =
+    unsafe extern "C" fn(*const libc::c_char, *const libc::c_void) -> *mut libc::c_void;
 type GetErrorFn = unsafe extern "C" fn(*const libc::c_void) -> libc::c_long;
 type ObjectLoadFn = unsafe extern "C" fn(*mut libc::c_void) -> libc::c_int;
-type ObjectFindMapFn = unsafe extern "C" fn(*mut libc::c_void, *const libc::c_char) -> *mut libc::c_void;
-type ObjectFindProgramFn = unsafe extern "C" fn(*mut libc::c_void, *const libc::c_char) -> *mut libc::c_void;
+type ObjectFindMapFn =
+    unsafe extern "C" fn(*mut libc::c_void, *const libc::c_char) -> *mut libc::c_void;
+type ObjectFindProgramFn =
+    unsafe extern "C" fn(*mut libc::c_void, *const libc::c_char) -> *mut libc::c_void;
 type MapUpdateFn = unsafe extern "C" fn(
     *mut libc::c_void,
     *const libc::c_void,
@@ -739,7 +759,8 @@ type AttachTracepointFn = unsafe extern "C" fn(
     *const libc::c_char,
     *const libc::c_char,
 ) -> *mut libc::c_void;
-type SampleCallback = unsafe extern "C" fn(*mut libc::c_void, *mut libc::c_void, usize) -> libc::c_int;
+type SampleCallback =
+    unsafe extern "C" fn(*mut libc::c_void, *mut libc::c_void, usize) -> libc::c_int;
 type RingBufferNewFn = unsafe extern "C" fn(
     libc::c_int,
     SampleCallback,
@@ -828,10 +849,7 @@ impl Drop for LibbpfApi {
 ///
 /// # Safety
 /// `name` must identify a function whose C ABI and signature exactly match `T`.
-unsafe fn load_symbol<T: Copy>(
-    library: *mut libc::c_void,
-    name: &str,
-) -> Result<T, String> {
+unsafe fn load_symbol<T: Copy>(library: *mut libc::c_void, name: &str) -> Result<T, String> {
     let name = CString::new(name).map_err(|_| "invalid libbpf symbol name".to_owned())?;
     let raw = unsafe { libc::dlsym(library, name.as_ptr()) };
     if raw.is_null() {
@@ -846,7 +864,9 @@ fn last_dl_error(fallback: &str) -> String {
     if error.is_null() {
         fallback.to_owned()
     } else {
-        unsafe { CStr::from_ptr(error) }.to_string_lossy().into_owned()
+        unsafe { CStr::from_ptr(error) }
+            .to_string_lossy()
+            .into_owned()
     }
 }
 
@@ -898,9 +918,8 @@ impl EbpfSession {
         }
 
         let target_map_name = CString::new("target_cgroup_id").expect("static map name");
-        let target_map = unsafe {
-            (self.api.object_find_map)(self.object, target_map_name.as_ptr())
-        };
+        let target_map =
+            unsafe { (self.api.object_find_map)(self.object, target_map_name.as_ptr()) };
         if target_map.is_null() {
             return Err("BPF object is missing target_cgroup_id map".into());
         }
@@ -916,13 +935,13 @@ impl EbpfSession {
             )
         };
         if update_result != 0 {
-            return Err(format!("failed to scope BPF events to cgroup ID {cgroup_id}"));
+            return Err(format!(
+                "failed to scope BPF events to cgroup ID {cgroup_id}"
+            ));
         }
 
         let drop_map_name = CString::new("event_drops").expect("static drop map name");
-        self.drop_map = unsafe {
-            (self.api.object_find_map)(self.object, drop_map_name.as_ptr())
-        };
+        self.drop_map = unsafe { (self.api.object_find_map)(self.object, drop_map_name.as_ptr()) };
         if self.drop_map.is_null() {
             return Err("BPF object is missing event_drops counter map".into());
         }
@@ -932,9 +951,8 @@ impl EbpfSession {
         self.attach_tracepoint("klyn_trace_raw_sys_enter", "raw_syscalls", "sys_enter")?;
 
         let events_map_name = CString::new("events").expect("static map name");
-        let events_map = unsafe {
-            (self.api.object_find_map)(self.object, events_map_name.as_ptr())
-        };
+        let events_map =
+            unsafe { (self.api.object_find_map)(self.object, events_map_name.as_ptr()) };
         if events_map.is_null() {
             return Err("BPF object is missing events ring-buffer map".into());
         }
@@ -943,12 +961,9 @@ impl EbpfSession {
             return Err("libbpf returned an invalid events map fd".into());
         }
         let callback_context = (&mut *self.callback as *mut CallbackContext).cast();
-        self.ring = unsafe {
-            (self.api.ring_new)(map_fd, sample_callback, callback_context, ptr::null())
-        };
-        if self.ring.is_null()
-            || unsafe { (self.api.get_error)(self.ring.cast_const()) } != 0
-        {
+        self.ring =
+            unsafe { (self.api.ring_new)(map_fd, sample_callback, callback_context, ptr::null()) };
+        if self.ring.is_null() || unsafe { (self.api.get_error)(self.ring.cast_const()) } != 0 {
             self.ring = ptr::null_mut();
             return Err("libbpf could not initialize the BPF ring-buffer reader".into());
         }
@@ -964,18 +979,15 @@ impl EbpfSession {
         let program_name = CString::new(program_name).expect("static BPF program name");
         let category = CString::new(category).expect("static tracepoint category");
         let name = CString::new(name).expect("static tracepoint name");
-        let program = unsafe {
-            (self.api.object_find_program)(self.object, program_name.as_ptr())
-        };
+        let program = unsafe { (self.api.object_find_program)(self.object, program_name.as_ptr()) };
         if program.is_null() {
             return Err(format!(
                 "BPF object is missing program {}",
                 program_name.to_string_lossy()
             ));
         }
-        let link = unsafe {
-            (self.api.attach_tracepoint)(program, category.as_ptr(), name.as_ptr())
-        };
+        let link =
+            unsafe { (self.api.attach_tracepoint)(program, category.as_ptr(), name.as_ptr()) };
         if link.is_null() || unsafe { (self.api.get_error)(link.cast_const()) } != 0 {
             return Err(format!(
                 "libbpf could not attach tracepoint {}/{}",
@@ -1114,8 +1126,14 @@ mod tests {
         let mut current = previous.clone();
         current.oom_kill_events = 1;
         assert_eq!(
-            detect_anomaly(&previous, &current, Duration::from_millis(250), 10_000, 1_000_000)
-                .map(|value| value.0),
+            detect_anomaly(
+                &previous,
+                &current,
+                Duration::from_millis(250),
+                10_000,
+                1_000_000
+            )
+            .map(|value| value.0),
             Some(AnomalyKind::MemoryOom)
         );
 

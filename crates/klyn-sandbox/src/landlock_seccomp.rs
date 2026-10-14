@@ -118,8 +118,8 @@ pub fn apply_worker_seccomp(broker_fd: RawFd) -> Result<(), SandboxError> {
 }
 
 /// Install the minimal syscall policy associated with a signed registered task.
-/// Control retains EPERM-deny semantics for compatibility. HashJson and
-/// DescribeJson terminate on any syscall outside their allowlist.
+/// Every profile kills the worker for any syscall outside its allowlist. The
+/// default-deny action cannot be caught or converted back into task execution.
 pub fn apply_worker_seccomp_for(
     broker_fd: RawFd,
     operation: WorkerOperation,
@@ -144,56 +144,56 @@ pub fn apply_worker_seccomp_for(
     let mut rules: BTreeMap<i64, Vec<SeccompRule>> = BTreeMap::new();
     let allowed: &[i64] = match operation {
         WorkerOperation::Control => &[
-        libc::SYS_read,
-        libc::SYS_write,
-        libc::SYS_readv,
-        libc::SYS_writev,
-        libc::SYS_close,
-        libc::SYS_fstat,
-        libc::SYS_lseek,
-        libc::SYS_pread64,
-        libc::SYS_pwrite64,
-        libc::SYS_ftruncate,
-        libc::SYS_mmap,
-        libc::SYS_mprotect,
-        libc::SYS_munmap,
-        libc::SYS_brk,
-        libc::SYS_madvise,
-        libc::SYS_mremap,
-        libc::SYS_rt_sigaction,
-        libc::SYS_rt_sigprocmask,
-        libc::SYS_rt_sigreturn,
-        libc::SYS_sigaltstack,
-        libc::SYS_getpid,
-        libc::SYS_getppid,
-        libc::SYS_gettid,
-        libc::SYS_getuid,
-        libc::SYS_geteuid,
-        libc::SYS_getgid,
-        libc::SYS_getegid,
-        libc::SYS_getrandom,
-        libc::SYS_clock_gettime,
-        libc::SYS_clock_getres,
-        libc::SYS_gettimeofday,
-        libc::SYS_nanosleep,
-        libc::SYS_clock_nanosleep,
-        libc::SYS_sched_yield,
-        libc::SYS_futex,
-        libc::SYS_restart_syscall,
-        libc::SYS_poll,
-        libc::SYS_ppoll,
-        libc::SYS_pselect6,
-        libc::SYS_select,
-        libc::SYS_epoll_create1,
-        libc::SYS_epoll_ctl,
-        libc::SYS_epoll_wait,
-        libc::SYS_epoll_pwait,
-        libc::SYS_uname,
-        libc::SYS_exit,
-        libc::SYS_exit_group,
-        libc::SYS_fsync,
-        libc::SYS_fdatasync,
-        libc::SYS_getcwd,
+            libc::SYS_read,
+            libc::SYS_write,
+            libc::SYS_readv,
+            libc::SYS_writev,
+            libc::SYS_close,
+            libc::SYS_fstat,
+            libc::SYS_lseek,
+            libc::SYS_pread64,
+            libc::SYS_pwrite64,
+            libc::SYS_ftruncate,
+            libc::SYS_mmap,
+            libc::SYS_mprotect,
+            libc::SYS_munmap,
+            libc::SYS_brk,
+            libc::SYS_madvise,
+            libc::SYS_mremap,
+            libc::SYS_rt_sigaction,
+            libc::SYS_rt_sigprocmask,
+            libc::SYS_rt_sigreturn,
+            libc::SYS_sigaltstack,
+            libc::SYS_getpid,
+            libc::SYS_getppid,
+            libc::SYS_gettid,
+            libc::SYS_getuid,
+            libc::SYS_geteuid,
+            libc::SYS_getgid,
+            libc::SYS_getegid,
+            libc::SYS_getrandom,
+            libc::SYS_clock_gettime,
+            libc::SYS_clock_getres,
+            libc::SYS_gettimeofday,
+            libc::SYS_nanosleep,
+            libc::SYS_clock_nanosleep,
+            libc::SYS_sched_yield,
+            libc::SYS_futex,
+            libc::SYS_restart_syscall,
+            libc::SYS_poll,
+            libc::SYS_ppoll,
+            libc::SYS_pselect6,
+            libc::SYS_select,
+            libc::SYS_epoll_create1,
+            libc::SYS_epoll_ctl,
+            libc::SYS_epoll_wait,
+            libc::SYS_epoll_pwait,
+            libc::SYS_uname,
+            libc::SYS_exit,
+            libc::SYS_exit_group,
+            libc::SYS_fsync,
+            libc::SYS_fdatasync,
+            libc::SYS_getcwd,
         ],
         WorkerOperation::HashJson => &[
             libc::SYS_read,
@@ -404,12 +404,17 @@ mod tests {
 
         c.operation = WorkerOperation::HashJson;
         let hash = serde_json::to_value(&c).expect("serialize hash operation claims");
-        assert_eq!(hash.get("operation").and_then(serde_json::Value::as_str), Some("hash_json"));
+        assert_eq!(
+            hash.get("operation").and_then(serde_json::Value::as_str),
+            Some("hash_json")
+        );
 
         c.operation = WorkerOperation::DescribeJson;
         let describe = serde_json::to_value(&c).expect("serialize describe operation claims");
         assert_eq!(
-            describe.get("operation").and_then(serde_json::Value::as_str),
+            describe
+                .get("operation")
+                .and_then(serde_json::Value::as_str),
             Some("describe_json")
         );
     }
@@ -462,8 +467,14 @@ mod tests {
             .env(CHILD_MARKER, "1")
             .output()
             .expect("spawn isolated strict-seccomp child");
-        assert!(!output.status.success(), "strict profile did not kill the child");
-        assert!(output.status.signal().is_some(), "strict profile did not signal-kill the child");
+        assert!(
+            !output.status.success(),
+            "strict profile did not kill the child"
+        );
+        assert!(
+            output.status.signal().is_some(),
+            "strict profile did not signal-kill the child"
+        );
     }
 
     #[test]
