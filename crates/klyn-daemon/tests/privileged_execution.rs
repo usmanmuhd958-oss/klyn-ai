@@ -242,7 +242,10 @@ fn observe_cgroup_processes(
             let Ok(members) = fs::read_to_string(cgroup.join("cgroup.procs")) else {
                 continue;
             };
-            for pid in members.lines().filter_map(|line| line.trim().parse::<u32>().ok()) {
+            for pid in members
+                .lines()
+                .filter_map(|line| line.trim().parse::<u32>().ok())
+            {
                 if let Some(start_time) = process_start_time(pid) {
                     seen.lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -335,7 +338,10 @@ fn timeout_returns_execution_timeout_and_removes_the_entire_cgroup_leaf() {
     observer.join().expect("join cgroup process observer");
 
     assert_eq!(
-        response.error.expect("hung task must not return success").code,
+        response
+            .error
+            .expect("hung task must not return success")
+            .code,
         RpcErrorCode::ExecutionTimeout,
         "ExecutionService must map its deadline to the explicit timeout RPC error"
     );
@@ -387,7 +393,10 @@ fn worker_bootstrap_failure_returns_execution_failed_without_fallback() {
     );
 
     assert_eq!(
-        response.error.expect("missing broker must not return a result").code,
+        response
+            .error
+            .expect("missing broker must not return a result")
+            .code,
         RpcErrorCode::ExecutionFailed,
         "a failed bootstrap/policy gate must propagate as a sandbox failure"
     );
