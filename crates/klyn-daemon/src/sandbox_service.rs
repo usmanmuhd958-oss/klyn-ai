@@ -235,7 +235,9 @@ impl SandboxService {
         ));
         let workspace_root = filesystem_transaction
             .lock()
-            .map_err(|_| SandboxError::Enforcement("filesystem transaction lock is poisoned".into()))?
+            .map_err(|_| {
+                SandboxError::Enforcement("filesystem transaction lock is poisoned".into())
+            })?
             .workspace_path()
             .to_path_buf();
         let roots = BTreeMap::from([
@@ -260,7 +262,9 @@ impl SandboxService {
         let broker_stopped = Arc::new(AtomicBool::new(false));
         filesystem_transaction
             .lock()
-            .map_err(|_| SandboxError::Enforcement("filesystem transaction lock is poisoned".into()))?
+            .map_err(|_| {
+                SandboxError::Enforcement("filesystem transaction lock is poisoned".into())
+            })?
             .register_broker_shutdown(Arc::clone(&stop), Arc::clone(&broker_stopped));
         let thread_stop = Arc::clone(&stop);
         let thread_stopped = Arc::clone(&broker_stopped);
