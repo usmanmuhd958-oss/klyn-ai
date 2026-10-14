@@ -171,6 +171,8 @@ impl ProducerRingFds {
 
 pub struct RingProducer {
     payload: Mapping,
+    _head_mapping: Mapping,
+    _tail_mapping: Mapping,
     head: *mut AtomicU32,
     tail: *const AtomicU32,
 }
@@ -189,10 +191,17 @@ impl RingProducer {
         let (head_rw, head_ro) = create_memfd_pair("klyn-ipc-head", counter_len)?;
         let (tail_rw, tail_ro) = create_memfd_pair("klyn-ipc-tail", counter_len)?;
 
+        let payload_mapping = Mapping::new(&payload_rw, payload_len, true)?;
+        let head_mapping = Mapping::new(&head_rw, counter_len, true)?;
+        let tail_mapping = Mapping::new(&tail_ro, counter_len, false)?;
+        let head = head_mapping.as_ptr().cast::<AtomicU32>();
+        let tail = tail_mapping.as_ptr().cast::<AtomicU32>();
         let producer = Self {
-            payload: Mapping::new(&payload_rw, payload_len, true)?,
-            head: head_rw.as_raw_fd() as *mut AtomicU32,
-            tail: tail_ro.as_raw_fd() as *const AtomicU32,
+            payload: payload_mapping,
+            _head_mapping: head_mapping,
+            _tail_mapping: tail_mapping,
+            head,
+            tail,
         };
         // Mappings survive closing the local backing descriptors.
         drop(payload_rw);
@@ -213,15 +222,21 @@ impl RingProducer {
     pub fn attach(fds: ProducerRingFds) -> Result<Self, SandboxError> {
         let payload_len = payload_mapping_len();
         let counter_len = counter_mapping_len()?;
+        let payload_mapping = Mapping::new(&fds.payload, payload_len, true)?;
+        let head_mapping = Mapping::new(&fds.head, counter_len, true)?;
+        let tail_mapping = Mapping::new(&fds.tail, counter_len, false)?;
+        let head = head_mapping.as_ptr().cast::<AtomicU32>();
+        let tail = tail_mapping.as_ptr().cast::<AtomicU32>();
         let producer = Self {
-            payload: Mapping::new(&fds.payload, payload_len, true)?,
-            head: fds.head.as_raw_fd() as *mut AtomicU32,
-            tail: fds.tail.as_raw_fd() as *const AtomicU32,
+            payload: payload_mapping,
+            _head_mapping: head_mapping,
+            _tail_mapping: tail_mapping,
+            head,
+            tail,
         };
-        // SAFETY: Mapping retains the mmap; only the mapping and atomic pointers
-        // are used after this point, and closing an fd does not unmap its pages.
+        // SAFETY: each Mapping retains its own mmap; closing the inherited
+        // backing descriptors does not unmap any of the mappings.
         drop(fds);
-        let _ = counter_len;
         Ok(producer)
     }
 
@@ -320,6 +335,8 @@ impl RingProducer {
 
 pub struct RingConsumer {
     payload: Mapping,
+    _head_mapping: Mapping,
+    _tail_mapping: Mapping,
     head: *const AtomicU32,
     tail: *mut AtomicU32,
 }
@@ -338,10 +355,17 @@ impl RingConsumer {
         let (head_rw, head_ro) = create_memfd_pair("klyn-ipc-head", counter_len)?;
         let (tail_rw, tail_ro) = create_memfd_pair("klyn-ipc-tail", counter_len)?;
 
+        let payload_mapping = Mapping::new(&payload_ro, payload_len, false)?;
+        let head_mapping = Mapping::new(&head_ro, counter_len, false)?;
+        let tail_mapping = Mapping::new(&tail_rw, counter_len, true)?;
+        let head = head_mapping.as_ptr().cast::<AtomicU32>();
+        let tail = tail_mapping.as_ptr().cast::<AtomicU32>();
         let consumer = Self {
-            payload: Mapping::new(&payload_ro, payload_len, false)?,
-            head: head_ro.as_raw_fd() as *const AtomicU32,
-            tail: tail_rw.as_raw_fd() as *mut AtomicU32,
+            payload: payload_mapping,
+            _head_mapping: head_mapping,
+            _tail_mapping: tail_mapping,
+            head,
+            tail,
         };
         drop(payload_ro);
         drop(head_ro);
@@ -361,13 +385,19 @@ impl RingConsumer {
     pub fn attach(fds: ConsumerRingFds) -> Result<Self, SandboxError> {
         let payload_len = payload_mapping_len();
         let counter_len = counter_mapping_len()?;
+        let payload_mapping = Mapping::new(&fds.payload, payload_len, false)?;
+        let head_mapping = Mapping::new(&fds.head, counter_len, false)?;
+        let tail_mapping = Mapping::new(&fds.tail, counter_len, true)?;
+        let head = head_mapping.as_ptr().cast::<AtomicU32>();
+        let tail = tail_mapping.as_ptr().cast::<AtomicU32>();
         let consumer = Self {
-            payload: Mapping::new(&fds.payload, payload_len, false)?,
-            head: fds.head.as_raw_fd() as *const AtomicU32,
-            tail: fds.tail.as_raw_fd() as *mut AtomicU32,
+            payload: payload_mapping,
+            _head_mapping: head_mapping,
+            _tail_mapping: tail_mapping,
+            head,
+            tail,
         };
         drop(fds);
-        let _ = counter_len;
         Ok(consumer)
     }
 
@@ -433,10 +463,12 @@ impl RingConsumer {
         &mut self,
         timeout: Option<Duration>,
     ) -> Result<Option<ConsumerReservation<'_>>, SandboxError> {
-        let deadline = timeout
-            .map(|duration| Instant::now().checked_add(duration))
-            .transpose()
-            .ok_or_else(|| SandboxError::InvalidConfig("shared IPC timeout is too large".into()))?;
+        let deadline = match timeout {
+            Some(duration) => Some(Instant::now().checked_add(duration).ok_or_else(|| {
+                SandboxError::InvalidConfig("shared IPC timeout is too large".into())
+            })?),
+            None => None,
+        };
         loop {
             if let Some(slot) = self.try_peek()? {
                 return Ok(Some(slot));
