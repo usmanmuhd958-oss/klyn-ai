@@ -5,12 +5,10 @@ use sha2::{Digest, Sha256};
 
 use crate::SandboxError;
 
-pub fn execute_registered_operation(
-    params: &ExecuteTaskParams,
-) -> Result<Value, SandboxError> {
-    params.validate().map_err(|_| {
-        SandboxError::InvalidConfig("worker task payload rejected".into())
-    })?;
+pub fn execute_registered_operation(params: &ExecuteTaskParams) -> Result<Value, SandboxError> {
+    params
+        .validate()
+        .map_err(|_| SandboxError::InvalidConfig("worker task payload rejected".into()))?;
     let canonical = serde_json::to_vec(&params.payload)?;
     let digest = hex_digest(&canonical);
 
@@ -43,8 +41,7 @@ fn hex_digest(bytes: &[u8]) -> String {
     let mut output = String::with_capacity(64);
     for byte in digest {
         use std::fmt::Write as _;
-        write!(&mut output, "{byte:02x}")
-            .expect("writing hex to String cannot fail");
+        write!(&mut output, "{byte:02x}").expect("writing hex to String cannot fail");
     }
     output
 }
