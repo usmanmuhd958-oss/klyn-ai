@@ -22,6 +22,7 @@ use ed25519_dalek::SigningKey;
 use crate::{
     broker::{CapabilityVerifier, Ed25519CapabilityVerifier},
     cgroup::CgroupV2Boundary,
+    fs_txn::{FsTransaction, SharedFsTransaction},
     ipc_ring::{
         RingConsumer, RingProducer, COMMAND_RING_HEAD_FD, COMMAND_RING_PAYLOAD_FD,
         COMMAND_RING_TAIL_FD, RESPONSE_RING_HEAD_FD, RESPONSE_RING_PAYLOAD_FD,
@@ -63,6 +64,7 @@ pub struct SpawnedWorker {
     response_ring: RingConsumer,
     kel_journal: Option<SharedKelJournal>,
     telemetry: Option<WorkerTelemetry>,
+    filesystem_transaction: Option<SharedFsTransaction>,
 }
 
 impl Drop for SpawnedWorker {
@@ -80,11 +82,22 @@ impl Drop for SpawnedWorker {
             .terminate_and_wait(WORKER_LIFECYCLE_TIMEOUT)
             .is_ok()
         {
+            self.rollback_filesystem_after_cgroup_empty();
             let _ = self.record_cgroup_destroyed();
             let _ = self.child.wait();
         } else {
-            // Best-effort nonblocking reap if kernel cleanup itself failed.
-            // Explicit terminate()/wait() report cleanup errors to the caller.
+            if let Some(transaction) = &self.filesystem_transaction {
+                match transaction.lock() {
+                    Ok(transaction) => FsTransaction::abort_cleanup_failure(
+                        Some(transaction.transaction_root()),
+                        "could not confirm cgroup emptiness before filesystem rollback",
+                    ),
+                    Err(_) => FsTransaction::abort_cleanup_failure(
+                        None,
+                        "filesystem transaction lock poisoned during cgroup teardown",
+                    ),
+                }
+            }
             let _ = self.child.try_wait();
         }
     }
@@ -189,6 +202,7 @@ impl SpawnedWorker {
             if let Some(status) = self.child.try_wait()? {
                 self.stop_telemetry()?;
                 self.cgroup.terminate_and_wait(WORKER_LIFECYCLE_TIMEOUT)?;
+                self.rollback_filesystem_after_cgroup_empty();
                 self.record_cgroup_destroyed()?;
                 return Ok(status);
             }
@@ -212,8 +226,23 @@ impl SpawnedWorker {
     pub fn terminate(&mut self) -> Result<(), SandboxError> {
         self.stop_telemetry()?;
         let _ = self.child.kill();
-        self.cgroup.terminate_and_wait(WORKER_LIFECYCLE_TIMEOUT)?;
+        if let Err(error) = self.cgroup.terminate_and_wait(WORKER_LIFECYCLE_TIMEOUT) {
+            if let Some(transaction) = &self.filesystem_transaction {
+                match transaction.lock() {
+                    Ok(transaction) => FsTransaction::abort_cleanup_failure(
+                        Some(transaction.transaction_root()),
+                        "cgroup termination failed; transactional filesystem cannot be exposed",
+                    ),
+                    Err(_) => FsTransaction::abort_cleanup_failure(
+                        None,
+                        "filesystem transaction lock poisoned after cgroup termination failure",
+                    ),
+                }
+            }
+            return Err(error);
+        }
         let _ = self.child.wait();
+        self.rollback_filesystem_after_cgroup_empty();
         self.record_cgroup_destroyed()?;
         Ok(())
     }
@@ -229,6 +258,18 @@ impl SpawnedWorker {
             telemetry.stop_and_join()?;
         }
         Ok(())
+    }
+
+    fn rollback_filesystem_after_cgroup_empty(&self) {
+        if let Some(transaction) = &self.filesystem_transaction {
+            match transaction.lock() {
+                Ok(mut transaction) => transaction.rollback_after_cgroup_empty_or_abort(),
+                Err(_) => FsTransaction::abort_cleanup_failure(
+                    None,
+                    "filesystem transaction mutex was poisoned during rollback",
+                ),
+            }
+        }
     }
 
     /// Clone the serialized KEL handle used by the independent telemetry monitor.
@@ -319,13 +360,38 @@ pub fn launch_worker_with_kel(
         ));
     }
     let journal = KelJournal::create(journal_path, manifest_signing_key, session_id)?.shared();
-    launch_worker_inner(config, manifest_signing_key, Some(journal))
+    launch_worker_inner(config, manifest_signing_key, Some(journal), None)
+}
+
+/// Launch a KEL-attested worker with a private scratch-only filesystem
+/// transaction whose rollback is bound to cgroup and telemetry teardown.
+pub fn launch_worker_with_kel_and_fs_transaction(
+    config: WorkerLaunchConfig,
+    manifest_signing_key: &SigningKey,
+    journal_path: impl AsRef<Path>,
+    session_id: [u8; 16],
+    filesystem_transaction: SharedFsTransaction,
+) -> Result<SpawnedWorker, SandboxError> {
+    let expected_session = kel::session_id_from_token_id(&config.capability.claims.token_id);
+    if expected_session != session_id {
+        return Err(SandboxError::Enforcement(
+            "KEL session ID is not derived from the signed capability token ID".into(),
+        ));
+    }
+    let journal = KelJournal::create(journal_path, manifest_signing_key, session_id)?.shared();
+    launch_worker_inner(
+        config,
+        manifest_signing_key,
+        Some(journal),
+        Some(filesystem_transaction),
+    )
 }
 
 fn launch_worker_inner(
     config: WorkerLaunchConfig,
     manifest_signing_key: &SigningKey,
     kel_journal: Option<SharedKelJournal>,
+    filesystem_transaction: Option<SharedFsTransaction>,
 ) -> Result<SpawnedWorker, SandboxError> {
     let init_executable = validate_trusted_init_executable(&config.init_executable)?;
     let worker_executable = validate_trusted_executable(&config.worker_executable)?;
@@ -552,14 +618,24 @@ fn launch_worker_inner(
 
         // Attach/initialize telemetry after Spawn is durably logged but before
         // sending the challenge or releasing the mission gate.
-        let telemetry = WorkerTelemetry::start_with_kel(
-            cgroup.path(),
-            child.id(),
-            manifest.capability.claims.budget.clone(),
-            kel_journal.clone().ok_or_else(|| {
-                SandboxError::Enforcement("KEL journal is mandatory for worker telemetry".into())
-            })?,
-        )?;
+        let journal = kel_journal.clone().ok_or_else(|| {
+            SandboxError::Enforcement("KEL journal is mandatory for worker telemetry".into())
+        })?;
+        let telemetry = match filesystem_transaction.clone() {
+            Some(transaction) => WorkerTelemetry::start_with_kel_and_fs_transaction(
+                cgroup.path(),
+                child.id(),
+                manifest.capability.claims.budget.clone(),
+                journal,
+                transaction,
+            )?,
+            None => WorkerTelemetry::start_with_kel(
+                cgroup.path(),
+                child.id(),
+                manifest.capability.claims.budget.clone(),
+                journal,
+            )?,
+        };
 
         // The worker is already policy-restricted and must answer the
         // challenge before it is allowed to send POLICY_READY.
@@ -601,6 +677,7 @@ fn launch_worker_inner(
             let _ = child.kill();
             let cleanup = cgroup.terminate_and_wait(WORKER_LIFECYCLE_TIMEOUT);
             if cleanup.is_ok() {
+                rollback_shared_transaction_or_abort(&filesystem_transaction);
                 if let Some(journal) = &kel_journal {
                     let path_hash = kel::hash_payload(cgroup.path().to_string_lossy().as_bytes());
                     let _ = journal.lock().map(|mut journal| {
@@ -609,8 +686,18 @@ fn launch_worker_inner(
                 }
                 let _ = child.wait();
             } else {
-                // Do not allow a failed startup path to block indefinitely on a
-                // process the kernel could not confirm as terminated.
+                if let Some(transaction) = &filesystem_transaction {
+                    match transaction.lock() {
+                        Ok(transaction) => FsTransaction::abort_cleanup_failure(
+                            Some(transaction.transaction_root()),
+                            "startup failure left cgroup termination unconfirmed",
+                        ),
+                        Err(_) => FsTransaction::abort_cleanup_failure(
+                            None,
+                            "filesystem transaction lock poisoned after startup failure",
+                        ),
+                    }
+                }
                 let _ = child.try_wait();
             }
             return match cleanup {
@@ -629,7 +716,20 @@ fn launch_worker_inner(
         response_ring,
         kel_journal,
         telemetry: Some(telemetry),
+        filesystem_transaction,
     })
+}
+
+fn rollback_shared_transaction_or_abort(transaction: &Option<SharedFsTransaction>) {
+    if let Some(transaction) = transaction {
+        match transaction.lock() {
+            Ok(mut transaction) => transaction.rollback_after_cgroup_empty_or_abort(),
+            Err(_) => FsTransaction::abort_cleanup_failure(
+                None,
+                "filesystem transaction mutex was poisoned during startup rollback",
+            ),
+        }
+    }
 }
 
 fn append_kel_event(
