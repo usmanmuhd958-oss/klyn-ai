@@ -1012,6 +1012,7 @@ mod tests {
                 pids_max: 4,
                 io_limits: vec![],
             },
+            operation: WorkerOperation::Control,
         };
         assert!(claims.validate().is_err());
 

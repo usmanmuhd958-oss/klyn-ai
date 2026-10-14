@@ -731,6 +731,7 @@ mod tests {
                 pids_max: 4,
                 io_limits: vec![],
             },
+            operation: crate::WorkerOperation::Control,
         }
     }
 
