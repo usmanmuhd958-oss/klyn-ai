@@ -203,6 +203,8 @@ mod tests {
     #[test]
     fn rollback_removes_nested_artifacts_without_following_symlinks() {
         let parent = tempfile::tempdir().expect("private transaction parent");
+        fs::set_permissions(parent.path(), fs::Permissions::from_mode(0o700))
+            .expect("restrict transaction parent permissions");
         let outside = tempfile::tempdir().expect("outside sentinel parent");
         let sentinel = outside.path().join("must-survive.txt");
         fs::write(&sentinel, b"outside transaction").expect("write outside sentinel");
@@ -232,6 +234,8 @@ mod tests {
     #[test]
     fn rollback_is_idempotent_and_leaves_no_residual_files() {
         let parent = tempfile::tempdir().expect("private transaction parent");
+        fs::set_permissions(parent.path(), fs::Permissions::from_mode(0o700))
+            .expect("restrict transaction parent permissions");
         let mut transaction =
             FsTransaction::create(parent.path(), "forced-termination").expect("create transaction");
         let workspace = transaction.workspace_path().to_path_buf();
@@ -255,6 +259,8 @@ mod tests {
     #[test]
     fn broker_shutdown_is_required_before_workspace_removal() {
         let parent = tempfile::tempdir().expect("private transaction parent");
+        fs::set_permissions(parent.path(), fs::Permissions::from_mode(0o700))
+            .expect("restrict transaction parent permissions");
         let mut transaction =
             FsTransaction::create(parent.path(), "broker-order").expect("create transaction");
         fs::write(transaction.workspace_path().join("file"), b"data").expect("write file");
