@@ -38,4 +38,4 @@ jobs:
       - name: Push to GitLab
         run: |
           git remote add gitlab git@gitlab.com:usmanmuhd958-oss/klyn-ai.git || git remote set-url gitlab git@gitlab.com:usmanmuhd958-oss/klyn-ai.git
-git push gitlab "$GITHUB_REF_NAME:$GITHUB_REF_NAME"
+          git push gitlab "$GITHUB_REF_NAME:$GITHUB_REF_NAME"
