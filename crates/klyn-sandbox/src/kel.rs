@@ -368,6 +368,14 @@ impl KelEvent {
         debug_assert_eq!(offset, KEL_EVENT_ENCODED_LEN);
     }
 
+    /// Decode exactly one fixed-width KEL event record from untrusted bytes.
+    pub fn decode_record(input: &[u8]) -> Result<Self, SandboxError> {
+        let record: &[u8; KEL_EVENT_ENCODED_LEN] = input.try_into().map_err(|_| {
+            SandboxError::Enforcement("KEL record has an invalid fixed width".into())
+        })?;
+        Self::decode(record)
+    }
+
     fn decode(input: &[u8; KEL_EVENT_ENCODED_LEN]) -> Result<Self, SandboxError> {
         let mut offset = 0;
         let sequence = u64::from_le_bytes(take_array::<8>(input, &mut offset)?);
@@ -682,76 +690,90 @@ impl KelJournal {
                 "KEL journal is not a sequence of complete fixed-width records".into(),
             ));
         }
+        let initial_len = metadata.len();
+        let capacity = usize::try_from(initial_len).map_err(|_| {
+            SandboxError::Enforcement("KEL journal is too large to verify on this platform".into())
+        })?;
+        let mut encoded = Vec::with_capacity(capacity);
+        file.read_to_end(&mut encoded)?;
+        if file.metadata()?.len() != initial_len || encoded.len() != capacity {
+            return Err(SandboxError::Enforcement(
+                "KEL journal changed or lost records during verification".into(),
+            ));
+        }
+        Self::verify_encoded_chain(&encoded, trusted_daemon_key, expected_head)
+    }
 
-        let mut events: Vec<KelEvent> = Vec::new();
+    /// Verify an encoded KEL chain without filesystem I/O. This shares the
+    /// exact record decoder, transition rules, hash-chain checks, signatures,
+    /// worker-lineage binding, terminal-event semantics, and optional external
+    /// head-anchor check with the journal verifier. Callers should bound bytes
+    /// to an appropriate maximum for their workload.
+    pub fn verify_encoded_chain(
+        bytes: &[u8],
+        trusted_daemon_key: &VerifyingKey,
+        expected_head: Option<[u8; 32]>,
+    ) -> Result<KelVerification, SandboxError> {
+        if bytes.len() % KEL_EVENT_ENCODED_LEN != 0 {
+            return Err(SandboxError::Enforcement(
+                "KEL journal is not a sequence of complete fixed-width records".into(),
+            ));
+        }
+
+        let record_count = bytes.len() / KEL_EVENT_ENCODED_LEN;
+        let mut events: Vec<KelEvent> = Vec::with_capacity(record_count);
         let mut previous_hash = ZERO_HASH;
         let mut previous_kind = None;
         let mut previous_payload_hash = None;
         let mut validated_capability_hash = None;
         let mut expected_sequence = 0_u64;
-        loop {
-            let mut record = [0; KEL_EVENT_ENCODED_LEN];
-            match file.read_exact(&mut record) {
-                Ok(()) => {
-                    let event = KelEvent::decode(&record)?;
-                    if !transition_allowed(previous_kind, event.kind) {
-                        return Err(SandboxError::Enforcement(format!(
-                            "KEL lifecycle transition from {previous_kind:?} to {:?} is invalid",
-                            event.kind
-                        )));
-                    }
-                    if event.sequence != expected_sequence {
-                        return Err(SandboxError::Enforcement(
-                            "KEL sequence number is missing, duplicated, or reordered".into(),
-                        ));
-                    }
-                    if event.kind == KelEventKind::WorkerAttested
-                        && (validated_capability_hash != Some(event.attestation.capability_hash)
-                            || previous_payload_hash
-                                != Some(event.attestation.spawn_payload_hash()))
-                    {
-                        return Err(SandboxError::Enforcement(
-                            "KEL worker proof does not match the signed capability/Spawn records"
-                                .into(),
-                        ));
-                    }
-                    event.verify(&previous_hash, trusted_daemon_key)?;
-                    if let Some(last) = events.last() {
-                        if last.session_id != event.session_id {
-                            return Err(SandboxError::Enforcement(
-                                "KEL journal mixed multiple worker sessions".into(),
-                            ));
-                        }
-                    }
-                    if event.kind == KelEventKind::CgroupDestroy
-                        && expected_sequence + 1 != metadata.len() / KEL_EVENT_ENCODED_LEN as u64
-                    {
-                        return Err(SandboxError::Enforcement(
-                            "KEL journal contains events after cgroup destruction".into(),
-                        ));
-                    }
-                    if event.kind == KelEventKind::CapabilityValidated {
-                        validated_capability_hash = Some(event.payload_hash);
-                    }
-                    previous_hash = event.event_hash;
-                    previous_kind = Some(event.kind);
-                    previous_payload_hash = Some(event.payload_hash);
-                    expected_sequence = expected_sequence.checked_add(1).ok_or_else(|| {
-                        SandboxError::Enforcement("KEL verification sequence overflow".into())
-                    })?;
-                    events.push(event);
-                }
-                Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => break,
-                Err(error) => return Err(SandboxError::Io(error)),
+
+        for (record_index, record_bytes) in bytes.chunks_exact(KEL_EVENT_ENCODED_LEN).enumerate() {
+            let event = KelEvent::decode_record(record_bytes)?;
+            if !transition_allowed(previous_kind, event.kind) {
+                return Err(SandboxError::Enforcement(format!(
+                    "KEL lifecycle transition from {previous_kind:?} to {:?} is invalid",
+                    event.kind
+                )));
             }
+            if event.sequence != expected_sequence {
+                return Err(SandboxError::Enforcement(
+                    "KEL sequence number is missing, duplicated, or reordered".into(),
+                ));
+            }
+            if event.kind == KelEventKind::WorkerAttested
+                && (validated_capability_hash != Some(event.attestation.capability_hash)
+                    || previous_payload_hash != Some(event.attestation.spawn_payload_hash()))
+            {
+                return Err(SandboxError::Enforcement(
+                    "KEL worker proof does not match the signed capability/Spawn records".into(),
+                ));
+            }
+            event.verify(&previous_hash, trusted_daemon_key)?;
+            if let Some(last) = events.last() {
+                if last.session_id != event.session_id {
+                    return Err(SandboxError::Enforcement(
+                        "KEL journal mixed multiple worker sessions".into(),
+                    ));
+                }
+            }
+            if event.kind == KelEventKind::CgroupDestroy && record_index + 1 != record_count {
+                return Err(SandboxError::Enforcement(
+                    "KEL journal contains events after cgroup destruction".into(),
+                ));
+            }
+            if event.kind == KelEventKind::CapabilityValidated {
+                validated_capability_hash = Some(event.payload_hash);
+            }
+            previous_hash = event.event_hash;
+            previous_kind = Some(event.kind);
+            previous_payload_hash = Some(event.payload_hash);
+            expected_sequence = expected_sequence.checked_add(1).ok_or_else(|| {
+                SandboxError::Enforcement("KEL verification sequence overflow".into())
+            })?;
+            events.push(event);
         }
-        if file.metadata()?.len() != metadata.len()
-            || expected_sequence != metadata.len() / KEL_EVENT_ENCODED_LEN as u64
-        {
-            return Err(SandboxError::Enforcement(
-                "KEL journal changed or lost records during verification".into(),
-            ));
-        }
+
         if let Some(expected) = expected_head {
             if previous_hash != expected {
                 return Err(SandboxError::Enforcement(
