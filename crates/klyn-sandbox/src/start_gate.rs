@@ -34,7 +34,6 @@ impl StartGate {
         Ok((
             Self {
                 supervisor,
-                ready: false,
                 released: false,
             },
             child,
@@ -99,6 +98,7 @@ impl WorkerPolicyGate {
         Ok((
             Self {
                 supervisor,
+                ready: false,
                 released: false,
             },
             child,

@@ -425,8 +425,8 @@ fn launch_worker_inner(
     // Create the data-plane rings only after the signed manifest and OCap have
     // been validated. Worker-side mappings are attached only after bootstrap
     // independently verifies the manifest and capability.
-    let (command_ring, worker_command_fds) = RingProducer::create()?;
-    let (response_ring, worker_response_fds) = RingConsumer::create()?;
+    let (mut command_ring, worker_command_fds) = RingProducer::create()?;
+    let (mut response_ring, worker_response_fds) = RingConsumer::create()?;
 
     let (mut gate, child_gate) = StartGate::pair()?;
     let (mut policy_gate, child_policy_gate) = WorkerPolicyGate::pair()?;
