@@ -389,23 +389,16 @@ mod tests {
 
         let mut wrong_identity = identity;
         wrong_identity.capability_hash[0] ^= 0x80;
-        assert!(respond_to_attestation_challenge(
-            &frame,
-            &worker,
-            wrong_identity,
-            &mut response
-        )
-        .is_err());
+        assert!(
+            respond_to_attestation_challenge(&frame, &worker, wrong_identity, &mut response)
+                .is_err()
+        );
 
         let mut wrong_cgroup = identity;
         wrong_cgroup.cgroup_id += 1;
-        assert!(respond_to_attestation_challenge(
-            &frame,
-            &worker,
-            wrong_cgroup,
-            &mut response
-        )
-        .is_err());
+        assert!(
+            respond_to_attestation_challenge(&frame, &worker, wrong_cgroup, &mut response).is_err()
+        );
     }
 
     #[test]

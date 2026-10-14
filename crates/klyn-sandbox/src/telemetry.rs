@@ -23,7 +23,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{kel::{hash_payload, KelEventKind, SharedKelJournal}, ResourceBudget, SandboxError};
+use crate::{
+    kel::{hash_payload, KelEventKind, SharedKelJournal},
+    ResourceBudget, SandboxError,
+};
 
 const DEFAULT_INTERVAL_MS: u64 = 250;
 const MIN_INTERVAL_MS: u64 = 50;
@@ -535,7 +538,9 @@ fn monitor_loop(config: MonitorConfig) {
                         pending_kill = None;
                         pending_kill_logged = false;
                     }
-                    Err(error) if last_kernel_drop_check.elapsed() >= Duration::from_millis(100) => {
+                    Err(error)
+                        if last_kernel_drop_check.elapsed() >= Duration::from_millis(100) =>
+                    {
                         send_event(
                             &public_tx,
                             TelemetryEvent::EnforcementError(format!(
@@ -833,9 +838,9 @@ fn record_kel_cgroup_destroyed(
 }
 
 fn wait_for_cgroup_empty(cgroup_path: &Path, timeout: Duration) -> io::Result<()> {
-    let deadline = Instant::now()
-        .checked_add(timeout)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid cgroup wait timeout"))?;
+    let deadline = Instant::now().checked_add(timeout).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "invalid cgroup wait timeout")
+    })?;
     loop {
         let events = fs::read_to_string(cgroup_path.join("cgroup.events"))?;
         let populated = events
@@ -848,7 +853,10 @@ fn wait_for_cgroup_empty(cgroup_path: &Path, timeout: Duration) -> io::Result<()
                     .and_then(|value| value.parse::<u32>().ok())
             })
             .ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidData, "cgroup.events has no valid populated field")
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "cgroup.events has no valid populated field",
+                )
             })?;
         if populated == 0 {
             return Ok(());

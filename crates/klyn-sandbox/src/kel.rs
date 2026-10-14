@@ -209,11 +209,9 @@ impl KelAttestationChallenge {
             SandboxError::Enforcement("worker attestation contains an invalid Ed25519 key".into())
         })?;
         let signature = Signature::from_bytes(&worker_signature);
-        worker_key
-            .verify(&self.digest(), &signature)
-            .map_err(|_| {
-                SandboxError::Enforcement("worker attestation signature is invalid".into())
-            })?;
+        worker_key.verify(&self.digest(), &signature).map_err(|_| {
+            SandboxError::Enforcement("worker attestation signature is invalid".into())
+        })?;
 
         Ok(KelAttestationProof {
             nonce: self.nonce,
@@ -288,9 +286,11 @@ impl KelEvent {
             ));
         }
         let signature = Signature::from_bytes(&self.signature);
-        daemon_key.verify(&self.event_hash, &signature).map_err(|_| {
-            SandboxError::Enforcement("KEL daemon event signature is invalid".into())
-        })?;
+        daemon_key
+            .verify(&self.event_hash, &signature)
+            .map_err(|_| {
+                SandboxError::Enforcement("KEL daemon event signature is invalid".into())
+            })?;
 
         if self.kind == KelEventKind::WorkerAttested {
             if self.attestation.is_empty()
@@ -531,7 +531,10 @@ impl KelJournal {
         kind: KelEventKind,
         payload_hash: [u8; 32],
     ) -> Result<KelEvent, SandboxError> {
-        if matches!(kind, KelEventKind::WorkerAttested | KelEventKind::CgroupDestroy) {
+        if matches!(
+            kind,
+            KelEventKind::WorkerAttested | KelEventKind::CgroupDestroy
+        ) {
             return Err(SandboxError::Enforcement(
                 "KEL attestation and destruction events require their dedicated append APIs".into(),
             ));
@@ -626,7 +629,11 @@ impl KelJournal {
 
         let mut encoded = [0; KEL_EVENT_ENCODED_LEN];
         event.encode(&mut encoded);
-        if let Err(error) = self.file.write_all(&encoded).and_then(|()| self.file.sync_data()) {
+        if let Err(error) = self
+            .file
+            .write_all(&encoded)
+            .and_then(|()| self.file.sync_data())
+        {
             self.poisoned = true;
             return Err(SandboxError::Enforcement(format!(
                 "KEL append was not durably committed: {error}"
@@ -685,10 +692,12 @@ impl KelJournal {
                     }
                     if event.kind == KelEventKind::WorkerAttested
                         && (validated_capability_hash != Some(event.attestation.capability_hash)
-                            || previous_payload_hash != Some(event.attestation.spawn_payload_hash()))
+                            || previous_payload_hash
+                                != Some(event.attestation.spawn_payload_hash()))
                     {
                         return Err(SandboxError::Enforcement(
-                            "KEL worker proof does not match the signed capability/Spawn records".into(),
+                            "KEL worker proof does not match the signed capability/Spawn records"
+                                .into(),
                         ));
                     }
                     event.verify(&previous_hash, trusted_daemon_key)?;
@@ -700,8 +709,7 @@ impl KelJournal {
                         }
                     }
                     if event.kind == KelEventKind::CgroupDestroy
-                        && expected_sequence + 1
-                            != metadata.len() / KEL_EVENT_ENCODED_LEN as u64
+                        && expected_sequence + 1 != metadata.len() / KEL_EVENT_ENCODED_LEN as u64
                     {
                         return Err(SandboxError::Enforcement(
                             "KEL journal contains events after cgroup destruction".into(),
@@ -773,10 +781,16 @@ fn transition_allowed(previous: Option<KelEventKind>, next: KelEventKind) -> boo
                 | KelEventKind::CgroupDestroy
         ),
         Some(KelEventKind::WorkerAttested) => {
-            matches!(next, KelEventKind::PolicyGateClear | KelEventKind::CgroupDestroy)
+            matches!(
+                next,
+                KelEventKind::PolicyGateClear | KelEventKind::CgroupDestroy
+            )
         }
         Some(KelEventKind::PolicyGateClear) => {
-            matches!(next, KelEventKind::TelemetryAnomaly | KelEventKind::CgroupDestroy)
+            matches!(
+                next,
+                KelEventKind::TelemetryAnomaly | KelEventKind::CgroupDestroy
+            )
         }
         Some(KelEventKind::TelemetryAnomaly) => {
             matches!(next, KelEventKind::TelemetryAnomaly | KelEventKind::CgroupDestroy)
@@ -886,13 +900,10 @@ fn copy_into<const N: usize>(output: &mut [u8; N], offset: &mut usize, bytes: &[
     *offset += bytes.len();
 }
 
-fn take_array<const N: usize>(
-    input: &[u8],
-    offset: &mut usize,
-) -> Result<[u8; N], SandboxError> {
-    let end = offset.checked_add(N).ok_or_else(|| {
-        SandboxError::Enforcement("KEL frame offset overflow".into())
-    })?;
+fn take_array<const N: usize>(input: &[u8], offset: &mut usize) -> Result<[u8; N], SandboxError> {
+    let end = offset
+        .checked_add(N)
+        .ok_or_else(|| SandboxError::Enforcement("KEL frame offset overflow".into()))?;
     let bytes = input.get(*offset..end).ok_or_else(|| {
         SandboxError::Enforcement("KEL frame is shorter than its fixed schema".into())
     })?;
@@ -932,7 +943,9 @@ mod tests {
 
         let mut response = [0; KEL_RESPONSE_FRAME_LEN];
         decoded.build_worker_response(&worker, &mut response);
-        let proof = decoded.verify_worker_response(&response).expect("verify proof");
+        let proof = decoded
+            .verify_worker_response(&response)
+            .expect("verify proof");
         assert_eq!(proof.worker_public_key, worker.verifying_key().to_bytes());
 
         let mut altered = challenge;
@@ -949,15 +962,14 @@ mod tests {
         let worker = SigningKey::from_bytes(&[9; 32]);
         let mut response = [0; KEL_RESPONSE_FRAME_LEN];
         challenge.build_worker_response(&worker, &mut response);
-        let proof = challenge.verify_worker_response(&response).expect("valid proof");
+        let proof = challenge
+            .verify_worker_response(&response)
+            .expect("valid proof");
 
         let mut journal = KelJournal::create(&path, &daemon, challenge.session_id)
             .expect("create append-only journal");
         journal
-            .append(
-                KelEventKind::CapabilityValidated,
-                challenge.capability_hash,
-            )
+            .append(KelEventKind::CapabilityValidated, challenge.capability_hash)
             .expect("append capability event");
 
         let mut spawn_payload = [0u8; 4 + 8 + 32 + 32];
@@ -972,12 +984,22 @@ mod tests {
             &mut spawn_offset,
             &challenge.cgroup_id.to_le_bytes(),
         );
-        copy_into(&mut spawn_payload, &mut spawn_offset, &challenge.manifest_hash);
-        copy_into(&mut spawn_payload, &mut spawn_offset, &challenge.executable_hash);
+        copy_into(
+            &mut spawn_payload,
+            &mut spawn_offset,
+            &challenge.manifest_hash,
+        );
+        copy_into(
+            &mut spawn_payload,
+            &mut spawn_offset,
+            &challenge.executable_hash,
+        );
         journal
             .append(KelEventKind::Spawn, hash_payload(&spawn_payload))
             .expect("append spawn event");
-        journal.append_attestation(proof).expect("append dual-signed proof");
+        journal
+            .append_attestation(proof)
+            .expect("append dual-signed proof");
         journal
             .append(KelEventKind::PolicyGateClear, challenge.digest())
             .expect("append policy gate event");
@@ -1007,12 +1029,17 @@ mod tests {
         let mut journal = KelJournal::create(&path, &daemon, [4; 16]).expect("create journal");
         assert!(KelJournal::create(&path, &daemon, [4; 16]).is_err());
         journal
-            .append(KelEventKind::CapabilityValidated, hash_payload(b"capability"))
+            .append(
+                KelEventKind::CapabilityValidated,
+                hash_payload(b"capability"),
+            )
             .expect("append validated capability event");
         journal
             .record_cgroup_destroyed(hash_payload(b"destroyed"))
             .expect("append terminal event");
-        assert!(journal.append(KelEventKind::TelemetryAnomaly, hash_payload(b"late")).is_err());
+        assert!(journal
+            .append(KelEventKind::TelemetryAnomaly, hash_payload(b"late"))
+            .is_err());
         assert!(journal
             .record_cgroup_destroyed(hash_payload(b"repeat"))
             .expect("idempotent destroy")

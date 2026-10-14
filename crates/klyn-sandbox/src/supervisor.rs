@@ -28,7 +28,10 @@ use crate::{
         RESPONSE_RING_TAIL_FD, WORKER_CMD_PING, WORKER_CMD_SHUTDOWN, WORKER_RESP_PING,
         WORKER_RESP_SHUTDOWN,
     },
-    kel::{self, KelAttestationChallenge, KelEventKind, KelJournal, SharedKelJournal, KEL_CHALLENGE_FRAME_LEN, KEL_RESPONSE_FRAME_LEN},
+    kel::{
+        self, KelAttestationChallenge, KelEventKind, KelJournal, SharedKelJournal,
+        KEL_CHALLENGE_FRAME_LEN, KEL_RESPONSE_FRAME_LEN,
+    },
     manifest::{sha256_file, WorkerManifest, REQUIRED_LANDLOCK_ABI, WORKER_MAX_OPEN_FDS},
     start_gate::{StartGate, WorkerPolicyGate},
     telemetry::{TelemetryEvent, WorkerTelemetry},
@@ -234,14 +237,12 @@ impl SpawnedWorker {
     }
 
     /// Return a verified sequence/root snapshot for an independent durable anchor.
-    pub fn kel_head_snapshot(
-        &self,
-    ) -> Result<Option<kel::KelHeadSnapshot>, SandboxError> {
+    pub fn kel_head_snapshot(&self) -> Result<Option<kel::KelHeadSnapshot>, SandboxError> {
         match &self.kel_journal {
             Some(journal) => {
-                let mut journal = journal
-                    .lock()
-                    .map_err(|_| SandboxError::Enforcement("KEL journal lock is poisoned".into()))?;
+                let mut journal = journal.lock().map_err(|_| {
+                    SandboxError::Enforcement("KEL journal lock is poisoned".into())
+                })?;
                 journal.verify_disk_state()?;
                 Ok(Some(journal.head_snapshot()))
             }
@@ -311,8 +312,7 @@ pub fn launch_worker_with_kel(
     journal_path: impl AsRef<Path>,
     session_id: [u8; 16],
 ) -> Result<SpawnedWorker, SandboxError> {
-    let expected_session =
-        kel::session_id_from_token_id(&config.capability.claims.token_id);
+    let expected_session = kel::session_id_from_token_id(&config.capability.claims.token_id);
     if expected_session != session_id {
         return Err(SandboxError::Enforcement(
             "KEL session ID is not derived from the signed capability token ID".into(),
@@ -363,11 +363,7 @@ fn launch_worker_inner(
         .as_secs();
     if config.capability.claims.expires_at_unix <= now {
         if let Some(journal) = &kel_journal {
-            append_kel_event(
-                journal,
-                KelEventKind::CapabilityRejected,
-                capability_hash,
-            )?;
+            append_kel_event(journal, KelEventKind::CapabilityRejected, capability_hash)?;
         }
         return Err(SandboxError::Enforcement(
             "supervisor refused an expired OCap capability".into(),
@@ -606,21 +602,21 @@ fn launch_worker_inner(
     let telemetry = match gate_result {
         Ok(telemetry) => telemetry,
         Err(error) => {
-        let _ = child.kill();
-        let cleanup = cgroup.terminate_and_wait(WORKER_LIFECYCLE_TIMEOUT);
-        if cleanup.is_ok() {
-            if let Some(journal) = &kel_journal {
-                let path_hash = kel::hash_payload(cgroup.path().to_string_lossy().as_bytes());
-                let _ = journal.lock().map(|mut journal| {
-                    let _ = journal.record_cgroup_destroyed(path_hash);
-                });
+            let _ = child.kill();
+            let cleanup = cgroup.terminate_and_wait(WORKER_LIFECYCLE_TIMEOUT);
+            if cleanup.is_ok() {
+                if let Some(journal) = &kel_journal {
+                    let path_hash = kel::hash_payload(cgroup.path().to_string_lossy().as_bytes());
+                    let _ = journal.lock().map(|mut journal| {
+                        let _ = journal.record_cgroup_destroyed(path_hash);
+                    });
+                }
+                let _ = child.wait();
+            } else {
+                // Do not allow a failed startup path to block indefinitely on a
+                // process the kernel could not confirm as terminated.
+                let _ = child.try_wait();
             }
-            let _ = child.wait();
-        } else {
-            // Do not allow a failed startup path to block indefinitely on a
-            // process the kernel could not confirm as terminated.
-            let _ = child.try_wait();
-        }
             return match cleanup {
                 Ok(()) => Err(error),
                 Err(cleanup_error) => Err(SandboxError::Enforcement(format!(
@@ -657,11 +653,7 @@ fn random_nonce() -> Result<[u8; 32], SandboxError> {
     let mut filled = 0usize;
     while filled < nonce.len() {
         let result = unsafe {
-            libc::getrandom(
-                nonce[filled..].as_mut_ptr().cast(),
-                nonce.len() - filled,
-                0,
-            )
+            libc::getrandom(nonce[filled..].as_mut_ptr().cast(), nonce.len() - filled, 0)
         };
         if result > 0 {
             filled += result as usize;
@@ -689,9 +681,11 @@ fn build_and_send_attestation(
     {
         let frame = response_ring
             .wait_peek(Some(WORKER_BOOTSTRAP_TIMEOUT))?
-            .ok_or_else(|| SandboxError::Enforcement(
-                "worker did not answer the KEL shared-ring challenge".into(),
-            ))?;
+            .ok_or_else(|| {
+                SandboxError::Enforcement(
+                    "worker did not answer the KEL shared-ring challenge".into(),
+                )
+            })?;
         if frame.payload().len() != KEL_RESPONSE_FRAME_LEN {
             return Err(SandboxError::Enforcement(
                 "worker KEL attestation response has an invalid frame length".into(),
@@ -704,7 +698,6 @@ fn build_and_send_attestation(
     let proof = challenge.verify_worker_response(&response)?;
     Ok((challenge.digest(), proof))
 }
-
 
 fn duplicate_cloexec(fd: RawFd) -> Result<OwnedFd, SandboxError> {
     let duplicate = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 10) };
