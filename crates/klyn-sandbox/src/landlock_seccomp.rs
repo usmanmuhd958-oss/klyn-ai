@@ -78,10 +78,13 @@ pub fn apply_landlock(
         let access = match (grant.access, is_directory) {
             (FileAccess::Read, true) => make_bitflags!(AccessFs::{ReadFile | ReadDir}),
             (FileAccess::Read, false) => make_bitflags!(AccessFs::{ReadFile}),
-            (FileAccess::Write, _) => make_bitflags!(AccessFs::{WriteFile | Truncate}),
-            (FileAccess::ReadWrite, true) => {
-                make_bitflags!(AccessFs::{ReadFile | ReadDir | WriteFile | Truncate})
-            }
+            (FileAccess::Write, true) => make_bitflags!(AccessFs::{
+                WriteFile | Truncate | MakeDir | MakeReg | RemoveDir | RemoveFile
+            }),
+            (FileAccess::Write, false) => make_bitflags!(AccessFs::{WriteFile | Truncate}),
+            (FileAccess::ReadWrite, true) => make_bitflags!(AccessFs::{
+                ReadFile | ReadDir | WriteFile | Truncate | MakeDir | MakeReg | RemoveDir | RemoveFile
+            }),
             (FileAccess::ReadWrite, false) => {
                 make_bitflags!(AccessFs::{ReadFile | WriteFile | Truncate})
             }
