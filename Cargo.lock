@@ -237,8 +237,10 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 name = "klyn-daemon"
 version = "0.1.0"
 dependencies = [
+ "ed25519-dalek",
  "klyn-fs",
  "klyn-protocol",
+ "klyn-sandbox",
  "nix",
  "serde",
  "serde_json",
@@ -270,6 +272,7 @@ version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
  "ed25519-dalek",
+ "klyn-protocol",
  "landlock",
  "libc",
  "nix",
