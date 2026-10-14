@@ -144,6 +144,13 @@ jobs:
           else
             cargo +nightly install cargo-fuzz --version 0.13.2 --locked --force
           fi
+      - name: Export generated fuzz lockfile for pinning
+        if: ${{ !hashFiles('crates/klyn-sandbox/fuzz/Cargo.lock') }}
+        run: |
+          cargo +nightly generate-lockfile --manifest-path crates/klyn-sandbox/fuzz/Cargo.toml
+          printf 'KLYN_FUZZ_LOCK_BASE64='
+          base64 -w0 crates/klyn-sandbox/fuzz/Cargo.lock
+          printf '\n'
       - name: Format fuzz workspace
         run: cargo +nightly fmt --manifest-path crates/klyn-sandbox/fuzz/Cargo.toml -- --check
       - name: Clippy fuzz workspace with warnings denied
