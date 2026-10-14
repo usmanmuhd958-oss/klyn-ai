@@ -703,7 +703,11 @@ fn futex_wake(counter: *const AtomicU32) -> Result<(), SandboxError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::thread;
+    use std::{
+        os::unix::process::CommandExt,
+        process::{Command, Stdio},
+        thread,
+    };
 
     #[test]
     fn producer_consumer_roundtrip_uses_shared_memory_without_allocating_payloads() {
@@ -777,6 +781,118 @@ mod tests {
             .wait_peek(Some(Duration::ZERO))
             .expect("zero-timeout poll")
             .is_none());
+    }
+
+    #[test]
+    fn cross_process_ring_transfers_frames_without_stdio() {
+        const CHILD_ENV: &str = "KLYN_RING_CHILD_PROCESS";
+        if std::env::var_os(CHILD_ENV).is_some() {
+            // SAFETY: this test subprocess inherits these six distinct ring
+            // descriptors from the test parent and owns them after attachment.
+            let mut command_ring = unsafe {
+                RingConsumer::from_inherited_fds(
+                    COMMAND_RING_PAYLOAD_FD,
+                    COMMAND_RING_HEAD_FD,
+                    COMMAND_RING_TAIL_FD,
+                )
+            }
+            .expect("attach child command ring");
+            // SAFETY: response ring descriptor ownership is distinct from the
+            // command ring and transfers to this producer endpoint.
+            let mut response_ring = unsafe {
+                RingProducer::from_inherited_fds(
+                    RESPONSE_RING_PAYLOAD_FD,
+                    RESPONSE_RING_HEAD_FD,
+                    RESPONSE_RING_TAIL_FD,
+                )
+            }
+            .expect("attach child response ring");
+            let frame = command_ring
+                .wait_peek(Some(Duration::from_secs(2)))
+                .expect("wait for parent command")
+                .expect("parent command arrived");
+            assert_eq!(frame.payload(), b"cross-process-command");
+            frame.consume().expect("consume parent command");
+            response_ring
+                .push_wait(b"cross-process-response", Duration::from_secs(2))
+                .expect("publish response to parent");
+            return;
+        }
+
+        let (mut command_producer, child_command_fds) =
+            RingProducer::create().expect("create command ring");
+        let (mut response_consumer, child_response_fds) =
+            RingConsumer::create().expect("create response ring");
+        let source_fds = child_command_fds
+            .raw_fds()
+            .into_iter()
+            .chain(child_response_fds.raw_fds())
+            .map(duplicate_fd_for_child)
+            .collect::<Vec<_>>();
+        let source_raw: Vec<RawFd> = source_fds.iter().map(AsRawFd::as_raw_fd).collect();
+        let targets = [
+            COMMAND_RING_PAYLOAD_FD,
+            COMMAND_RING_HEAD_FD,
+            COMMAND_RING_TAIL_FD,
+            RESPONSE_RING_PAYLOAD_FD,
+            RESPONSE_RING_HEAD_FD,
+            RESPONSE_RING_TAIL_FD,
+        ];
+        let test_executable = std::env::current_exe().expect("test executable path");
+        let mut child = Command::new(test_executable);
+        child
+            .arg("--exact")
+            .arg("ipc_ring::tests::cross_process_ring_transfers_frames_without_stdio")
+            .arg("--nocapture")
+            .env(CHILD_ENV, "1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        // SAFETY: sources are duplicated at FD >= 32, so they cannot overlap
+        // target FDs 7..12. dup3 clears close-on-exec on targets, then close_range
+        // removes inherited descriptors outside the fixed ring ABI.
+        unsafe {
+            child.pre_exec(move || {
+                for (source, target) in source_raw.iter().zip(targets) {
+                    if libc::dup3(*source, target, 0) < 0 {
+                        return Err(io::Error::last_os_error());
+                    }
+                }
+                if libc::syscall(libc::SYS_close_range, 3u32, 3u32, 0u32) != 0
+                    || libc::syscall(
+                        libc::SYS_close_range,
+                        (RESPONSE_RING_TAIL_FD + 1) as u32,
+                        u32::MAX,
+                        0u32,
+                    ) != 0
+                {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let mut child = child.spawn().expect("spawn isolated test peer");
+        drop(child_command_fds);
+        drop(child_response_fds);
+        drop(source_fds);
+
+        command_producer
+            .push_wait(b"cross-process-command", Duration::from_secs(2))
+            .expect("publish command to child process");
+        let response = response_consumer
+            .wait_peek(Some(Duration::from_secs(2)))
+            .expect("wait for child response")
+            .expect("child response arrived");
+        assert_eq!(response.payload(), b"cross-process-response");
+        response.consume().expect("consume child response");
+        assert!(child.wait().expect("wait child process").success());
+    }
+
+    fn duplicate_fd_for_child(fd: RawFd) -> OwnedFd {
+        let duplicate = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 32) };
+        assert!(duplicate >= 0, "duplicate ring descriptor for child");
+        // SAFETY: fcntl returned a fresh descriptor owned by this function.
+        unsafe { OwnedFd::from_raw_fd(duplicate) }
     }
 
     #[test]
