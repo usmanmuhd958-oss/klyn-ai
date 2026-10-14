@@ -24,7 +24,7 @@ use klyn_sandbox::{
     broker::{BrokerConfig, Ed25519CapabilityVerifier, ResourceBroker, RevocationOracle},
     supervisor::{launch_worker, SpawnedWorker, WorkerLaunchConfig},
     validate_trusted_root, CapabilityClaims, FileAccess, FileGrant, ResourceBudget, SandboxError,
-    SignedCapability, OCAP_VERSION,
+    SignedCapability, WorkerOperation, OCAP_VERSION,
 };
 use thiserror::Error;
 
@@ -145,6 +145,19 @@ impl SandboxService {
         peer: PeerIdentity,
         budget: ResourceBudget,
     ) -> Result<ManagedSandboxedWorker, SandboxServiceError> {
+        self.launch_candidate_worker_for_operation(
+            transaction_id, peer, budget, WorkerOperation::Control,
+        )
+    }
+
+    /// Launch a worker with a signed, operation-specific seccomp profile.
+    pub fn launch_candidate_worker_for_operation(
+        &self,
+        transaction_id: &str,
+        peer: PeerIdentity,
+        budget: ResourceBudget,
+        operation: WorkerOperation,
+    ) -> Result<ManagedSandboxedWorker, SandboxServiceError> {
         budget.validate()?;
         if transaction_id.is_empty() || transaction_id.len() > 180 {
             return Err(SandboxServiceError::TransactionIdInvalid);
@@ -175,12 +188,14 @@ impl SandboxService {
             .checked_add(TOKEN_LIFETIME_SECONDS)
             .ok_or_else(|| SandboxError::InvalidConfig("capability expiry overflow".into()))?;
 
+        let telemetry_budget = budget.clone();
         let claims = CapabilityClaims {
             version: OCAP_VERSION,
             token_id,
             subject_uid: host_uid,
             subject_gid: host_gid,
             expires_at_unix,
+            operation,
             file_grants: vec![FileGrant {
                 root_id: "runtime".into(),
                 prefix: String::new(),
@@ -236,11 +251,27 @@ impl SandboxService {
         );
 
         match launch {
-            Ok(worker) => Ok(ManagedSandboxedWorker {
-                worker: Some(worker),
-                stop,
-                broker_thread: Some(broker_thread),
-            }),
+            Ok(worker) => {
+                let telemetry = match klyn_sandbox::telemetry::WorkerTelemetry::start(
+                    worker.cgroup_path(),
+                    worker.pid(),
+                    telemetry_budget,
+                ) {
+                    Ok(telemetry) => telemetry,
+                    Err(error) => {
+                        drop(worker);
+                        stop.store(true, Ordering::Release);
+                        let _ = broker_thread.join();
+                        return Err(error.into());
+                    }
+                };
+                Ok(ManagedSandboxedWorker {
+                    worker: Some(worker),
+                    stop,
+                    broker_thread: Some(broker_thread),
+                    telemetry: Some(telemetry),
+                })
+            },
             Err(error) => {
                 stop.store(true, Ordering::Release);
                 let _ = broker_thread.join();
@@ -254,6 +285,7 @@ pub struct ManagedSandboxedWorker {
     worker: Option<SpawnedWorker>,
     stop: Arc<AtomicBool>,
     broker_thread: Option<JoinHandle<Result<(), SandboxError>>>,
+    telemetry: Option<klyn_sandbox::telemetry::WorkerTelemetry>,
 }
 
 impl ManagedSandboxedWorker {
@@ -281,6 +313,8 @@ impl ManagedSandboxedWorker {
     }
 
     pub fn shutdown(mut self) -> Result<ExitStatus, SandboxServiceError> {
+        // Stop exit monitoring before the intentional shutdown request.
+        self.stop_telemetry()?;
         self.send_command(&serde_json::json!({"op": "shutdown"}))?;
         let response = self
             .read_response()?
@@ -298,6 +332,18 @@ impl ManagedSandboxedWorker {
         Ok(status)
     }
 
+    /// Receive one bounded asynchronous kernel/cgroup telemetry event.
+    pub fn try_telemetry_event(&self) -> Option<klyn_sandbox::telemetry::TelemetryEvent> {
+        self.telemetry.as_ref().and_then(|telemetry| telemetry.try_recv())
+    }
+
+    fn stop_telemetry(&mut self) -> Result<(), SandboxServiceError> {
+        if let Some(mut telemetry) = self.telemetry.take() {
+            telemetry.stop_and_join()?;
+        }
+        Ok(())
+    }
+
     fn stop_and_join_broker(&mut self) -> Result<(), SandboxServiceError> {
         self.stop.store(true, Ordering::Release);
         if let Some(thread) = self.broker_thread.take() {
@@ -311,8 +357,9 @@ impl ManagedSandboxedWorker {
 
 impl Drop for ManagedSandboxedWorker {
     fn drop(&mut self) {
-        // Dropping SpawnedWorker kills its entire cgroup before broker join.
+        // Kill the cgroup before joining its monitor and broker threads.
         self.worker.take();
+        let _ = self.stop_telemetry();
         self.stop.store(true, Ordering::Release);
         if let Some(thread) = self.broker_thread.take() {
             let _ = thread.join();

@@ -24,6 +24,8 @@ pub mod start_gate;
 #[cfg(target_os = "linux")]
 pub mod supervisor;
 #[cfg(target_os = "linux")]
+pub mod telemetry;
+#[cfg(target_os = "linux")]
 pub mod worker_bootstrap;
 
 #[cfg(not(target_os = "linux"))]
@@ -90,6 +92,24 @@ pub struct SignedCapability {
     pub signature: Vec<u8>,
 }
 
+/// Operation-specific seccomp policy selected by a signed capability.
+/// The default value is omitted from serialization to preserve existing v1
+/// signed-claims bytes for control-only workers.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkerOperation {
+    #[default]
+    Control,
+    HashJson,
+    DescribeJson,
+}
+
+impl WorkerOperation {
+    fn is_control(&self) -> bool {
+        matches!(self, Self::Control)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct CapabilityClaims {
@@ -103,6 +123,9 @@ pub struct CapabilityClaims {
     /// DNS rebinding and makes the destination authorized by the signature exact.
     pub network_grants: Vec<NetworkGrant>,
     pub budget: ResourceBudget,
+    /// Signed task selector for the operation-specific syscall allowlist.
+    #[serde(default, skip_serializing_if = "WorkerOperation::is_control")]
+    pub operation: WorkerOperation,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
