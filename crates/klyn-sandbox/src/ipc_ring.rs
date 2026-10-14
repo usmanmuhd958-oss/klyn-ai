@@ -891,7 +891,7 @@ mod tests {
                         return Err(io::Error::last_os_error());
                     }
                 }
-                if libc::syscall(libc::SYS_close_range, 3u32, 3u32, 0u32) != 0
+                if libc::syscall(libc::SYS_close_range, 3u32, 6u32, 0u32) != 0
                     || libc::syscall(
                         libc::SYS_close_range,
                         (RESPONSE_RING_TAIL_FD + 1) as u32,
