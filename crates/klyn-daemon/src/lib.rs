@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod execution;
 pub mod fs_service;
 pub mod lifecycle;
 pub mod policy;
@@ -14,10 +15,13 @@ pub mod server;
 use std::sync::Arc;
 
 use klyn_fs::FsError;
-use klyn_protocol::{Method, ProtocolError, Request, Response, RpcErrorCode};
+use klyn_protocol::{
+    ExecuteTaskParams, Method, ProtocolError, Request, Response, RpcErrorCode,
+};
 use serde_json::json;
 
 use crate::{
+    execution::{ExecutionError, ExecutionService},
     fs_service::{FsService, FsServiceError},
     lifecycle::{Lifecycle, LifecycleError, RequestLease},
     policy::{PeerIdentity, PolicyEnforcer, PolicyError},
@@ -27,6 +31,7 @@ pub struct Router {
     lifecycle: Lifecycle,
     policy: Arc<dyn PolicyEnforcer>,
     fs: Option<Arc<FsService>>,
+    execution: Option<Arc<ExecutionService>>,
 }
 
 impl Router {
@@ -35,6 +40,7 @@ impl Router {
             lifecycle,
             policy,
             fs: None,
+            execution: None,
         }
     }
 
@@ -47,7 +53,15 @@ impl Router {
             lifecycle,
             policy,
             fs: Some(fs),
+            execution: None,
         }
+    }
+
+    /// Install the only IPC task-execution path. If omitted, ExecuteTask is denied
+    /// with an unavailable response; there is no unsandboxed fallback.
+    pub fn with_execution(mut self, execution: Arc<ExecutionService>) -> Self {
+        self.execution = Some(execution);
+        self
     }
 
     pub fn lifecycle(&self) -> Lifecycle {
@@ -156,6 +170,53 @@ impl Router {
                     Err(error) => filesystem_error_response(Some(request_id), error),
                 },
             },
+            Method::ExecuteTask => {
+                let params = match serde_json::from_value::<ExecuteTaskParams>(request.params) {
+                    Ok(params) => params,
+                    Err(_) => {
+                        return (
+                            Response::failure(
+                                Some(request_id),
+                                RpcErrorCode::InvalidRequest,
+                                "invalid task parameters",
+                            ),
+                            Some(lease),
+                        );
+                    }
+                };
+                match &self.execution {
+                    None => Response::failure(
+                        Some(request_id),
+                        RpcErrorCode::ExecutionUnavailable,
+                        "sandbox execution service is unavailable; task was not run",
+                    ),
+                    Some(service) => match service.execute(peer, params) {
+                        Ok(result) => match serde_json::to_value(result) {
+                            Ok(value) => Response::success(request_id, value),
+                            Err(_) => Response::failure(
+                                Some(request_id),
+                                RpcErrorCode::ExecutionFailed,
+                                "sandbox worker returned an invalid result",
+                            ),
+                        },
+                        Err(ExecutionError::Timeout) => Response::failure(
+                            Some(request_id),
+                            RpcErrorCode::ExecutionTimeout,
+                            "sandbox task exceeded its execution deadline",
+                        ),
+                        Err(ExecutionError::InvalidTask) => Response::failure(
+                            Some(request_id),
+                            RpcErrorCode::InvalidRequest,
+                            "task parameters are invalid",
+                        ),
+                        Err(_) => Response::failure(
+                            Some(request_id),
+                            RpcErrorCode::ExecutionFailed,
+                            "sandbox task failed closed",
+                        ),
+                    },
+                }
+            }
         };
 
         (response, Some(lease))
@@ -258,6 +319,41 @@ mod tests {
             uid,
             gid: 5,
         }
+    }
+
+    #[test]
+    fn execute_task_is_denied_without_permission() {
+        let lifecycle = Lifecycle::new();
+        lifecycle.mark_ready().unwrap();
+        let router = Router::new(lifecycle.clone(), Arc::new(UidPolicy::new()));
+        let response = router.dispatch(
+            request(Method::ExecuteTask, json!({
+                "task_id": "task-unauthorized",
+                "operation": "hash_json",
+                "payload": {"value": 1}
+            })),
+            peer(1000),
+        );
+        assert_eq!(response.error.unwrap().code, RpcErrorCode::Unauthorized);
+        assert_eq!(lifecycle.snapshot().unwrap().in_flight_requests, 0);
+    }
+
+    #[test]
+    fn execute_task_fails_closed_when_supervisor_is_not_configured() {
+        let lifecycle = Lifecycle::new();
+        lifecycle.mark_ready().unwrap();
+        let policy = UidPolicy::from_grants([(1000, Permission::ExecuteTask)]);
+        let router = Router::new(lifecycle.clone(), Arc::new(policy));
+        let response = router.dispatch(
+            request(Method::ExecuteTask, json!({
+                "task_id": "task-no-supervisor",
+                "operation": "hash_json",
+                "payload": {"value": 1}
+            })),
+            peer(1000),
+        );
+        assert_eq!(response.error.unwrap().code, RpcErrorCode::ExecutionUnavailable);
+        assert_eq!(lifecycle.snapshot().unwrap().in_flight_requests, 0);
     }
 
     #[test]
