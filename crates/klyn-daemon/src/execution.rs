@@ -16,8 +16,9 @@ use klyn_protocol::{
     MAX_EXECUTION_TASK_BYTES,
 };
 use klyn_sandbox::{
-    launch_worker, validate_trusted_root, CapabilityClaims, FileGrant, NetworkGrant,
-    ResourceBudget, SandboxError, SignedCapability, WorkerLaunchConfig, OCAP_VERSION,
+    supervisor::{launch_worker, WorkerLaunchConfig},
+    validate_trusted_root, CapabilityClaims, FileGrant, NetworkGrant, ResourceBudget,
+    SandboxError, SignedCapability, OCAP_VERSION,
 };
 use thiserror::Error;
 
