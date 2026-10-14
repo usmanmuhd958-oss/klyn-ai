@@ -26,12 +26,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut reader = BufReader::new(stdin.lock());
     let frame = read_frame(&mut reader)?;
     if frame.len() > MAX_EXECUTION_TASK_BYTES {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "task exceeds limit").into());
+        return Err(
+            io::Error::new(io::ErrorKind::InvalidData, "task exceeds limit").into(),
+        );
     }
     let params: ExecuteTaskParams = serde_json::from_slice(&frame)?;
-    params.validate().map_err(|_| {
-        io::Error::new(io::ErrorKind::InvalidData, "task parameters rejected")
-    })?;
+    params
+        .validate()
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "task parameters rejected"))?;
 
     let output = klyn_sandbox::task::execute_registered_operation(&params)?;
     let result = ExecuteTaskResult {
