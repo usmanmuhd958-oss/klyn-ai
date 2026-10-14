@@ -12,6 +12,9 @@ use klyn_sandbox::fs_txn::FsTransaction;
 #[test]
 fn forced_worker_termination_discards_workspace_artifacts() {
     let parent = tempfile::tempdir().expect("private transaction parent");
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(parent.path(), fs::Permissions::from_mode(0o700))
+        .expect("restrict transaction parent permissions");
     let outside = tempfile::tempdir().expect("outside sentinel parent");
     let sentinel = outside.path().join("must-survive.txt");
     fs::write(&sentinel, b"host state").expect("write host sentinel");
