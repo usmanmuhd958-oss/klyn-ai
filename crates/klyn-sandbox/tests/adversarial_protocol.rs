@@ -6,7 +6,7 @@ use ed25519_dalek::SigningKey;
 use klyn_sandbox::{
     ipc_ring::{decode_ipc_frame, RING_MAX_PAYLOAD_BYTES},
     kel::{
-        hash_payload, KelAttestationChallenge, KelEventKind, KelEvent, KelJournal,
+        hash_payload, KelAttestationChallenge, KelEvent, KelEventKind, KelJournal,
         KEL_EVENT_ENCODED_LEN, KEL_RESPONSE_FRAME_LEN,
     },
     supervisor::decode_worker_response,
@@ -53,7 +53,10 @@ fn kel_transition_and_encoded_signature_tampering_fail_closed() {
         )
         .expect("first event must establish the capability decision");
     assert!(journal
-        .append(KelEventKind::PolicyGateClear, hash_payload(b"gate-too-early"))
+        .append(
+            KelEventKind::PolicyGateClear,
+            hash_payload(b"gate-too-early")
+        )
         .is_err());
     journal
         .append(KelEventKind::Spawn, hash_payload(b"spawn"))
@@ -61,12 +64,9 @@ fn kel_transition_and_encoded_signature_tampering_fail_closed() {
 
     let encoded = fs::read(&path).expect("read encoded journal");
     assert_eq!(encoded.len(), 2 * KEL_EVENT_ENCODED_LEN);
-    let verified = KelJournal::verify_encoded_chain(
-        &encoded,
-        &key.verifying_key(),
-        Some(journal.head_root()),
-    )
-    .expect("untampered chain verifies");
+    let verified =
+        KelJournal::verify_encoded_chain(&encoded, &key.verifying_key(), Some(journal.head_root()))
+            .expect("untampered chain verifies");
     assert_eq!(verified.events.len(), 2);
 
     // Record layout: sequence, timestamp, kind, session, payload hash,
