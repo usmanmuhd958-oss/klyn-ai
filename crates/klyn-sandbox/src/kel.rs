@@ -66,7 +66,7 @@ impl KelEventKind {
 }
 
 /// Fixed-width proof returned by the worker for a supervisor-generated challenge.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KelAttestationProof {
     pub nonce: [u8; 32],
     pub worker_public_key: [u8; 32],
@@ -76,6 +76,21 @@ pub struct KelAttestationProof {
     pub manifest_hash: [u8; 32],
     pub capability_hash: [u8; 32],
     pub executable_hash: [u8; 32],
+}
+
+impl Default for KelAttestationProof {
+    fn default() -> Self {
+        Self {
+            nonce: [0; 32],
+            worker_public_key: [0; 32],
+            worker_signature: [0; 64],
+            launcher_pid: 0,
+            cgroup_id: 0,
+            manifest_hash: [0; 32],
+            capability_hash: [0; 32],
+            executable_hash: [0; 32],
+        }
+    }
 }
 
 impl KelAttestationProof {
