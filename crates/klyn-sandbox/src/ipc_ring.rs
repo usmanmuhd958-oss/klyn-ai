@@ -51,6 +51,11 @@ pub const RESPONSE_RING_PAYLOAD_FD: RawFd = 10;
 pub const RESPONSE_RING_HEAD_FD: RawFd = 11;
 pub const RESPONSE_RING_TAIL_FD: RawFd = 12;
 
+pub const WORKER_CMD_PING: u8 = 0x01;
+pub const WORKER_CMD_SHUTDOWN: u8 = 0x02;
+pub const WORKER_RESP_PING: u8 = 0x81;
+pub const WORKER_RESP_SHUTDOWN: u8 = 0x82;
+
 const LEN_PREFIX_BYTES: usize = std::mem::size_of::<u32>();
 const SLOT_STRIDE: usize = align_up(LEN_PREFIX_BYTES + RING_MAX_PAYLOAD_BYTES, 64);
 const FUTEX_WAIT_OP: libc::c_int = 0;
