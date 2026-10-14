@@ -23,7 +23,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{ResourceBudget, SandboxError};
+use crate::{kel::{hash_payload, KelEventKind, SharedKelJournal}, ResourceBudget, SandboxError};
 
 const DEFAULT_INTERVAL_MS: u64 = 250;
 const MIN_INTERVAL_MS: u64 = 50;
@@ -115,6 +115,26 @@ impl WorkerTelemetry {
         worker_pid: u32,
         budget: ResourceBudget,
     ) -> Result<Self, SandboxError> {
+        Self::start_internal(cgroup_path, worker_pid, budget, None)
+    }
+
+    /// Start mandatory cgroup monitoring coupled to the worker's cryptographic
+    /// lifecycle journal. KEL persistence failures never suppress cgroup kill.
+    pub fn start_with_kel(
+        cgroup_path: impl AsRef<Path>,
+        worker_pid: u32,
+        budget: ResourceBudget,
+        kel_journal: SharedKelJournal,
+    ) -> Result<Self, SandboxError> {
+        Self::start_internal(cgroup_path, worker_pid, budget, Some(kel_journal))
+    }
+
+    fn start_internal(
+        cgroup_path: impl AsRef<Path>,
+        worker_pid: u32,
+        budget: ResourceBudget,
+        kel_journal: Option<SharedKelJournal>,
+    ) -> Result<Self, SandboxError> {
         budget.validate()?;
         if worker_pid == 0 {
             return Err(SandboxError::InvalidConfig(
@@ -163,6 +183,7 @@ impl WorkerTelemetry {
 
         let (event_tx, receiver) = mpsc::sync_channel(PUBLIC_EVENT_CAPACITY);
         let (kernel_tx, kernel_rx) = mpsc::sync_channel(KERNEL_EVENT_CAPACITY);
+        let (startup_tx, startup_rx) = mpsc::sync_channel(1);
         let stop = Arc::new(AtomicBool::new(false));
         let mode = Arc::new(AtomicU8::new(TelemetryMode::Starting as u8));
         let thread_stop = Arc::clone(&stop);
@@ -186,6 +207,8 @@ impl WorkerTelemetry {
                     public_tx: event_tx,
                     kernel_tx,
                     kernel_rx,
+                    kel_journal,
+                    startup_tx,
                 });
             })
             .map_err(|_| {
@@ -193,6 +216,16 @@ impl WorkerTelemetry {
                     "failed to start mandatory cgroup telemetry monitor".into(),
                 )
             })?;
+
+        if startup_rx.recv_timeout(Duration::from_secs(15)).is_err() {
+            stop.store(true, Ordering::Release);
+            // Drop detaches the thread; it sees stop after finishing any
+            // in-progress kernel probe load and will release its resources.
+            drop(thread);
+            return Err(SandboxError::Enforcement(
+                "cgroup/eBPF telemetry did not reach its ready state before launch".into(),
+            ));
+        }
 
         Ok(Self {
             stop,
@@ -248,6 +281,8 @@ struct MonitorConfig {
     public_tx: SyncSender<TelemetryEvent>,
     kernel_tx: SyncSender<TelemetryEvent>,
     kernel_rx: Receiver<TelemetryEvent>,
+    kel_journal: Option<SharedKelJournal>,
+    startup_tx: SyncSender<TelemetryMode>,
 }
 
 fn monitor_loop(config: MonitorConfig) {
@@ -265,6 +300,8 @@ fn monitor_loop(config: MonitorConfig) {
         public_tx,
         kernel_tx,
         kernel_rx,
+        kel_journal,
+        startup_tx,
     } = config;
     let cgroup_id = match fs::metadata(&cgroup_path) {
         Ok(metadata) => metadata.ino(),
@@ -272,6 +309,7 @@ fn monitor_loop(config: MonitorConfig) {
             report_anomaly(
                 &cgroup_path,
                 &public_tx,
+                kel_journal.as_ref(),
                 AnomalyKind::MetricsUnavailable,
                 format!("cannot identify telemetry cgroup: {error}"),
             );
@@ -309,10 +347,18 @@ fn monitor_loop(config: MonitorConfig) {
         }
     };
 
+    let ready_mode = match mode.load(Ordering::Acquire) {
+        1 => TelemetryMode::EbpfRingBuffer,
+        _ => TelemetryMode::CgroupV2Fallback,
+    };
+    let _ = startup_tx.send(ready_mode);
+
     let mut last_sample_at = Instant::now();
     let mut recent_forks = VecDeque::new();
     let mut pending_kill: Option<(AnomalyKind, String)> = None;
+    let mut pending_kill_logged = false;
     let mut seen_kernel_drops = 0_u64;
+    let mut last_kel_check_at = Instant::now();
     let mut last_kernel_drop_check = Instant::now();
 
     send_event(&public_tx, TelemetryEvent::Snapshot(previous.clone()));
@@ -428,16 +474,78 @@ fn monitor_loop(config: MonitorConfig) {
             last_sample_at = Instant::now();
         }
 
+        if last_kel_check_at.elapsed() >= interval {
+            if let Some(journal) = kel_journal.as_ref() {
+                let verification = journal
+                    .lock()
+                    .map_err(|_| SandboxError::Enforcement("KEL journal lock is poisoned".into()))
+                    .and_then(|mut journal| journal.verify_disk_state());
+                if let Err(error) = verification {
+                    pending_kill = Some((
+                        AnomalyKind::MetricsUnavailable,
+                        format!("KEL integrity verification failed: {error}"),
+                    ));
+                }
+            }
+            last_kel_check_at = Instant::now();
+        }
+
         if let Some((kind, detail)) = pending_kill.as_ref() {
+            // Kill first. KEL persistence and cgroup-empty confirmation follow
+            // the immediate kernel kill request and cannot delay the first write.
             if write_cgroup_kill(&cgroup_path).is_ok() {
-                send_event(
-                    &public_tx,
-                    TelemetryEvent::Anomaly {
-                        kind: *kind,
-                        detail: detail.clone(),
-                    },
-                );
-                pending_kill = None;
+                if !pending_kill_logged {
+                    if let Some(journal) = kel_journal.as_ref() {
+                        if let Err(error) = append_kel_event(
+                            journal,
+                            KelEventKind::TelemetryAnomaly,
+                            hash_payload(detail.as_bytes()),
+                        ) {
+                            send_event(
+                                &public_tx,
+                                TelemetryEvent::EnforcementError(format!(
+                                    "worker was killed after {kind:?}, but KEL anomaly append failed: {error}"
+                                )),
+                            );
+                        }
+                    }
+                    pending_kill_logged = true;
+                }
+
+                match wait_for_cgroup_empty(&cgroup_path, Duration::from_millis(100)) {
+                    Ok(()) => {
+                        if let Some(journal) = kel_journal.as_ref() {
+                            let path_hash = hash_payload(cgroup_path.to_string_lossy().as_bytes());
+                            if let Err(error) = record_kel_cgroup_destroyed(journal, path_hash) {
+                                send_event(
+                                    &public_tx,
+                                    TelemetryEvent::EnforcementError(format!(
+                                        "cgroup is empty after {kind:?}, but KEL teardown append failed: {error}"
+                                    )),
+                                );
+                            }
+                        }
+                        send_event(
+                            &public_tx,
+                            TelemetryEvent::Anomaly {
+                                kind: *kind,
+                                detail: detail.clone(),
+                            },
+                        );
+                        pending_kill = None;
+                        pending_kill_logged = false;
+                    }
+                    Err(error) if last_kernel_drop_check.elapsed() >= Duration::from_millis(100) => {
+                        send_event(
+                            &public_tx,
+                            TelemetryEvent::EnforcementError(format!(
+                                "cgroup teardown after {kind:?} is not yet confirmed ({error}); retrying"
+                            )),
+                        );
+                        last_kernel_drop_check = Instant::now();
+                    }
+                    Err(_) => {}
+                }
             } else if last_kernel_drop_check.elapsed() >= Duration::from_millis(100) {
                 send_event(
                     &public_tx,
@@ -651,17 +759,108 @@ fn send_event(sender: &SyncSender<TelemetryEvent>, event: TelemetryEvent) {
 fn report_anomaly(
     cgroup_path: &Path,
     sender: &SyncSender<TelemetryEvent>,
+    kel_journal: Option<&SharedKelJournal>,
     kind: AnomalyKind,
     detail: String,
 ) {
     match write_cgroup_kill(cgroup_path) {
-        Ok(()) => send_event(sender, TelemetryEvent::Anomaly { kind, detail }),
+        Ok(()) => {
+            if let Some(journal) = kel_journal {
+                if let Err(error) = append_kel_event(
+                    journal,
+                    KelEventKind::TelemetryAnomaly,
+                    hash_payload(detail.as_bytes()),
+                ) {
+                    send_event(
+                        sender,
+                        TelemetryEvent::EnforcementError(format!(
+                            "cgroup kill was issued for {kind:?}, but KEL anomaly append failed: {error}"
+                        )),
+                    );
+                }
+                match wait_for_cgroup_empty(cgroup_path, Duration::from_secs(1)) {
+                    Ok(()) => {
+                        let path_hash = hash_payload(cgroup_path.to_string_lossy().as_bytes());
+                        if let Err(error) = record_kel_cgroup_destroyed(journal, path_hash) {
+                            send_event(
+                                sender,
+                                TelemetryEvent::EnforcementError(format!(
+                                    "cgroup is empty after {kind:?}, but KEL teardown append failed: {error}"
+                                )),
+                            );
+                        }
+                    }
+                    Err(error) => send_event(
+                        sender,
+                        TelemetryEvent::EnforcementError(format!(
+                            "cgroup empty state could not be confirmed after {kind:?}: {error}"
+                        )),
+                    ),
+                }
+            }
+            send_event(sender, TelemetryEvent::Anomaly { kind, detail });
+        }
         Err(error) => send_event(
             sender,
             TelemetryEvent::EnforcementError(format!(
                 "anomaly {kind:?} detected ({detail}); cgroup.kill failed: {error}"
             )),
         ),
+    }
+}
+
+fn append_kel_event(
+    journal: &SharedKelJournal,
+    kind: KelEventKind,
+    payload_hash: [u8; 32],
+) -> Result<(), SandboxError> {
+    journal
+        .lock()
+        .map_err(|_| SandboxError::Enforcement("KEL journal lock is poisoned".into()))?
+        .append(kind, payload_hash)?;
+    Ok(())
+}
+
+fn record_kel_cgroup_destroyed(
+    journal: &SharedKelJournal,
+    payload_hash: [u8; 32],
+) -> Result<(), SandboxError> {
+    journal
+        .lock()
+        .map_err(|_| SandboxError::Enforcement("KEL journal lock is poisoned".into()))?
+        .record_cgroup_destroyed(payload_hash)?;
+    Ok(())
+}
+
+fn wait_for_cgroup_empty(cgroup_path: &Path, timeout: Duration) -> io::Result<()> {
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid cgroup wait timeout"))?;
+    loop {
+        let events = fs::read_to_string(cgroup_path.join("cgroup.events"))?;
+        let populated = events
+            .lines()
+            .find_map(|line| {
+                let mut fields = line.split_whitespace();
+                (fields.next() == Some("populated"))
+                    .then(|| fields.next())
+                    .flatten()
+                    .and_then(|value| value.parse::<u32>().ok())
+            })
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "cgroup.events has no valid populated field")
+            })?;
+        if populated == 0 {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "cgroup remained populated after cgroup.kill",
+            ));
+        }
+        write_cgroup_kill(cgroup_path)?;
+        thread::sleep(Duration::from_millis(10));
     }
 }
 

@@ -206,6 +206,13 @@ mod tests {
     }
 
     #[test]
+    fn policy_gate_refuses_mission_release_before_policy_ready() {
+        let (mut gate, worker) = WorkerPolicyGate::pair().expect("create worker policy gate");
+        assert!(gate.release_verified_mission().is_err());
+        drop(worker);
+    }
+
+    #[test]
     fn final_gate_releases_only_after_policy_ready_token() {
         let (mut supervisor, mut worker) =
             WorkerPolicyGate::pair().expect("create worker policy gate");

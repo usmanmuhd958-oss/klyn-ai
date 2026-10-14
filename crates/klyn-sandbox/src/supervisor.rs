@@ -28,8 +28,10 @@ use crate::{
         RESPONSE_RING_TAIL_FD, WORKER_CMD_PING, WORKER_CMD_SHUTDOWN, WORKER_RESP_PING,
         WORKER_RESP_SHUTDOWN,
     },
+    kel::{self, KelAttestationChallenge, KelEventKind, KelJournal, SharedKelJournal, KEL_CHALLENGE_FRAME_LEN, KEL_RESPONSE_FRAME_LEN},
     manifest::{sha256_file, WorkerManifest, REQUIRED_LANDLOCK_ABI, WORKER_MAX_OPEN_FDS},
     start_gate::{StartGate, WorkerPolicyGate},
+    telemetry::{TelemetryEvent, WorkerTelemetry},
     validate_trusted_executable, SandboxError, SignedCapability, MANIFEST_FD,
 };
 
@@ -56,10 +58,15 @@ pub struct SpawnedWorker {
     cgroup: CgroupV2Boundary,
     command_ring: RingProducer,
     response_ring: RingConsumer,
+    kel_journal: Option<SharedKelJournal>,
+    telemetry: Option<WorkerTelemetry>,
 }
 
 impl Drop for SpawnedWorker {
     fn drop(&mut self) {
+        // Stop the observer before intentional teardown so it cannot append an
+        // exit anomaly after the terminal KEL event.
+        let _ = self.stop_telemetry();
         // Dropping a std::process::Child does not terminate its process. Kill
         // the whole cgroup first and use the bounded cgroup-empty wait before
         // reaping stage-0. Never block an arbitrary destructor indefinitely.
@@ -70,6 +77,7 @@ impl Drop for SpawnedWorker {
             .terminate_and_wait(WORKER_LIFECYCLE_TIMEOUT)
             .is_ok()
         {
+            let _ = self.record_cgroup_destroyed();
             let _ = self.child.wait();
         } else {
             // Best-effort nonblocking reap if kernel cleanup itself failed.
@@ -176,7 +184,9 @@ impl SpawnedWorker {
             })?;
         loop {
             if let Some(status) = self.child.try_wait()? {
+                self.stop_telemetry()?;
                 self.cgroup.terminate_and_wait(WORKER_LIFECYCLE_TIMEOUT)?;
+                self.record_cgroup_destroyed()?;
                 return Ok(status);
             }
             if std::time::Instant::now() >= deadline {
@@ -197,9 +207,58 @@ impl SpawnedWorker {
     /// Explicit cancellation. The cgroup kill is authoritative and includes
     /// the PID-namespace init and every descendant, not just the direct child.
     pub fn terminate(&mut self) -> Result<(), SandboxError> {
+        self.stop_telemetry()?;
         let _ = self.child.kill();
         self.cgroup.terminate_and_wait(WORKER_LIFECYCLE_TIMEOUT)?;
         let _ = self.child.wait();
+        self.record_cgroup_destroyed()?;
+        Ok(())
+    }
+
+    /// Receive one bounded telemetry event produced by the supervisor-owned monitor.
+    pub fn try_telemetry_event(&self) -> Option<TelemetryEvent> {
+        self.telemetry.as_ref().and_then(WorkerTelemetry::try_recv)
+    }
+
+    /// Stop telemetry before intentional shutdown or destruction.
+    pub fn stop_telemetry(&mut self) -> Result<(), SandboxError> {
+        if let Some(mut telemetry) = self.telemetry.take() {
+            telemetry.stop_and_join()?;
+        }
+        Ok(())
+    }
+
+    /// Clone the serialized KEL handle used by the independent telemetry monitor.
+    pub fn kel_recorder(&self) -> Option<SharedKelJournal> {
+        self.kel_journal.clone()
+    }
+
+    /// Return a verified sequence/root snapshot for an independent durable anchor.
+    pub fn kel_head_snapshot(
+        &self,
+    ) -> Result<Option<kel::KelHeadSnapshot>, SandboxError> {
+        match &self.kel_journal {
+            Some(journal) => {
+                let mut journal = journal
+                    .lock()
+                    .map_err(|_| SandboxError::Enforcement("KEL journal lock is poisoned".into()))?;
+                journal.verify_disk_state()?;
+                Ok(Some(journal.head_snapshot()))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn record_cgroup_destroyed(&self) -> Result<(), SandboxError> {
+        let Some(journal) = &self.kel_journal else {
+            return Ok(());
+        };
+        let path = self.cgroup.path().to_string_lossy();
+        let payload_hash = kel::hash_payload(path.as_bytes());
+        journal
+            .lock()
+            .map_err(|_| SandboxError::Enforcement("KEL journal lock is poisoned".into()))?
+            .record_cgroup_destroyed(payload_hash)?;
         Ok(())
     }
 }
@@ -229,10 +288,44 @@ fn decode_worker_response(bytes: &[u8]) -> Result<serde_json::Value, SandboxErro
     }
 }
 
-/// Launch one worker under the full supervisor-to-worker security lifecycle.
+/// Fail closed on the legacy KEL-free launch API.
+///
+/// Every executable worker session must have a fresh signed journal and a
+/// verified SPSC challenge-response. Call launch_worker_with_kel with a
+/// daemon-controlled journal path instead of using this compatibility symbol.
 pub fn launch_worker(
+    _config: WorkerLaunchConfig,
+    _manifest_signing_key: &SigningKey,
+) -> Result<SpawnedWorker, SandboxError> {
+    Err(SandboxError::Enforcement(
+        "KEL-bound worker launch is mandatory; use launch_worker_with_kel".into(),
+    ))
+}
+
+/// Mandatory KEL-bound launch path used by klyn-daemon. A fresh journal is
+/// created without overwrite, and the worker is not returned until the ring
+/// challenge-response and KEL gate-clear event have both verified.
+pub fn launch_worker_with_kel(
     config: WorkerLaunchConfig,
     manifest_signing_key: &SigningKey,
+    journal_path: impl AsRef<Path>,
+    session_id: [u8; 16],
+) -> Result<SpawnedWorker, SandboxError> {
+    let expected_session =
+        kel::session_id_from_token_id(&config.capability.claims.token_id);
+    if expected_session != session_id {
+        return Err(SandboxError::Enforcement(
+            "KEL session ID is not derived from the signed capability token ID".into(),
+        ));
+    }
+    let journal = KelJournal::create(journal_path, manifest_signing_key, session_id)?.shared();
+    launch_worker_inner(config, manifest_signing_key, Some(journal))
+}
+
+fn launch_worker_inner(
+    config: WorkerLaunchConfig,
+    manifest_signing_key: &SigningKey,
+    kel_journal: Option<SharedKelJournal>,
 ) -> Result<SpawnedWorker, SandboxError> {
     let init_executable = validate_trusted_init_executable(&config.init_executable)?;
     let worker_executable = validate_trusted_executable(&config.worker_executable)?;
@@ -240,27 +333,70 @@ pub fn launch_worker(
 
     let key = manifest_signing_key.verifying_key();
     let capability_verifier = Ed25519CapabilityVerifier::new(manifest_signing_key.verifying_key());
-    config.capability.claims.validate()?;
-    capability_verifier
-        .verify(&config.capability)
-        .map_err(|error| {
-            SandboxError::Enforcement(format!(
-                "supervisor refused an invalid OCap signature: {error}"
-            ))
-        })?;
+    if let Err(error) = config.capability.claims.validate() {
+        if let Some(journal) = &kel_journal {
+            append_kel_event(
+                journal,
+                KelEventKind::CapabilityRejected,
+                kel::hash_serializable(&config.capability)?,
+            )?;
+        }
+        return Err(error);
+    }
+    if let Err(error) = capability_verifier.verify(&config.capability) {
+        if let Some(journal) = &kel_journal {
+            append_kel_event(
+                journal,
+                KelEventKind::CapabilityRejected,
+                kel::hash_serializable(&config.capability)?,
+            )?;
+        }
+        return Err(SandboxError::Enforcement(format!(
+            "supervisor refused an invalid OCap signature: {error}"
+        )));
+    }
+    let capability_hash = kel::hash_serializable(&config.capability)?;
+    let session_id = kel::session_id_from_token_id(&config.capability.claims.token_id);
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| SandboxError::Enforcement("system clock is before Unix epoch".into()))?
         .as_secs();
     if config.capability.claims.expires_at_unix <= now {
+        if let Some(journal) = &kel_journal {
+            append_kel_event(
+                journal,
+                KelEventKind::CapabilityRejected,
+                capability_hash,
+            )?;
+        }
         return Err(SandboxError::Enforcement(
             "supervisor refused an expired OCap capability".into(),
         ));
     }
     if config.capability.claims.subject_uid == 0 {
+        if let Some(journal) = &kel_journal {
+            append_kel_event(
+                journal,
+                KelEventKind::CapabilityRejected,
+                capability_hash,
+            )?;
+        }
         return Err(SandboxError::InvalidConfig(
             "root UID cannot own an agent worker".into(),
         ));
+    }
+    if let Some(journal) = &kel_journal {
+        if journal
+            .lock()
+            .map_err(|_| SandboxError::Enforcement("KEL journal lock is poisoned".into()))?
+            .session_id()
+            != session_id
+        {
+            return Err(SandboxError::Enforcement(
+                "KEL journal session differs from the signed worker capability".into(),
+            ));
+        }
+        append_kel_event(journal, KelEventKind::CapabilityValidated, capability_hash)?;
     }
 
     // Configure all limits before the process exists. This removes any window
@@ -289,6 +425,8 @@ pub fn launch_worker(
     crate::worker_bootstrap::validate_manifest_shape(&manifest)?;
     manifest.sign(manifest_signing_key)?;
     manifest.verify_signature(&key)?;
+    let manifest_hash = kel::hash_serializable(&manifest)?;
+    let executable_hash = kel::parse_sha256_hex(&manifest.worker_executable_sha256)?;
     manifest.verify_worker_executable(&worker_executable)?;
     let manifest_fd = manifest.seal_memfd(&key)?;
 
@@ -403,34 +541,170 @@ pub fn launch_worker(
     drop(response_head_source);
     drop(response_tail_source);
 
-    let gate_result = gate
-        .release_after_verification(&cgroup, child.id(), &manifest, &key)
-        .and_then(|()| policy_gate.verify_policy_and_release(WORKER_BOOTSTRAP_TIMEOUT));
-    if let Err(error) = gate_result {
+    let gate_result = (|| -> Result<WorkerTelemetry, SandboxError> {
+        let cgroup_id = fs::metadata(cgroup.path())?.ino();
+        gate.release_after_verification(&cgroup, child.id(), &manifest, &key)?;
+
+        let mut spawn_payload = [0u8; 4 + 8 + 32 + 32];
+        spawn_payload[..4].copy_from_slice(&child.id().to_le_bytes());
+        spawn_payload[4..12].copy_from_slice(&cgroup_id.to_le_bytes());
+        spawn_payload[12..44].copy_from_slice(&manifest_hash);
+        spawn_payload[44..76].copy_from_slice(&executable_hash);
+        if let Some(journal) = &kel_journal {
+            append_kel_event(
+                journal,
+                KelEventKind::Spawn,
+                kel::hash_payload(&spawn_payload),
+            )?;
+        }
+
+        // Attach/initialize telemetry after Spawn is durably logged but before
+        // sending the challenge or releasing the mission gate.
+        let telemetry = WorkerTelemetry::start_with_kel(
+            cgroup.path(),
+            child.id(),
+            manifest.capability.claims.budget.clone(),
+            kel_journal.clone().ok_or_else(|| {
+                SandboxError::Enforcement("KEL journal is mandatory for worker telemetry".into())
+            })?,
+        )?;
+
+        // The worker is already policy-restricted and must answer the
+        // challenge before it is allowed to send POLICY_READY.
+        let challenge = KelAttestationChallenge {
+            session_id,
+            nonce: random_nonce()?,
+            launcher_pid: child.id(),
+            cgroup_id,
+            manifest_hash,
+            capability_hash,
+            executable_hash,
+            daemon_public_key: manifest_signing_key.verifying_key().to_bytes(),
+        };
+        let (challenge_digest, proof) =
+            build_and_send_attestation(&mut command_ring, &mut response_ring, challenge)?;
+        if let Some(journal) = &kel_journal {
+            journal
+                .lock()
+                .map_err(|_| SandboxError::Enforcement("KEL journal lock is poisoned".into()))?
+                .append_attestation(proof)?;
+        }
+
+        // Separate policy readiness from mission release so PolicyGateClear is
+        // durably chained before the release byte lets the worker return to its
+        // mission loop.
+        policy_gate.verify_policy_ready(WORKER_BOOTSTRAP_TIMEOUT)?;
+        if let Some(journal) = &kel_journal {
+            journal
+                .lock()
+                .map_err(|_| SandboxError::Enforcement("KEL journal lock is poisoned".into()))?
+                .append(KelEventKind::PolicyGateClear, challenge_digest)?;
+        }
+        policy_gate.release_verified_mission()?;
+        Ok(telemetry)
+    })();
+    let telemetry = match gate_result {
+        Ok(telemetry) => telemetry,
+        Err(error) => {
         let _ = child.kill();
         let cleanup = cgroup.terminate_and_wait(WORKER_LIFECYCLE_TIMEOUT);
         if cleanup.is_ok() {
+            if let Some(journal) = &kel_journal {
+                let path_hash = kel::hash_payload(cgroup.path().to_string_lossy().as_bytes());
+                let _ = journal.lock().map(|mut journal| {
+                    let _ = journal.record_cgroup_destroyed(path_hash);
+                });
+            }
             let _ = child.wait();
         } else {
             // Do not allow a failed startup path to block indefinitely on a
             // process the kernel could not confirm as terminated.
             let _ = child.try_wait();
         }
-        return match cleanup {
-            Ok(()) => Err(error),
-            Err(cleanup_error) => Err(SandboxError::Enforcement(format!(
-                "worker start gate failed ({error}); cgroup cleanup also failed ({cleanup_error})"
-            ))),
-        };
-    }
+            return match cleanup {
+                Ok(()) => Err(error),
+                Err(cleanup_error) => Err(SandboxError::Enforcement(format!(
+                    "worker startup/attestation failed ({error}); cgroup cleanup also failed ({cleanup_error})"
+                ))),
+            };
+        }
+    };
 
     Ok(SpawnedWorker {
         child,
         cgroup,
         command_ring,
         response_ring,
+        kel_journal,
+        telemetry: Some(telemetry),
     })
 }
+
+fn append_kel_event(
+    journal: &SharedKelJournal,
+    kind: KelEventKind,
+    payload_hash: [u8; 32],
+) -> Result<(), SandboxError> {
+    journal
+        .lock()
+        .map_err(|_| SandboxError::Enforcement("KEL journal lock is poisoned".into()))?
+        .append(kind, payload_hash)?;
+    Ok(())
+}
+
+fn random_nonce() -> Result<[u8; 32], SandboxError> {
+    let mut nonce = [0u8; 32];
+    let mut filled = 0usize;
+    while filled < nonce.len() {
+        let result = unsafe {
+            libc::getrandom(
+                nonce[filled..].as_mut_ptr().cast(),
+                nonce.len() - filled,
+                0,
+            )
+        };
+        if result > 0 {
+            filled += result as usize;
+            continue;
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() == io::ErrorKind::Interrupted {
+            continue;
+        }
+        return Err(SandboxError::Io(error));
+    }
+    Ok(nonce)
+}
+
+fn build_and_send_attestation(
+    command_ring: &mut RingProducer,
+    response_ring: &mut RingConsumer,
+    challenge: KelAttestationChallenge,
+) -> Result<([u8; 32], kel::KelAttestationProof), SandboxError> {
+    let mut frame = [0u8; KEL_CHALLENGE_FRAME_LEN];
+    challenge.encode_frame(&mut frame);
+    command_ring.push_wait(&frame, WORKER_BOOTSTRAP_TIMEOUT)?;
+
+    let mut response = [0u8; KEL_RESPONSE_FRAME_LEN];
+    {
+        let frame = response_ring
+            .wait_peek(Some(WORKER_BOOTSTRAP_TIMEOUT))?
+            .ok_or_else(|| SandboxError::Enforcement(
+                "worker did not answer the KEL shared-ring challenge".into(),
+            ))?;
+        if frame.payload().len() != KEL_RESPONSE_FRAME_LEN {
+            return Err(SandboxError::Enforcement(
+                "worker KEL attestation response has an invalid frame length".into(),
+            ));
+        }
+        response.copy_from_slice(frame.payload());
+        frame.consume()?;
+    }
+
+    let proof = challenge.verify_worker_response(&response)?;
+    Ok((challenge.digest(), proof))
+}
+
 
 fn duplicate_cloexec(fd: RawFd) -> Result<OwnedFd, SandboxError> {
     let duplicate = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 10) };

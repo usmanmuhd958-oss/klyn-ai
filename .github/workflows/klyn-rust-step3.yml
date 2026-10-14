@@ -14,6 +14,7 @@ on:
       - reconcile/step3-platform-daemon
       - feat/step4-shared-memory-ipc
       - feat/phase2-step2-ebpf-telemetry
+      - feat/phase2-step3-kel-attestation
   pull_request:
     branches:
       - main
@@ -21,6 +22,7 @@ on:
       - feat/klyn-step2-transactional-fs
       - reconcile/step3-platform-daemon
       - feat/step4-shared-memory-ipc
+      - feat/phase2-step2-ebpf-telemetry
     paths:
       - Cargo.toml
       - Cargo.lock
@@ -28,6 +30,7 @@ on:
       - crates/klyn-daemon/**
       - crates/klyn-fs/**
       - crates/klyn-protocol/**
+      - docs/phase2-step3-kel-attestation.md
       - .github/workflows/klyn-rust-step3.yml
       - .gitlab-ci.yml
       - rust-toolchain.toml
@@ -78,7 +81,7 @@ jobs:
   # Opt-in only: this job needs an ephemeral, isolated Linux runner with
   # delegated cgroup v2 and pre-provisioned trusted native worker files.
   native-linux-qualification:
-    if: ${{ github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/reconcile/step3-platform-daemon' || github.ref == 'refs/heads/feat/step4-shared-memory-ipc') && inputs.run_native_linux_qualification == true }}
+    if: ${{ github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/reconcile/step3-platform-daemon' || github.ref == 'refs/heads/feat/step4-shared-memory-ipc' || github.ref == 'refs/heads/feat/phase2-step3-kel-attestation') && inputs.run_native_linux_qualification == true }}
     runs-on: [self-hosted, linux, klyn-native-qualification]
     timeout-minutes: 45
     steps:
