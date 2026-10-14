@@ -79,6 +79,58 @@ fn kel_transition_and_encoded_signature_tampering_fail_closed() {
     assert!(KelEvent::decode_record(&corrupt[..KEL_EVENT_ENCODED_LEN - 1]).is_err());
 }
 
+
+#[test]
+fn malformed_capability_claims_are_rejected_before_authorization() {
+    use klyn_sandbox::{
+        CapabilityClaims, FileAccess, FileGrant, ResourceBudget, WorkerOperation, OCAP_VERSION,
+    };
+
+    let valid_claims = || CapabilityClaims {
+        version: OCAP_VERSION,
+        token_id: "adversarial-capability".into(),
+        subject_uid: 1000,
+        subject_gid: 1000,
+        expires_at_unix: u64::MAX,
+        file_grants: vec![FileGrant {
+            root_id: "workspace".into(),
+            prefix: String::new(),
+            access: FileAccess::Read,
+        }],
+        network_grants: vec![],
+        budget: ResourceBudget {
+            memory_max_bytes: 16 * 1024 * 1024,
+            cpu_quota_micros: 100_000,
+            cpu_period_micros: 100_000,
+            pids_max: 4,
+            io_limits: vec![],
+        },
+        operation: WorkerOperation::Control,
+    };
+
+    assert!(valid_claims().validate().is_ok());
+
+    let mut empty_token = valid_claims();
+    empty_token.token_id.clear();
+    assert!(empty_token.validate().is_err());
+
+    let mut path_escape = valid_claims();
+    path_escape.file_grants[0].prefix = "../host";
+    assert!(path_escape.validate().is_err());
+
+    let mut unknown_version = valid_claims();
+    unknown_version.version = OCAP_VERSION + 1;
+    assert!(unknown_version.validate().is_err());
+
+    let mut duplicate_scope = valid_claims();
+    duplicate_scope.file_grants.push(duplicate_scope.file_grants[0].clone());
+    assert!(duplicate_scope.validate().is_err());
+
+    let mut root_subject = valid_claims();
+    root_subject.subject_uid = 0;
+    assert!(root_subject.validate().is_err());
+}
+
 #[test]
 fn challenge_response_cannot_be_replayed_against_a_different_nonce() {
     let worker = SigningKey::from_bytes(&[0x5a; 32]);
