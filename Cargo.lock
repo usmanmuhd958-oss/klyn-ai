@@ -241,6 +241,7 @@ dependencies = [
  "klyn-fs",
  "klyn-protocol",
  "klyn-sandbox",
+ "libc",
  "nix",
  "serde",
  "serde_json",
