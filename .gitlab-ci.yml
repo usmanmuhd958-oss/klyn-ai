@@ -10,7 +10,10 @@ variables:
   CARGO_TERM_COLOR: "always"
 
 cache:
-  key: "klyn-rust-${CI_COMMIT_REF_SLUG}"
+  key:
+    files:
+      - Cargo.lock
+    prefix: "klyn-rust-1.99.0"
   paths:
     - .cargo/registry/index/
     - .cargo/registry/cache/
@@ -39,3 +42,25 @@ test_sandbox:
   script:
     - cargo test --locked --workspace -- --nocapture
     - cargo clippy --locked --workspace --all-targets -- -D warnings
+fuzz_targets:
+  stage: test
+  timeout: 20m
+  cache:
+    key:
+      files:
+        - Cargo.lock
+        - crates/klyn-sandbox/fuzz/Cargo.toml
+      prefix: "klyn-fuzz-nightly-0.13.2"
+    paths:
+      - .cargo/registry/index/
+      - .cargo/registry/cache/
+      - .cargo/git/
+      - .cargo/bin/cargo-fuzz
+      - crates/klyn-sandbox/fuzz/target/
+    policy: pull-push
+  script:
+    - export PATH="$CARGO_HOME/bin:$PATH"
+    - rustup toolchain install nightly --profile minimal --component rustfmt
+    - cargo +nightly install cargo-fuzz --version 0.13.2 --locked
+    - cargo +nightly fmt --manifest-path crates/klyn-sandbox/fuzz/Cargo.toml -- --check
+    - cd crates/klyn-sandbox/fuzz && cargo +nightly fuzz build fuzz_ipc_frame && cargo +nightly fuzz build fuzz_kel_parser
