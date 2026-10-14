@@ -277,7 +277,7 @@ fn duplicate_cloexec(fd: RawFd) -> Result<OwnedFd, SandboxError> {
     Ok(unsafe { OwnedFd::from_raw_fd(duplicate) })
 }
 
-fn validate_trusted_init_executable(path: impl AsRef<Path>) -> Result<PathBuf, SandboxError> {
+pub fn validate_trusted_init_executable(path: impl AsRef<Path>) -> Result<PathBuf, SandboxError> {
     let canonical = fs::canonicalize(path.as_ref())?;
     if canonical.file_name() != Some(OsStr::new("klyn-sandbox-init")) {
         return Err(SandboxError::InvalidConfig(
