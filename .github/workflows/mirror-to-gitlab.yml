@@ -4,6 +4,13 @@ on:
   push:
     branches:
       - main
+      - feat/step3-worker-bootstrap
+      - reconcile/step3-platform-daemon
+      - feat/step4-shared-memory-ipc
+      - feat/phase2-step2-ebpf-telemetry
+      - feat/phase2-step3-kel-attestation
+      - feat/phase2-step4-fs-rollback
+      - feat/phase2-step5-fuzz-native-qualification
   workflow_dispatch:
 
 permissions:
@@ -14,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -30,4 +37,5 @@ jobs:
 
       - name: Push to GitLab
         run: |
-          git push --force git@gitlab.com:usmanmuhd958-oss/klyn-ai.git main:main
+          git remote add gitlab git@gitlab.com:usmanmuhd958-oss/klyn-ai.git || git remote set-url gitlab git@gitlab.com:usmanmuhd958-oss/klyn-ai.git
+git push gitlab "$GITHUB_REF_NAME:$GITHUB_REF_NAME"
