@@ -1,4 +1,4 @@
-image: rust:1.99.0-slim-bookworm
+image: rust:1.99.0-bookworm
 
 stages:
   - validate
@@ -20,9 +20,6 @@ cache:
     - target/
 
 before_script:
-  - apt-get update -qq
-  - DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git build-essential
-  - rm -rf /var/lib/apt/lists/*
   - git --version
   - rustup component add rustfmt clippy
   - rustc --version
