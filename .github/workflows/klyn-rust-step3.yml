@@ -56,9 +56,20 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Cache Cargo dependencies and workspace build artifacts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-rust-1.99.0-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-1.99.0-
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
         with:
           toolchain: 1.99.0
@@ -94,7 +105,7 @@ jobs:
     runs-on: [self-hosted, linux, klyn-native-qualification]
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
@@ -109,13 +120,25 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Cache cargo-fuzz dependencies and build artifacts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ~/.cargo/bin/cargo-fuzz
+            crates/klyn-sandbox/fuzz/target
+          key: ${{ runner.os }}-nightly-cargo-fuzz-0.13.2-${{ hashFiles('Cargo.lock', 'crates/klyn-sandbox/Cargo.toml', 'crates/klyn-sandbox/fuzz/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-nightly-cargo-fuzz-0.13.2-
       - name: Install nightly and cargo-fuzz
         run: |
           rustup toolchain install nightly --profile minimal --component rustfmt
-          cargo +nightly install cargo-fuzz --locked
+          cargo +nightly install cargo-fuzz --version 0.13.2 --locked
       - name: Format fuzz workspace
         run: cargo +nightly fmt --manifest-path crates/klyn-sandbox/fuzz/Cargo.toml -- --check
       - name: Compile both fuzz targets
@@ -131,13 +154,25 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Cache cargo-fuzz dependencies and build artifacts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ~/.cargo/bin/cargo-fuzz
+            crates/klyn-sandbox/fuzz/target
+          key: ${{ runner.os }}-nightly-cargo-fuzz-0.13.2-${{ hashFiles('Cargo.lock', 'crates/klyn-sandbox/Cargo.toml', 'crates/klyn-sandbox/fuzz/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-nightly-cargo-fuzz-0.13.2-
       - name: Install nightly and cargo-fuzz
         run: |
           rustup toolchain install nightly --profile minimal --component rustfmt
-          cargo +nightly install cargo-fuzz --locked
+          cargo +nightly install cargo-fuzz --version 0.13.2 --locked
       - name: Run million-iteration fuzz campaign
         env:
           RUSTUP_TOOLCHAIN: nightly
@@ -148,7 +183,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install BPF build dependencies
