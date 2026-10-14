@@ -3,6 +3,7 @@
 use std::{
     fs,
     io::Write,
+    os::unix::fs::MetadataExt,
     process::{Child, Command, Stdio},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
