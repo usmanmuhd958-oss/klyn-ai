@@ -1,6 +1,6 @@
 #![cfg(target_os = "linux")]
 
-use std::{fs, io::Write};
+use std::fs;
 
 use ed25519_dalek::SigningKey;
 use klyn_sandbox::{
