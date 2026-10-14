@@ -434,6 +434,11 @@ impl RingConsumer {
         head_fd: RawFd,
         tail_fd: RawFd,
     ) -> Result<Self, SandboxError> {
+        if payload_fd == head_fd || payload_fd == tail_fd || head_fd == tail_fd {
+            return Err(SandboxError::Enforcement(
+                "shared IPC endpoint descriptors must be distinct".into(),
+            ));
+        }
         for fd in [payload_fd, head_fd, tail_fd] {
             if libc::fcntl(fd, libc::F_GETFD) < 0 {
                 return Err(SandboxError::Enforcement(format!(
