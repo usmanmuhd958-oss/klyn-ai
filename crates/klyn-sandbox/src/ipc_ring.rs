@@ -533,16 +533,6 @@ impl RingConsumer {
                     length: metadata.length,
                 }));
             }
-            let remaining = match deadline {
-                Some(end) => {
-                    let remaining = end.saturating_duration_since(Instant::now());
-                    if remaining.is_zero() {
-                        return Ok(None);
-                    }
-                    Some(remaining)
-                }
-                None => None,
-            };
             // Snapshot the futex word and recheck availability before sleeping.
             // If the producer publishes after this snapshot, futex_wait observes
             // a different word and returns EAGAIN instead of losing the wakeup.
