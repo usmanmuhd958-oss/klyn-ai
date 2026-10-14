@@ -9,7 +9,7 @@
 
 use std::{
     fs::{File, OpenOptions},
-    io::{self, Read, Write},
+    io::{Read, Write},
     path::Path,
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
