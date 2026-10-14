@@ -26,9 +26,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut reader = BufReader::new(stdin.lock());
     let frame = read_frame(&mut reader)?;
     if frame.len() > MAX_EXECUTION_TASK_BYTES {
-        return Err(
-            io::Error::new(io::ErrorKind::InvalidData, "task exceeds limit").into(),
-        );
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "task exceeds limit").into());
     }
     let params: ExecuteTaskParams = serde_json::from_slice(&frame)?;
     params
