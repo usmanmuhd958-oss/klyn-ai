@@ -21,6 +21,7 @@ pub enum Permission {
     FsValidateCandidate,
     FsPublishRevision,
     FsAbortCandidate,
+    ExecuteTask,
 }
 
 impl Permission {
@@ -33,6 +34,7 @@ impl Permission {
             Method::FsValidate => Self::FsValidateCandidate,
             Method::FsCommit => Self::FsPublishRevision,
             Method::FsAbort => Self::FsAbortCandidate,
+            Method::ExecuteTask => Self::ExecuteTask,
         }
     }
 }
@@ -97,6 +99,24 @@ pub struct DenyAllPolicy;
 impl PolicyEnforcer for DenyAllPolicy {
     fn authorize(&self, _peer: PeerIdentity, _method: Method) -> Result<(), PolicyError> {
         Err(PolicyError::Denied)
+    }
+}
+
+#[cfg(test)]
+mod execution_policy_tests {
+    use super::*;
+
+    #[test]
+    fn task_execution_requires_its_own_permission() {
+        let peer = PeerIdentity { pid: 5, uid: 1000, gid: 1000 };
+        let mut policy = UidPolicy::new();
+        policy.grant(1000, Permission::ObserveDaemon);
+        assert_eq!(
+            policy.authorize(peer, Method::ExecuteTask),
+            Err(PolicyError::Denied)
+        );
+        policy.grant(1000, Permission::ExecuteTask);
+        assert_eq!(policy.authorize(peer, Method::ExecuteTask), Ok(()));
     }
 }
 
