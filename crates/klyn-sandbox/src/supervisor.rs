@@ -115,34 +115,15 @@ pub fn launch_worker(
     config: WorkerLaunchConfig,
     manifest_signing_key: &SigningKey,
 ) -> Result<SpawnedWorker, SandboxError> {
+    // Capability validation is deliberately performed before resolving any
+    // executable or touching cgroups. Malformed or expired authorization must
+    // never reach a process-creation or resource-allocation side effect.
+    validate_launch_capability(&config.capability, manifest_signing_key)?;
+
     let init_executable = validate_trusted_init_executable(&config.init_executable)?;
     let worker_executable = validate_trusted_executable(&config.worker_executable)?;
     let worker_hash = sha256_file(&worker_executable)?;
-
     let key = manifest_signing_key.verifying_key();
-    let capability_verifier = Ed25519CapabilityVerifier::new(manifest_signing_key.verifying_key());
-    config.capability.claims.validate()?;
-    capability_verifier
-        .verify(&config.capability)
-        .map_err(|error| {
-            SandboxError::Enforcement(format!(
-                "supervisor refused an invalid OCap signature: {error}"
-            ))
-        })?;
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| SandboxError::Enforcement("system clock is before Unix epoch".into()))?
-        .as_secs();
-    if config.capability.claims.expires_at_unix <= now {
-        return Err(SandboxError::Enforcement(
-            "supervisor refused an expired OCap capability".into(),
-        ));
-    }
-    if config.capability.claims.subject_uid == 0 {
-        return Err(SandboxError::InvalidConfig(
-            "root UID cannot own an agent worker".into(),
-        ));
-    }
 
     // Configure all limits before the process exists. This removes any window
     // in which a runnable child could inherit default cgroup resource controls.
@@ -258,6 +239,34 @@ pub fn launch_worker(
     }
 
     Ok(SpawnedWorker { child, cgroup })
+}
+
+fn validate_launch_capability(
+    capability: &crate::SignedCapability,
+    signing_key: &SigningKey,
+) -> Result<(), SandboxError> {
+    let verifier = Ed25519CapabilityVerifier::new(signing_key.verifying_key());
+    capability.claims.validate()?;
+    verifier.verify(capability).map_err(|error| {
+        SandboxError::Enforcement(format!(
+            "supervisor refused an invalid OCap signature: {error}"
+        ))
+    })?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| SandboxError::Enforcement("system clock is before Unix epoch".into()))?
+        .as_secs();
+    if capability.claims.expires_at_unix <= now {
+        return Err(SandboxError::Enforcement(
+            "supervisor refused an expired OCap capability".into(),
+        ));
+    }
+    if capability.claims.subject_uid == 0 {
+        return Err(SandboxError::InvalidConfig(
+            "root UID cannot own an agent worker".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn duplicate_cloexec(fd: RawFd) -> Result<OwnedFd, SandboxError> {
