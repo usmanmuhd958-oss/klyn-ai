@@ -15,9 +15,7 @@ pub mod server;
 use std::sync::Arc;
 
 use klyn_fs::FsError;
-use klyn_protocol::{
-    ExecuteTaskParams, Method, ProtocolError, Request, Response, RpcErrorCode,
-};
+use klyn_protocol::{ExecuteTaskParams, Method, ProtocolError, Request, Response, RpcErrorCode};
 use serde_json::json;
 
 use crate::{
@@ -327,11 +325,14 @@ mod tests {
         lifecycle.mark_ready().unwrap();
         let router = Router::new(lifecycle.clone(), Arc::new(UidPolicy::new()));
         let response = router.dispatch(
-            request(Method::ExecuteTask, json!({
-                "task_id": "task-unauthorized",
-                "operation": "hash_json",
-                "payload": {"value": 1}
-            })),
+            request(
+                Method::ExecuteTask,
+                json!({
+                    "task_id": "task-unauthorized",
+                    "operation": "hash_json",
+                    "payload": {"value": 1}
+                }),
+            ),
             peer(1000),
         );
         assert_eq!(response.error.unwrap().code, RpcErrorCode::Unauthorized);
@@ -345,14 +346,20 @@ mod tests {
         let policy = UidPolicy::from_grants([(1000, Permission::ExecuteTask)]);
         let router = Router::new(lifecycle.clone(), Arc::new(policy));
         let response = router.dispatch(
-            request(Method::ExecuteTask, json!({
-                "task_id": "task-no-supervisor",
-                "operation": "hash_json",
-                "payload": {"value": 1}
-            })),
+            request(
+                Method::ExecuteTask,
+                json!({
+                    "task_id": "task-no-supervisor",
+                    "operation": "hash_json",
+                    "payload": {"value": 1}
+                }),
+            ),
             peer(1000),
         );
-        assert_eq!(response.error.unwrap().code, RpcErrorCode::ExecutionUnavailable);
+        assert_eq!(
+            response.error.unwrap().code,
+            RpcErrorCode::ExecutionUnavailable
+        );
         assert_eq!(lifecycle.snapshot().unwrap().in_flight_requests, 0);
     }
 
