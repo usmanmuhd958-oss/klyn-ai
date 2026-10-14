@@ -114,7 +114,7 @@ jobs:
           persist-credentials: false
       - name: Install nightly and cargo-fuzz
         run: |
-          rustup toolchain install nightly --profile minimal
+          rustup toolchain install nightly --profile minimal --component rustfmt
           cargo +nightly install cargo-fuzz --locked
       - name: Format fuzz workspace
         run: cargo +nightly fmt --manifest-path crates/klyn-sandbox/fuzz/Cargo.toml -- --check
@@ -134,7 +134,7 @@ jobs:
           persist-credentials: false
       - name: Install nightly and cargo-fuzz
         run: |
-          rustup toolchain install nightly --profile minimal
+          rustup toolchain install nightly --profile minimal --component rustfmt
           cargo +nightly install cargo-fuzz --locked
       - name: Run million-iteration fuzz campaign
         env:
