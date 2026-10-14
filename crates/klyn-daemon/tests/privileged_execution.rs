@@ -8,7 +8,7 @@
 use std::{
     collections::BTreeMap,
     fs,
-    os::unix::fs::PermissionsExt,
+    os::unix::fs::{MetadataExt, PermissionsExt},
     path::PathBuf,
     sync::Arc,
     thread,
