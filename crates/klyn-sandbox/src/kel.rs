@@ -793,7 +793,10 @@ fn transition_allowed(previous: Option<KelEventKind>, next: KelEventKind) -> boo
             )
         }
         Some(KelEventKind::TelemetryAnomaly) => {
-            matches!(next, KelEventKind::TelemetryAnomaly | KelEventKind::CgroupDestroy)
+            matches!(
+                next,
+                KelEventKind::TelemetryAnomaly | KelEventKind::CgroupDestroy
+            )
         }
         Some(KelEventKind::CapabilityRejected | KelEventKind::CgroupDestroy) => false,
     }

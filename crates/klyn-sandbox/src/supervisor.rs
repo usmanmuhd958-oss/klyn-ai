@@ -371,11 +371,7 @@ fn launch_worker_inner(
     }
     if config.capability.claims.subject_uid == 0 {
         if let Some(journal) = &kel_journal {
-            append_kel_event(
-                journal,
-                KelEventKind::CapabilityRejected,
-                capability_hash,
-            )?;
+            append_kel_event(journal, KelEventKind::CapabilityRejected, capability_hash)?;
         }
         return Err(SandboxError::InvalidConfig(
             "root UID cannot own an agent worker".into(),
