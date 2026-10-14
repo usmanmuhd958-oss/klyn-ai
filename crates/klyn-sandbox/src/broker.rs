@@ -112,6 +112,14 @@ enum BrokerOperation {
         path: String,
         access: FileAccess,
     },
+    CreateFile {
+        root_id: String,
+        path: String,
+    },
+    CreateDirectory {
+        root_id: String,
+        path: String,
+    },
     ConnectTcp {
         address: String,
     },
@@ -444,6 +452,24 @@ fn execute_request(
             let _ = grant;
             Ok(Some(fd))
         }
+        BrokerOperation::CreateFile { root_id, path } => {
+            validate_relative_path(&path, false)
+                .map_err(|_| "invalid relative path".to_string())?;
+            authorize_write_path(claims, &root_id, &path)?;
+            let root = inner.roots.get(&root_id).ok_or_else(|| "unknown filesystem root".to_string())?;
+            let fd = open_beneath_create(root.file.as_raw_fd(), &path)
+                .map_err(|_| "kernel rejected secure exclusive file creation".to_string())?;
+            Ok(Some(fd))
+        }
+        BrokerOperation::CreateDirectory { root_id, path } => {
+            validate_relative_path(&path, false)
+                .map_err(|_| "invalid relative path".to_string())?;
+            authorize_write_path(claims, &root_id, &path)?;
+            let root = inner.roots.get(&root_id).ok_or_else(|| "unknown filesystem root".to_string())?;
+            let fd = create_directory_beneath(root.file.as_raw_fd(), &path)
+                .map_err(|_| "kernel rejected secure directory creation".to_string())?;
+            Ok(Some(fd))
+        }
         BrokerOperation::ConnectTcp { address } => {
             let requested: SocketAddr = address
                 .parse()
@@ -468,6 +494,22 @@ fn execute_request(
         BrokerOperation::Exec { program: _ } => {
             Err("process execution is not a broker operation".into())
         }
+    }
+}
+
+fn authorize_write_path(
+    claims: &CapabilityClaims,
+    root_id: &str,
+    path: &str,
+) -> Result<(), String> {
+    if claims.file_grants.iter().any(|grant| {
+        grant.root_id == root_id
+            && grant.access.permits(FileAccess::Write)
+            && path_is_within_grant(path, &grant.prefix)
+    }) {
+        Ok(())
+    } else {
+        Err("filesystem creation is outside capability scope".into())
     }
 }
 
@@ -511,6 +553,74 @@ fn open_beneath(root_fd: RawFd, path: &str, access: FileAccess) -> io::Result<Ow
         return Err(io::Error::last_os_error());
     }
     Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
+fn open_beneath_create(root_fd: RawFd, path: &str) -> io::Result<OwnedFd> {
+    crate::validate_relative_path(path, false)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))?;
+    const RESOLVE_NO_XDEV: u64 = 0x01;
+    const RESOLVE_NO_MAGICLINKS: u64 = 0x02;
+    const RESOLVE_NO_SYMLINKS: u64 = 0x04;
+    const RESOLVE_BENEATH: u64 = 0x08;
+    let path = std::ffi::CString::new(path)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "NUL in path"))?;
+    let how = OpenHow {
+        flags: (libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC
+            | libc::O_NOFOLLOW | libc::O_NONBLOCK) as u64,
+        mode: 0o600,
+        resolve: RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_SYMLINKS | RESOLVE_NO_XDEV,
+    };
+    let fd = unsafe {
+        libc::syscall(libc::SYS_openat2, root_fd, path.as_ptr(), &how as *const OpenHow,
+            std::mem::size_of::<OpenHow>()) as RawFd
+    };
+    if fd < 0 { return Err(io::Error::last_os_error()); }
+    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
+fn open_beneath_directory(root_fd: RawFd, path: &str) -> io::Result<OwnedFd> {
+    crate::validate_relative_path(path, false)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))?;
+    const RESOLVE_NO_XDEV: u64 = 0x01;
+    const RESOLVE_NO_MAGICLINKS: u64 = 0x02;
+    const RESOLVE_NO_SYMLINKS: u64 = 0x04;
+    const RESOLVE_BENEATH: u64 = 0x08;
+    let path = std::ffi::CString::new(path)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "NUL in path"))?;
+    let how = OpenHow {
+        flags: (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW) as u64,
+        mode: 0,
+        resolve: RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_SYMLINKS | RESOLVE_NO_XDEV,
+    };
+    let fd = unsafe {
+        libc::syscall(libc::SYS_openat2, root_fd, path.as_ptr(), &how as *const OpenHow,
+            std::mem::size_of::<OpenHow>()) as RawFd
+    };
+    if fd < 0 { return Err(io::Error::last_os_error()); }
+    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
+fn create_directory_beneath(root_fd: RawFd, path: &str) -> io::Result<OwnedFd> {
+    crate::validate_relative_path(path, false)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))?;
+    let (parent_path, name) = match path.rsplit_once('/') {
+        Some((parent, name)) => (Some(parent), name),
+        None => (None, path),
+    };
+    let parent_fd = match parent_path {
+        Some(parent) => open_beneath_directory(root_fd, parent)?,
+        None => {
+            let fd = unsafe { libc::fcntl(root_fd, libc::F_DUPFD_CLOEXEC, 3) };
+            if fd < 0 { return Err(io::Error::last_os_error()); }
+            unsafe { OwnedFd::from_raw_fd(fd) }
+        }
+    };
+    let name = std::ffi::CString::new(name)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "NUL in name"))?;
+    if unsafe { libc::mkdirat(parent_fd.as_raw_fd(), name.as_ptr(), 0o700) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    open_beneath_directory(root_fd, path)
 }
 
 fn read_frame(stream: &mut UnixStream) -> io::Result<Option<Vec<u8>>> {
@@ -614,6 +724,28 @@ impl BrokerClient {
                 access,
             },
         )
+    }
+
+    pub fn create_file(
+        &self,
+        capability: &SignedCapability,
+        root_id: impl Into<String>,
+        path: impl Into<String>,
+    ) -> Result<OwnedFd, String> {
+        self.request_fd(capability, BrokerOperation::CreateFile {
+            root_id: root_id.into(), path: path.into(),
+        })
+    }
+
+    pub fn create_directory(
+        &self,
+        capability: &SignedCapability,
+        root_id: impl Into<String>,
+        path: impl Into<String>,
+    ) -> Result<OwnedFd, String> {
+        self.request_fd(capability, BrokerOperation::CreateDirectory {
+            root_id: root_id.into(), path: path.into(),
+        })
     }
 
     pub fn connect_tcp(
@@ -840,5 +972,25 @@ mod tests {
         assert!(path_is_within_grant("allowed/file.txt", "allowed"));
         assert!(!path_is_within_grant("allowed2/file.txt", "allowed"));
         assert!(!FileAccess::Read.permits(FileAccess::Write));
+    }
+
+
+    #[test]
+    fn exclusive_workspace_creation_rejects_existing_paths_and_traversal() {
+        use std::io::Write;
+
+        let root = tempfile::tempdir().expect("workspace root");
+        let root_file = File::open(root.path()).expect("open root");
+        let fd = open_beneath_create(root_file.as_raw_fd(), "artifact.txt").expect("create file");
+        let mut file = File::from(fd);
+        file.write_all(b"ephemeral").expect("write artifact");
+        assert_eq!(std::fs::read(root.path().join("artifact.txt")).unwrap(), b"ephemeral");
+        assert!(open_beneath_create(root_file.as_raw_fd(), "artifact.txt").is_err());
+        assert!(create_directory_beneath(root_file.as_raw_fd(), "../escape").is_err());
+        let directory = create_directory_beneath(root_file.as_raw_fd(), "nested").expect("directory");
+        drop(directory);
+        let nested = open_beneath_create(root_file.as_raw_fd(), "nested/output.bin").expect("nested file");
+        drop(nested);
+        assert!(root.path().join("nested/output.bin").is_file());
     }
 }
