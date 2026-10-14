@@ -189,12 +189,18 @@ unsafe impl Send for RingProducer {}
 impl RingProducer {
     /// Create a producer mapping and the permission-restricted consumer
     /// descriptors that may be inherited by another process.
-    pub fn create() -> Result<(Self, ConsumerRingFds), SandboxError> {
+    pub(crate) fn create() -> Result<(Self, ConsumerRingFds), SandboxError> {
         let payload_len = payload_mapping_len();
         let counter_len = counter_mapping_len()?;
         let (payload_rw, payload_ro) = create_memfd_pair("klyn-ipc-payload", payload_len)?;
         let (head_rw, head_ro) = create_memfd_pair("klyn-ipc-head", counter_len)?;
         let (tail_rw, tail_ro) = create_memfd_pair("klyn-ipc-tail", counter_len)?;
+
+        // SAFETY: these memfds are newly created, uniquely owned, and not yet
+        // exposed to another process. Initialize real AtomicU32 objects before
+        // either endpoint obtains a mapping to the counters.
+        initialize_counter(&head_rw, counter_len)?;
+        initialize_counter(&tail_rw, counter_len)?;
 
         let payload_mapping = Mapping::new(&payload_rw, payload_len, true)?;
         let head_mapping = Mapping::new(&head_rw, counter_len, true)?;
@@ -224,7 +230,7 @@ impl RingProducer {
     }
 
     /// Attach a producer endpoint from descriptors created by RingConsumer.
-    pub fn attach(fds: ProducerRingFds) -> Result<Self, SandboxError> {
+    pub(crate) fn attach(fds: ProducerRingFds) -> Result<Self, SandboxError> {
         let payload_len = payload_mapping_len();
         let counter_len = counter_mapping_len()?;
         let payload_mapping = Mapping::new(&fds.payload, payload_len, true)?;
@@ -256,6 +262,11 @@ impl RingProducer {
         head_fd: RawFd,
         tail_fd: RawFd,
     ) -> Result<Self, SandboxError> {
+        if payload_fd == head_fd || payload_fd == tail_fd || head_fd == tail_fd {
+            return Err(SandboxError::Enforcement(
+                "shared IPC endpoint descriptors must be distinct".into(),
+            ));
+        }
         for fd in [payload_fd, head_fd, tail_fd] {
             if libc::fcntl(fd, libc::F_GETFD) < 0 {
                 return Err(SandboxError::Enforcement(format!(
@@ -353,12 +364,18 @@ unsafe impl Send for RingConsumer {}
 impl RingConsumer {
     /// Create a consumer mapping and the permission-restricted producer
     /// descriptors that may be inherited by another process.
-    pub fn create() -> Result<(Self, ProducerRingFds), SandboxError> {
+    pub(crate) fn create() -> Result<(Self, ProducerRingFds), SandboxError> {
         let payload_len = payload_mapping_len();
         let counter_len = counter_mapping_len()?;
         let (payload_rw, payload_ro) = create_memfd_pair("klyn-ipc-payload", payload_len)?;
         let (head_rw, head_ro) = create_memfd_pair("klyn-ipc-head", counter_len)?;
         let (tail_rw, tail_ro) = create_memfd_pair("klyn-ipc-tail", counter_len)?;
+
+        // SAFETY: these memfds are newly created, uniquely owned, and not yet
+        // exposed to another process. Initialize real AtomicU32 objects before
+        // either endpoint obtains a mapping to the counters.
+        initialize_counter(&head_rw, counter_len)?;
+        initialize_counter(&tail_rw, counter_len)?;
 
         let payload_mapping = Mapping::new(&payload_ro, payload_len, false)?;
         let head_mapping = Mapping::new(&head_ro, counter_len, false)?;
@@ -387,7 +404,7 @@ impl RingConsumer {
     }
 
     /// Attach a consumer endpoint from descriptors created by RingProducer.
-    pub fn attach(fds: ConsumerRingFds) -> Result<Self, SandboxError> {
+    pub(crate) fn attach(fds: ConsumerRingFds) -> Result<Self, SandboxError> {
         let payload_len = payload_mapping_len();
         let counter_len = counter_mapping_len()?;
         let payload_mapping = Mapping::new(&fds.payload, payload_len, false)?;
@@ -558,6 +575,16 @@ impl ConsumerReservation<'_> {
         futex_wake(self.ring.tail)?;
         Ok(())
     }
+}
+
+fn initialize_counter(fd: &OwnedFd, counter_len: usize) -> Result<(), SandboxError> {
+    let mapping = Mapping::new(fd, counter_len, true)?;
+    // SAFETY: fd is a fresh, exclusively owned counter memfd. No endpoint has
+    // been created or shared yet, and the mmap is page-aligned and writable.
+    unsafe {
+        ptr::write(mapping.as_ptr().cast::<AtomicU32>(), AtomicU32::new(0));
+    }
+    Ok(())
 }
 
 fn create_memfd_pair(name: &str, size: usize) -> Result<(OwnedFd, OwnedFd), SandboxError> {
