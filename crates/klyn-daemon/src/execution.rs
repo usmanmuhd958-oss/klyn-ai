@@ -306,6 +306,81 @@ impl ExecutionService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use klyn_protocol::TaskOperation;
+    use serde_json::json;
+    use std::{fs, os::unix::fs::PermissionsExt};
+
+    #[test]
+    fn supervisor_launch_failure_never_executes_an_unsandboxed_worker() {
+        let temp = tempfile::tempdir().expect("temporary fault-injection fixture");
+        let roots_dir = temp.path().join("workspace");
+        fs::create_dir(&roots_dir).expect("create trusted root fixture");
+        fs::set_permissions(&roots_dir, fs::Permissions::from_mode(0o700))
+            .expect("restrict trusted root fixture");
+
+        // If a future regression launches the configured worker directly after
+        // supervisor setup fails, this marker-writing executable will run.
+        // Its script format and untrusted parent also ensure it is not accepted
+        // by the trusted ELF executable verifier.
+        let marker = temp.path().join("UNSANDBOXED_FALLBACK_EXECUTED");
+        let fake_worker = temp.path().join("klyn-worker");
+        fs::write(
+            &fake_worker,
+            format!("#!/bin/sh\nprintf executed > '{}'\n", marker.display()),
+        )
+        .expect("write fallback sentinel executable");
+        fs::set_permissions(&fake_worker, fs::Permissions::from_mode(0o755))
+            .expect("mark fallback sentinel executable");
+
+        let service = ExecutionService::new(
+            ExecutionServiceConfig {
+                init_executable: temp.path().join("missing-klyn-sandbox-init"),
+                worker_executable: fake_worker,
+                delegated_cgroup_root: temp.path().join("missing-cgroup-root"),
+                broker_socket: temp.path().join("broker.sock"),
+                roots: BTreeMap::from([("workspace".into(), roots_dir)]),
+                worker_uid: 65_534,
+                worker_gid: 65_534,
+                file_grants: vec![],
+                network_grants: vec![],
+                budget: ResourceBudget {
+                    memory_max_bytes: 64 * 1024 * 1024,
+                    cpu_quota_micros: 100_000,
+                    cpu_period_micros: 100_000,
+                    pids_max: 16,
+                    io_limits: vec![],
+                },
+                cpu_weight: 100,
+                worker_id_prefix: "fault".into(),
+                execution_timeout: Duration::from_secs(1),
+                capability_ttl: Duration::from_secs(30),
+            },
+            SigningKey::from_bytes(&[31; 32]),
+        )
+        .expect("execution service validates trusted profile shape");
+
+        let result = service.execute(
+            PeerIdentity {
+                pid: std::process::id(),
+                uid: 1_000,
+                gid: 1_000,
+            },
+            ExecuteTaskParams {
+                task_id: "launch-failure".into(),
+                operation: TaskOperation::HashJson,
+                payload: json!({"must_not_run": true}),
+            },
+        );
+
+        assert!(
+            matches!(result, Err(ExecutionError::Supervisor(_))),
+            "supervisor setup failure must be propagated, got {result:?}"
+        );
+        assert!(
+            !marker.exists(),
+            "unsandboxed sentinel executable ran after supervisor failure"
+        );
+    }
 
     #[test]
     fn execution_configuration_rejects_root_workers() {
