@@ -264,14 +264,22 @@ impl SandboxService {
             .register_broker_shutdown(Arc::clone(&stop), Arc::clone(&broker_stopped));
         let thread_stop = Arc::clone(&stop);
         let thread_stopped = Arc::clone(&broker_stopped);
-        let broker_thread = std::thread::Builder::new()
+        let broker_thread = match std::thread::Builder::new()
             .name(format!("klyn-broker-{sequence:x}"))
             .spawn(move || {
                 let result = broker.serve_until(thread_stop);
                 thread_stopped.store(true, Ordering::Release);
                 result
-            })
-            .map_err(|_| SandboxServiceError::BrokerThreadStart)?;
+            }) {
+            Ok(thread) => thread,
+            Err(_) => {
+                // The shutdown hook is already registered. Mark the absent
+                // broker thread stopped so rollback can safely remove its tree.
+                stop.store(true, Ordering::Release);
+                broker_stopped.store(true, Ordering::Release);
+                return Err(SandboxServiceError::BrokerThreadStart);
+            }
+        };
 
         let launch = launch_worker_with_kel_and_fs_transaction(
             WorkerLaunchConfig {
