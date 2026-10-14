@@ -7,13 +7,13 @@
 use std::{
     ffi::OsStr,
     fs::{self, File},
-    io::{self, BufRead, BufReader, Read, Write},
+    io::{self, Read},
     os::{
         fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
         unix::{fs::MetadataExt, process::CommandExt},
     },
     path::{Path, PathBuf},
-    process::{Child, ChildStdin, ChildStdout, Command, ExitStatus, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -22,6 +22,12 @@ use ed25519_dalek::SigningKey;
 use crate::{
     broker::{CapabilityVerifier, Ed25519CapabilityVerifier},
     cgroup::CgroupV2Boundary,
+    ipc_ring::{
+        RingConsumer, RingProducer, COMMAND_RING_HEAD_FD, COMMAND_RING_PAYLOAD_FD,
+        COMMAND_RING_TAIL_FD, RESPONSE_RING_HEAD_FD, RESPONSE_RING_PAYLOAD_FD,
+        RESPONSE_RING_TAIL_FD, WORKER_CMD_PING, WORKER_CMD_SHUTDOWN, WORKER_RESP_PING,
+        WORKER_RESP_SHUTDOWN,
+    },
     manifest::{sha256_file, WorkerManifest, REQUIRED_LANDLOCK_ABI, WORKER_MAX_OPEN_FDS},
     start_gate::{StartGate, WorkerPolicyGate},
     validate_trusted_executable, SandboxError, SignedCapability, MANIFEST_FD,
@@ -48,8 +54,8 @@ pub struct WorkerLaunchConfig {
 pub struct SpawnedWorker {
     child: Child,
     cgroup: CgroupV2Boundary,
-    stdin: Option<ChildStdin>,
-    stdout: Option<BufReader<ChildStdout>>,
+    command_ring: RingProducer,
+    response_ring: RingConsumer,
 }
 
 impl Drop for SpawnedWorker {
@@ -78,63 +84,80 @@ impl SpawnedWorker {
         self.child.id()
     }
 
-    /// Write one bounded JSON-line command to the already-confined worker.
+    /// Encode the two deliberately supported worker control operations directly
+    /// into a shared slot. The compatibility Value API never JSON-serializes
+    /// the message on the IPC path.
     pub fn send_json(&mut self, value: &serde_json::Value) -> Result<(), SandboxError> {
-        let writer = self
-            .stdin
-            .as_mut()
-            .ok_or_else(|| SandboxError::Enforcement("worker stdin is unavailable".into()))?;
-        let encoded = serde_json::to_vec(value)?;
-        if encoded.len() > crate::MAX_BROKER_FRAME_BYTES {
+        let object = value.as_object().ok_or_else(|| {
+            SandboxError::InvalidConfig("worker command must be an object".into())
+        })?;
+        if object.len() != 1 {
             return Err(SandboxError::InvalidConfig(
-                "worker command exceeds the frame limit".into(),
+                "worker command contains unknown fields".into(),
             ));
         }
-        writer.write_all(&encoded)?;
-        writer.write_all(b"\n")?;
-        writer.flush()?;
-        Ok(())
+        let operation = object
+            .get("op")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| SandboxError::InvalidConfig("worker operation is missing".into()))?;
+        let opcode = match operation {
+            "ping" => WORKER_CMD_PING,
+            "shutdown" => WORKER_CMD_SHUTDOWN,
+            _ => {
+                return Err(SandboxError::InvalidConfig(
+                    "unsupported worker control operation".into(),
+                ))
+            }
+        };
+        self.send_frame(&[opcode])
     }
 
-    /// Read one bounded JSON-line response from the worker.
-    pub fn read_json_response(&mut self) -> Result<Option<serde_json::Value>, SandboxError> {
-        let reader = self
-            .stdout
-            .as_mut()
-            .ok_or_else(|| SandboxError::Enforcement("worker stdout is unavailable".into()))?;
-        let mut line = Vec::new();
-        loop {
-            let available = reader.fill_buf()?;
-            if available.is_empty() {
-                if line.is_empty() {
-                    return Ok(None);
+    /// Publish a fixed-size/bounded frame without allocating a temporary buffer.
+    pub fn send_frame(&mut self, frame: &[u8]) -> Result<(), SandboxError> {
+        match self.command_ring.push_wait(frame, WORKER_LIFECYCLE_TIMEOUT) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let cleanup = self.terminate();
+                match cleanup {
+                    Ok(()) => Err(error),
+                    Err(cleanup_error) => Err(SandboxError::Enforcement(format!(
+                        "shared IPC command failed ({error}); cgroup termination also failed ({cleanup_error})"
+                    ))),
                 }
-                return Err(SandboxError::Enforcement(
-                    "worker closed stdout in the middle of a response".into(),
-                ));
-            }
-            let newline = available.iter().position(|byte| *byte == b'\n');
-            let segment_len = newline.unwrap_or(available.len());
-            if line.len().saturating_add(segment_len) > crate::MAX_BROKER_FRAME_BYTES {
-                return Err(SandboxError::Enforcement(
-                    "worker response exceeds the frame limit".into(),
-                ));
-            }
-            line.extend_from_slice(&available[..segment_len]);
-            let consumed = segment_len + usize::from(newline.is_some());
-            reader.consume(consumed);
-            if newline.is_some() {
-                break;
             }
         }
-        let line = std::str::from_utf8(&line).map_err(|error| {
-            SandboxError::Enforcement(format!("worker response is not UTF-8: {error}"))
-        })?;
-        Ok(Some(serde_json::from_str(line)?))
     }
 
-    pub fn close_stdin(&mut self) {
-        self.stdin.take();
+    /// Wait for and decode one worker response. A malformed response or timeout
+    /// is a worker-integrity failure and terminates the complete cgroup.
+    pub fn read_json_response(&mut self) -> Result<Option<serde_json::Value>, SandboxError> {
+        let parsed = {
+            match self.response_ring.wait_peek(Some(WORKER_LIFECYCLE_TIMEOUT)) {
+                Ok(Some(frame)) => {
+                    let decoded = decode_worker_response(frame.payload());
+                    match frame.consume() {
+                        Ok(()) => decoded,
+                        Err(error) => Err(error),
+                    }
+                }
+                Ok(None) => Err(SandboxError::Enforcement(
+                    "timed out waiting for worker IPC response".into(),
+                )),
+                Err(error) => Err(error),
+            }
+        };
+        match parsed {
+            Ok(response) => Ok(Some(response)),
+            Err(error) => {
+                let cleanup = self.terminate();
+                match cleanup {
+                    Ok(()) => Err(error),
+                    Err(cleanup_error) => Err(SandboxError::Enforcement(format!(
+                        "shared IPC response failed ({error}); cgroup termination also failed ({cleanup_error})"
+                    ))),
+                }
+            }
+        }
     }
 
     pub fn cgroup_path(&self) -> &Path {
@@ -146,8 +169,6 @@ impl SpawnedWorker {
     }
 
     pub fn wait(&mut self) -> Result<ExitStatus, SandboxError> {
-        self.stdin.take();
-        self.stdout.take();
         let status = self.child.wait()?;
         self.cgroup.terminate_and_wait(WORKER_LIFECYCLE_TIMEOUT)?;
         Ok(status)
@@ -156,12 +177,35 @@ impl SpawnedWorker {
     /// Explicit cancellation. The cgroup kill is authoritative and includes
     /// the PID-namespace init and every descendant, not just the direct child.
     pub fn terminate(&mut self) -> Result<(), SandboxError> {
-        self.stdin.take();
-        self.stdout.take();
         let _ = self.child.kill();
         self.cgroup.terminate_and_wait(WORKER_LIFECYCLE_TIMEOUT)?;
         let _ = self.child.wait();
         Ok(())
+    }
+}
+
+fn decode_worker_response(bytes: &[u8]) -> Result<serde_json::Value, SandboxError> {
+    match bytes {
+        [WORKER_RESP_SHUTDOWN] => Ok(serde_json::json!({
+            "ok": true,
+            "state": "stopping"
+        })),
+        [WORKER_RESP_PING, pid0, pid1, pid2, pid3, namespace_init] => {
+            let pid = u32::from_le_bytes([*pid0, *pid1, *pid2, *pid3]);
+            if *namespace_init > 1 {
+                return Err(SandboxError::Enforcement(
+                    "worker IPC response has an invalid namespace flag".into(),
+                ));
+            }
+            Ok(serde_json::json!({
+                "ok": true,
+                "namespace_init": *namespace_init == 1,
+                "pid": pid
+            }))
+        }
+        _ => Err(SandboxError::Enforcement(
+            "worker IPC response has an unknown opcode or invalid length".into(),
+        )),
     }
 }
 
@@ -228,6 +272,12 @@ pub fn launch_worker(
     manifest.verify_worker_executable(&worker_executable)?;
     let manifest_fd = manifest.seal_memfd(&key)?;
 
+    // Create the data-plane rings only after the signed manifest and OCap have
+    // been validated. Worker-side mappings are attached only after bootstrap
+    // independently verifies the manifest and capability.
+    let (mut command_ring, worker_command_fds) = RingProducer::create()?;
+    let (mut response_ring, worker_response_fds) = RingConsumer::create()?;
+
     let (mut gate, child_gate) = StartGate::pair()?;
     let (mut policy_gate, child_policy_gate) = WorkerPolicyGate::pair()?;
     let manifest_source = duplicate_cloexec(manifest_fd.as_raw_fd())?;
@@ -236,6 +286,22 @@ pub fn launch_worker(
     let manifest_source_fd = manifest_source.as_raw_fd();
     let gate_source_fd = gate_source.as_raw_fd();
     let policy_gate_source_fd = policy_gate_source.as_raw_fd();
+    let command_ring_raw_fds = worker_command_fds.raw_fds();
+    let response_ring_raw_fds = worker_response_fds.raw_fds();
+    // Keep all source descriptors outside the fixed child target range so dup3
+    // cannot overwrite a source needed by a later descriptor assignment.
+    let command_payload_source = duplicate_cloexec_at_least(command_ring_raw_fds[0], 32)?;
+    let command_head_source = duplicate_cloexec_at_least(command_ring_raw_fds[1], 32)?;
+    let command_tail_source = duplicate_cloexec_at_least(command_ring_raw_fds[2], 32)?;
+    let response_payload_source = duplicate_cloexec_at_least(response_ring_raw_fds[0], 32)?;
+    let response_head_source = duplicate_cloexec_at_least(response_ring_raw_fds[1], 32)?;
+    let response_tail_source = duplicate_cloexec_at_least(response_ring_raw_fds[2], 32)?;
+    let command_payload_source_fd = command_payload_source.as_raw_fd();
+    let command_head_source_fd = command_head_source.as_raw_fd();
+    let command_tail_source_fd = command_tail_source.as_raw_fd();
+    let response_payload_source_fd = response_payload_source.as_raw_fd();
+    let response_head_source_fd = response_head_source.as_raw_fd();
+    let response_tail_source_fd = response_tail_source.as_raw_fd();
 
     let mut command = Command::new(&init_executable);
     command
@@ -248,8 +314,8 @@ pub fn launch_worker(
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
         .env("LANG", "C")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
         .stderr(Stdio::null());
 
     // FD 4 is the sealed memfd, FD 5 gates stage-0, and FD 6 is the final
@@ -271,10 +337,28 @@ pub fn launch_worker(
             {
                 return Err(io::Error::last_os_error());
             }
+            for (source, target) in [
+                (command_payload_source_fd, COMMAND_RING_PAYLOAD_FD),
+                (command_head_source_fd, COMMAND_RING_HEAD_FD),
+                (command_tail_source_fd, COMMAND_RING_TAIL_FD),
+                (response_payload_source_fd, RESPONSE_RING_PAYLOAD_FD),
+                (response_head_source_fd, RESPONSE_RING_HEAD_FD),
+                (response_tail_source_fd, RESPONSE_RING_TAIL_FD),
+            ] {
+                if libc::dup3(source, target, 0) < 0 {
+                    return Err(io::Error::last_os_error());
+                }
+            }
             if libc::syscall(libc::SYS_close_range, 3u32, 3u32, 0u32) != 0 {
                 return Err(io::Error::last_os_error());
             }
-            if libc::syscall(libc::SYS_close_range, 7u32, u32::MAX, 0u32) != 0 {
+            if libc::syscall(
+                libc::SYS_close_range,
+                (RESPONSE_RING_TAIL_FD + 1) as u32,
+                u32::MAX,
+                0u32,
+            ) != 0
+            {
                 return Err(io::Error::last_os_error());
             }
             Ok(())
@@ -282,28 +366,6 @@ pub fn launch_worker(
     }
 
     let mut child = command.spawn()?;
-    let worker_stdin = match child.stdin.take() {
-        Some(stdin) => stdin,
-        None => {
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = cgroup.terminate_and_wait(WORKER_LIFECYCLE_TIMEOUT);
-            return Err(SandboxError::Enforcement(
-                "supervised worker stdin pipe was not created".into(),
-            ));
-        }
-    };
-    let worker_stdout = match child.stdout.take() {
-        Some(stdout) => stdout,
-        None => {
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = cgroup.terminate_and_wait(WORKER_LIFECYCLE_TIMEOUT);
-            return Err(SandboxError::Enforcement(
-                "supervised worker stdout pipe was not created".into(),
-            ));
-        }
-    };
     // Closing the supervisor's duplicate child endpoint is required; otherwise
     // a failed launcher would not observe EOF on the private gate channel.
     drop(child_gate);
@@ -312,6 +374,14 @@ pub fn launch_worker(
     drop(gate_source);
     drop(policy_gate_source);
     drop(manifest_fd);
+    drop(worker_command_fds);
+    drop(worker_response_fds);
+    drop(command_payload_source);
+    drop(command_head_source);
+    drop(command_tail_source);
+    drop(response_payload_source);
+    drop(response_head_source);
+    drop(response_tail_source);
 
     let gate_result = gate
         .release_after_verification(&cgroup, child.id(), &manifest, &key)
@@ -337,13 +407,21 @@ pub fn launch_worker(
     Ok(SpawnedWorker {
         child,
         cgroup,
-        stdin: Some(worker_stdin),
-        stdout: Some(BufReader::new(worker_stdout)),
+        command_ring,
+        response_ring,
     })
 }
 
 fn duplicate_cloexec(fd: RawFd) -> Result<OwnedFd, SandboxError> {
     let duplicate = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 10) };
+    if duplicate < 0 {
+        return Err(SandboxError::Io(io::Error::last_os_error()));
+    }
+    Ok(unsafe { OwnedFd::from_raw_fd(duplicate) })
+}
+
+fn duplicate_cloexec_at_least(fd: RawFd, minimum: RawFd) -> Result<OwnedFd, SandboxError> {
+    let duplicate = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, minimum) };
     if duplicate < 0 {
         return Err(SandboxError::Io(io::Error::last_os_error()));
     }
