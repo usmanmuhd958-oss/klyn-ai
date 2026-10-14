@@ -482,4 +482,27 @@ mod tests {
         assert!(validate_trusted_init_executable("/bin/sh").is_err());
         assert!(validate_trusted_init_executable("/definitely/not/klyn-sandbox-init").is_err());
     }
+
+    #[test]
+    fn binary_worker_response_parser_accepts_only_known_wire_shapes() {
+        let ping = decode_worker_response(&[WORKER_RESP_PING, 7, 0, 0, 0, 1])
+            .expect("well-formed ping response");
+        assert_eq!(ping["ok"], true);
+        assert_eq!(ping["pid"], 7);
+        assert_eq!(ping["namespace_init"], true);
+
+        let shutdown = decode_worker_response(&[WORKER_RESP_SHUTDOWN])
+            .expect("well-formed shutdown response");
+        assert_eq!(shutdown["ok"], true);
+        assert_eq!(shutdown["state"], "stopping");
+    }
+
+    #[test]
+    fn binary_worker_response_parser_rejects_unknown_or_malformed_frames() {
+        assert!(decode_worker_response(&[]).is_err());
+        assert!(decode_worker_response(&[0xFF]).is_err());
+        assert!(decode_worker_response(&[WORKER_RESP_PING, 1, 2]).is_err());
+        assert!(decode_worker_response(&[WORKER_RESP_PING, 1, 0, 0, 0, 2]).is_err());
+        assert!(decode_worker_response(&[WORKER_RESP_SHUTDOWN, 0]).is_err());
+    }
 }
