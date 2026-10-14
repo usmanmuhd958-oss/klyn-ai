@@ -29,7 +29,9 @@ impl Drop for ChildGuard {
 #[test]
 fn native_ebpf_ring_buffer_delivers_cgroup_filtered_kernel_events() {
     if std::env::var("KLYN_REQUIRE_NATIVE_LINUX_QUALIFICATION").as_deref() != Ok("1") {
-        eprintln!("SKIP: set KLYN_REQUIRE_NATIVE_LINUX_QUALIFICATION=1 on the dedicated native host");
+        eprintln!(
+            "SKIP: set KLYN_REQUIRE_NATIVE_LINUX_QUALIFICATION=1 on the dedicated native host"
+        );
         return;
     }
 
@@ -37,7 +39,10 @@ fn native_ebpf_ring_buffer_delivers_cgroup_filtered_kernel_events() {
         .expect("strict native qualification requires KLYN_TEST_CGROUP_ROOT");
     let bpf_object = std::env::var_os("KLYN_EBPF_OBJECT")
         .expect("strict native qualification requires KLYN_EBPF_OBJECT");
-    assert!(std::path::Path::new(&bpf_object).is_file(), "KLYN_EBPF_OBJECT must be a compiled BPF ELF object");
+    assert!(
+        std::path::Path::new(&bpf_object).is_file(),
+        "KLYN_EBPF_OBJECT must be a compiled BPF ELF object"
+    );
 
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -77,13 +82,9 @@ fn native_ebpf_ring_buffer_delivers_cgroup_filtered_kernel_events() {
     let journal = KelJournal::create(&journal_path, &signing_key, [0x63; 16])
         .expect("create strict test KEL journal")
         .shared();
-    let mut telemetry = WorkerTelemetry::start_with_kel(
-        cgroup.path(),
-        child.0.id(),
-        budget,
-        journal,
-    )
-    .expect("attach eBPF and start cgroup telemetry");
+    let mut telemetry =
+        WorkerTelemetry::start_with_kel(cgroup.path(), child.0.id(), budget, journal)
+            .expect("attach eBPF and start cgroup telemetry");
     assert_eq!(
         telemetry.mode(),
         TelemetryMode::EbpfRingBuffer,
@@ -105,7 +106,8 @@ fn native_ebpf_ring_buffer_delivers_cgroup_filtered_kernel_events() {
         if let Some(event) = telemetry.try_recv() {
             if let TelemetryEvent::Kernel(kernel) = event {
                 if kernel.kind == KernelEventKind::ProcessFork
-                    && kernel.cgroup_id == fs::metadata(cgroup.path()).expect("cgroup metadata").ino()
+                    && kernel.cgroup_id
+                        == fs::metadata(cgroup.path()).expect("cgroup metadata").ino()
                 {
                     delivered_fork_event = true;
                     break;
