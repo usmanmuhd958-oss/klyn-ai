@@ -60,8 +60,7 @@ const LEN_PREFIX_BYTES: usize = std::mem::size_of::<u32>();
 const SLOT_STRIDE: usize = align_up(LEN_PREFIX_BYTES + RING_MAX_PAYLOAD_BYTES, 64);
 const FUTEX_WAIT_OP: libc::c_int = 0;
 const FUTEX_WAKE_OP: libc::c_int = 1;
-const REQUIRED_SEALS: libc::c_int =
-    libc::F_SEAL_GROW | libc::F_SEAL_SHRINK | libc::F_SEAL_SEAL;
+const REQUIRED_SEALS: libc::c_int = libc::F_SEAL_GROW | libc::F_SEAL_SHRINK | libc::F_SEAL_SEAL;
 
 const _: () = assert!(RING_SLOT_COUNT.is_power_of_two());
 
@@ -328,9 +327,9 @@ impl RingProducer {
                 "shared IPC frame length is outside the permitted bounds".into(),
             ));
         }
-        let deadline = Instant::now().checked_add(timeout).ok_or_else(|| {
-            SandboxError::InvalidConfig("shared IPC timeout is too large".into())
-        })?;
+        let deadline = Instant::now()
+            .checked_add(timeout)
+            .ok_or_else(|| SandboxError::InvalidConfig("shared IPC timeout is too large".into()))?;
         loop {
             if let Some(mut reservation) = self.try_reserve()? {
                 reservation.buffer()[..bytes.len()].copy_from_slice(bytes);
@@ -735,9 +734,14 @@ mod tests {
                 .try_push(&[value as u8 + 1])
                 .expect("publish bounded frame"));
         }
-        assert!(!producer.try_push(b"full").expect("full ring is not corruption"));
+        assert!(!producer
+            .try_push(b"full")
+            .expect("full ring is not corruption"));
 
-        let frame = consumer.try_peek().expect("peek first frame").expect("item");
+        let frame = consumer
+            .try_peek()
+            .expect("peek first frame")
+            .expect("item");
         assert_eq!(frame.payload(), &[1]);
         frame.consume().expect("consume first frame");
         assert!(producer.try_push(b"next").expect("space recovered"));
@@ -755,7 +759,10 @@ mod tests {
 
         assert!(producer.try_push(&[]).is_err());
         assert!(producer.try_push(&oversized).is_err());
-        assert!(consumer.try_peek().expect("ring state remains valid").is_none());
+        assert!(consumer
+            .try_peek()
+            .expect("ring state remains valid")
+            .is_none());
     }
 
     #[test]
@@ -775,8 +782,7 @@ mod tests {
 
     #[test]
     fn wait_peek_respects_a_zero_timeout() {
-        let (mut consumer, _producer_fds) =
-            RingConsumer::create().expect("create empty ring");
+        let (mut consumer, _producer_fds) = RingConsumer::create().expect("create empty ring");
         assert!(consumer
             .wait_peek(Some(Duration::ZERO))
             .expect("zero-timeout poll")
