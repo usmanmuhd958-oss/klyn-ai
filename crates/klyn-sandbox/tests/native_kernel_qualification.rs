@@ -59,7 +59,7 @@ fn native_ebpf_ring_buffer_delivers_cgroup_filtered_kernel_events() {
     let child = Command::new("/bin/sh")
         .args([
             "-c",
-            "read -r _; i=0; while [ "$i" -lt 40 ]; do /bin/true; i=$((i+1)); done; exec sleep 30",
+            r#"read -r _; i=0; while [ "$i" -lt 40 ]; do /bin/true; i=$((i+1)); done; exec sleep 30"#,
         ])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -96,8 +96,7 @@ fn native_ebpf_ring_buffer_delivers_cgroup_filtered_kernel_events() {
         .stdin
         .take()
         .expect("child stdin gate")
-        .write_all(b"go
-")
+        .write_all(b"go\n")
         .expect("release event-generating child");
 
     let deadline = Instant::now() + Duration::from_secs(10);
