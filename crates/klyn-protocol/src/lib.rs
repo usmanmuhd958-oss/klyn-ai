@@ -156,9 +156,10 @@ impl ExecuteTaskParams {
     pub fn validate(&self) -> Result<(), ProtocolError> {
         if self.task_id.is_empty()
             || self.task_id.len() > 64
-            || !self.task_id.bytes().all(|byte| {
-                byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'
-            })
+            || !self
+                .task_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
         {
             return Err(ProtocolError::InvalidParams);
         }
