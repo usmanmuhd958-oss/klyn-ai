@@ -104,7 +104,7 @@ jobs:
       - name: Run mandatory native Linux kernel qualification
         env:
           KLYN_REQUIRE_NATIVE_LINUX_QUALIFICATION: "1"
-        run: scripts/qualify_native_linux.sh
+        run: bash scripts/qualify_native_linux.sh
   fuzz-targets:
     runs-on: ubuntu-26.04
     timeout-minutes: 20
@@ -116,6 +116,8 @@ jobs:
         run: |
           rustup toolchain install nightly --profile minimal
           cargo +nightly install cargo-fuzz --locked
+      - name: Format fuzz workspace
+        run: cargo +nightly fmt --manifest-path crates/klyn-sandbox/fuzz/Cargo.toml -- --check
       - name: Compile both fuzz targets
         working-directory: crates/klyn-sandbox/fuzz
         run: |
@@ -136,9 +138,9 @@ jobs:
           cargo +nightly install cargo-fuzz --locked
       - name: Run million-iteration fuzz campaign
         env:
-          CARGO: cargo +nightly
+          RUSTUP_TOOLCHAIN: nightly
           KLYN_FUZZ_RUNS: "1000000"
-        run: scripts/run_fuzz_campaign.sh
+        run: bash scripts/run_fuzz_campaign.sh
 
   ebpf-object-compile:
     runs-on: ubuntu-26.04
