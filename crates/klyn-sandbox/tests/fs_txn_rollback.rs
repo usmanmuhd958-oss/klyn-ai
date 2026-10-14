@@ -51,7 +51,10 @@ fn forced_worker_termination_discards_workspace_artifacts() {
 
     worker.kill().expect("forcibly terminate worker");
     let status = worker.wait().expect("reap killed worker");
-    assert!(!status.success(), "forced termination unexpectedly succeeded");
+    assert!(
+        !status.success(),
+        "forced termination unexpectedly succeeded"
+    );
     assert!(workspace.join("nested/session.db").is_file());
 
     transaction
@@ -63,6 +66,14 @@ fn forced_worker_termination_discards_workspace_artifacts() {
         !transaction.transaction_root().exists(),
         "transaction root survived worker termination"
     );
-    assert_eq!(fs::read(&sentinel).expect("read host sentinel"), b"host state");
-    assert_eq!(fs::read_dir(parent.path()).expect("read transaction parent").count(), 0);
+    assert_eq!(
+        fs::read(&sentinel).expect("read host sentinel"),
+        b"host state"
+    );
+    assert_eq!(
+        fs::read_dir(parent.path())
+            .expect("read transaction parent")
+            .count(),
+        0
+    );
 }
