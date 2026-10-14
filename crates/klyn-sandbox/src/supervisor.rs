@@ -511,8 +511,8 @@ mod tests {
         assert_eq!(ping["pid"].as_u64(), Some(7));
         assert_eq!(ping["namespace_init"].as_bool(), Some(true));
 
-        let shutdown = decode_worker_response(&[WORKER_RESP_SHUTDOWN])
-            .expect("well-formed shutdown response");
+        let shutdown =
+            decode_worker_response(&[WORKER_RESP_SHUTDOWN]).expect("well-formed shutdown response");
         assert_eq!(shutdown["ok"].as_bool(), Some(true));
         assert_eq!(shutdown["state"].as_str(), Some("stopping"));
     }
