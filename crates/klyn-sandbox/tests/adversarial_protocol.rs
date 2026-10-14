@@ -77,8 +77,6 @@ fn kel_transition_and_encoded_signature_tampering_fail_closed() {
     assert!(KelJournal::verify_encoded_chain(&corrupt, &key.verifying_key(), None).is_err());
     assert!(KelEvent::decode_record(&corrupt[..KEL_EVENT_ENCODED_LEN]).is_ok());
     assert!(KelEvent::decode_record(&corrupt[..KEL_EVENT_ENCODED_LEN - 1]).is_err());
-}
-
 
 #[test]
 fn malformed_capability_claims_are_rejected_before_authorization() {
@@ -123,7 +121,9 @@ fn malformed_capability_claims_are_rejected_before_authorization() {
     assert!(unknown_version.validate().is_err());
 
     let mut duplicate_scope = valid_claims();
-    duplicate_scope.file_grants.push(duplicate_scope.file_grants[0].clone());
+    duplicate_scope
+        .file_grants
+        .push(duplicate_scope.file_grants[0].clone());
     assert!(duplicate_scope.validate().is_err());
 
     let mut root_subject = valid_claims();
