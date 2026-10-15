@@ -13,12 +13,14 @@ on:
       - feat/step3-worker-bootstrap
       - reconcile/step3-platform-daemon
       - feat/step4-shared-memory-ipc
+      - feat/phase2-step2-ebpf-telemetry
   pull_request:
     branches:
       - main
       - master
       - feat/klyn-step2-transactional-fs
       - reconcile/step3-platform-daemon
+      - feat/step4-shared-memory-ipc
     paths:
       - Cargo.toml
       - Cargo.lock
@@ -91,3 +93,28 @@ jobs:
         env:
           KLYN_REQUIRE_NATIVE_LINUX_QUALIFICATION: "1"
         run: scripts/qualify-native-linux.sh
+  ebpf-object-compile:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install BPF build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang llvm bpftool libbpf-dev
+      - name: Compile CO-RE telemetry object when runner BTF is available
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -r /sys/kernel/btf/vmlinux ]]; then
+            echo "::warning::/sys/kernel/btf/vmlinux unavailable; native eBPF compile skipped"
+            exit 0
+          fi
+          mkdir -p "$RUNNER_TEMP/klyn-bpf"
+          bpftool btf dump file /sys/kernel/btf/vmlinux format c > "$RUNNER_TEMP/klyn-bpf/vmlinux.h"
+          clang -O2 -g -target bpf -D__TARGET_ARCH_x86 \
+            -I"$RUNNER_TEMP/klyn-bpf" -I/usr/include/bpf -I/usr/include/x86_64-linux-gnu \
+            -c crates/klyn-sandbox/ebpf/klyn_telemetry.bpf.c \
+            -o "$RUNNER_TEMP/klyn-bpf/klyn_telemetry.bpf.o"

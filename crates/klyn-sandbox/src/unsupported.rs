@@ -221,6 +221,13 @@ pub mod landlock_seccomp {
         Err(SandboxError::UnsupportedPlatform)
     }
 
+    pub fn apply_worker_seccomp_for(
+        _broker_fd: i32,
+        _operation: crate::WorkerOperation,
+    ) -> Result<(), SandboxError> {
+        Err(SandboxError::UnsupportedPlatform)
+    }
+
     pub fn enforce_worker(
         _claims: &CapabilityClaims,
         _roots: &BTreeMap<String, PathBuf>,
@@ -447,6 +454,7 @@ mod tests {
                 pids_max: 4,
                 io_limits: vec![],
             },
+            operation: crate::WorkerOperation::Control,
         }
     }
 

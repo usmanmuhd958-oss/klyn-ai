@@ -248,6 +248,7 @@ mod tests {
                         pids_max: 1,
                         io_limits: vec![],
                     },
+                    operation: crate::WorkerOperation::Control,
                 },
                 signature: vec![],
             },
@@ -279,6 +280,7 @@ mod tests {
                 pids_max: 1,
                 io_limits: vec![],
             },
+            operation: crate::WorkerOperation::Control,
         };
         assert!(validate_capability_context(&claims).is_err());
     }

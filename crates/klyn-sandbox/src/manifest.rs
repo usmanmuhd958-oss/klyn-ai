@@ -373,6 +373,7 @@ mod tests {
                     file_grants: vec![],
                     network_grants: vec![],
                     budget,
+                    operation: crate::WorkerOperation::Control,
                 },
                 signature: vec![1; 64],
             },

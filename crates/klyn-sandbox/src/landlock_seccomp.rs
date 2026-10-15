@@ -17,7 +17,7 @@ use seccompiler::{
 
 use crate::{
     open_path_no_symlinks, validate_relative_path, validate_trusted_root, CapabilityClaims,
-    FileAccess, SandboxError, BROKER_FD,
+    FileAccess, SandboxError, WorkerOperation, BROKER_FD,
 };
 
 /// Apply a hard-required Landlock ABI v8 ruleset.
@@ -114,6 +114,16 @@ pub fn apply_landlock(
 /// io_uring, ptrace, and outbound SCM_RIGHTS. The only recvmsg permitted is on
 /// the pre-established broker descriptor, expected to be FD 3.
 pub fn apply_worker_seccomp(broker_fd: RawFd) -> Result<(), SandboxError> {
+    apply_worker_seccomp_for(broker_fd, WorkerOperation::Control)
+}
+
+/// Install the minimal syscall policy associated with a signed registered task.
+/// Every profile kills the worker for any syscall outside its allowlist. The
+/// default-deny action cannot be caught or converted back into task execution.
+pub fn apply_worker_seccomp_for(
+    broker_fd: RawFd,
+    operation: WorkerOperation,
+) -> Result<(), SandboxError> {
     if broker_fd != BROKER_FD {
         return Err(SandboxError::InvalidConfig(format!(
             "the seccomp profile is pinned to broker fd {BROKER_FD}, got {broker_fd}"
@@ -132,59 +142,111 @@ pub fn apply_worker_seccomp(broker_fd: RawFd) -> Result<(), SandboxError> {
     }
 
     let mut rules: BTreeMap<i64, Vec<SeccompRule>> = BTreeMap::new();
-    let allowed = [
-        libc::SYS_read,
-        libc::SYS_write,
-        libc::SYS_readv,
-        libc::SYS_writev,
-        libc::SYS_close,
-        libc::SYS_fstat,
-        libc::SYS_lseek,
-        libc::SYS_pread64,
-        libc::SYS_pwrite64,
-        libc::SYS_ftruncate,
-        libc::SYS_mmap,
-        libc::SYS_mprotect,
-        libc::SYS_munmap,
-        libc::SYS_brk,
-        libc::SYS_madvise,
-        libc::SYS_mremap,
-        libc::SYS_rt_sigaction,
-        libc::SYS_rt_sigprocmask,
-        libc::SYS_rt_sigreturn,
-        libc::SYS_sigaltstack,
-        libc::SYS_getpid,
-        libc::SYS_getppid,
-        libc::SYS_gettid,
-        libc::SYS_getuid,
-        libc::SYS_geteuid,
-        libc::SYS_getgid,
-        libc::SYS_getegid,
-        libc::SYS_getrandom,
-        libc::SYS_clock_gettime,
-        libc::SYS_clock_getres,
-        libc::SYS_gettimeofday,
-        libc::SYS_nanosleep,
-        libc::SYS_clock_nanosleep,
-        libc::SYS_sched_yield,
-        libc::SYS_futex,
-        libc::SYS_restart_syscall,
-        libc::SYS_poll,
-        libc::SYS_ppoll,
-        libc::SYS_pselect6,
-        libc::SYS_select,
-        libc::SYS_epoll_create1,
-        libc::SYS_epoll_ctl,
-        libc::SYS_epoll_wait,
-        libc::SYS_epoll_pwait,
-        libc::SYS_uname,
-        libc::SYS_exit,
-        libc::SYS_exit_group,
-        libc::SYS_fsync,
-        libc::SYS_fdatasync,
-        libc::SYS_getcwd,
-    ];
-    for syscall in allowed {
+    let allowed: &[i64] = match operation {
+        WorkerOperation::Control => &[
+            libc::SYS_read,
+            libc::SYS_write,
+            libc::SYS_readv,
+            libc::SYS_writev,
+            libc::SYS_close,
+            libc::SYS_fstat,
+            libc::SYS_lseek,
+            libc::SYS_pread64,
+            libc::SYS_pwrite64,
+            libc::SYS_ftruncate,
+            libc::SYS_mmap,
+            libc::SYS_mprotect,
+            libc::SYS_munmap,
+            libc::SYS_brk,
+            libc::SYS_madvise,
+            libc::SYS_mremap,
+            libc::SYS_rt_sigaction,
+            libc::SYS_rt_sigprocmask,
+            libc::SYS_rt_sigreturn,
+            libc::SYS_sigaltstack,
+            libc::SYS_getpid,
+            libc::SYS_getppid,
+            libc::SYS_gettid,
+            libc::SYS_getuid,
+            libc::SYS_geteuid,
+            libc::SYS_getgid,
+            libc::SYS_getegid,
+            libc::SYS_getrandom,
+            libc::SYS_clock_gettime,
+            libc::SYS_clock_getres,
+            libc::SYS_gettimeofday,
+            libc::SYS_nanosleep,
+            libc::SYS_clock_nanosleep,
+            libc::SYS_sched_yield,
+            libc::SYS_futex,
+            libc::SYS_restart_syscall,
+            libc::SYS_poll,
+            libc::SYS_ppoll,
+            libc::SYS_pselect6,
+            libc::SYS_select,
+            libc::SYS_epoll_create1,
+            libc::SYS_epoll_ctl,
+            libc::SYS_epoll_wait,
+            libc::SYS_epoll_pwait,
+            libc::SYS_uname,
+            libc::SYS_exit,
+            libc::SYS_exit_group,
+            libc::SYS_fsync,
+            libc::SYS_fdatasync,
+            libc::SYS_getcwd,
+        ],
+        WorkerOperation::HashJson => &[
+            libc::SYS_read,
+            libc::SYS_write,
+            libc::SYS_close,
+            libc::SYS_fstat,
+            libc::SYS_mmap,
+            libc::SYS_mprotect,
+            libc::SYS_munmap,
+            libc::SYS_brk,
+            libc::SYS_madvise,
+            libc::SYS_mremap,
+            libc::SYS_rt_sigaction,
+            libc::SYS_rt_sigprocmask,
+            libc::SYS_rt_sigreturn,
+            libc::SYS_sigaltstack,
+            libc::SYS_getpid,
+            libc::SYS_gettid,
+            libc::SYS_getrandom,
+            libc::SYS_clock_gettime,
+            libc::SYS_futex,
+            libc::SYS_restart_syscall,
+            libc::SYS_exit,
+            libc::SYS_exit_group,
+        ],
+        WorkerOperation::DescribeJson => &[
+            libc::SYS_read,
+            libc::SYS_write,
+            libc::SYS_close,
+            libc::SYS_fstat,
+            libc::SYS_lseek,
+            libc::SYS_pread64,
+            libc::SYS_mmap,
+            libc::SYS_mprotect,
+            libc::SYS_munmap,
+            libc::SYS_brk,
+            libc::SYS_madvise,
+            libc::SYS_mremap,
+            libc::SYS_rt_sigaction,
+            libc::SYS_rt_sigprocmask,
+            libc::SYS_rt_sigreturn,
+            libc::SYS_sigaltstack,
+            libc::SYS_getpid,
+            libc::SYS_gettid,
+            libc::SYS_getrandom,
+            libc::SYS_clock_gettime,
+            libc::SYS_futex,
+            libc::SYS_restart_syscall,
+            libc::SYS_exit,
+            libc::SYS_exit_group,
+        ],
+    };
+    for syscall in allowed.iter().copied() {
         rules.entry(syscall).or_default();
     }
 
@@ -204,7 +266,7 @@ pub fn apply_worker_seccomp(broker_fd: RawFd) -> Result<(), SandboxError> {
         .map_err(|e| SandboxError::Enforcement(format!("unsupported seccomp architecture: {e}")))?;
     let filter = SeccompFilter::new(
         rules,
-        SeccompAction::Errno(libc::EPERM as u32),
+        SeccompAction::KillProcess,
         SeccompAction::Allow,
         architecture,
     )
@@ -224,7 +286,7 @@ pub fn enforce_worker(
     broker_fd: RawFd,
 ) -> Result<(), SandboxError> {
     apply_landlock(claims, roots)?;
-    apply_worker_seccomp(broker_fd)
+    apply_worker_seccomp_for(broker_fd, claims.operation)
 }
 
 #[cfg(test)]
@@ -279,6 +341,7 @@ mod tests {
             expires_at_unix: u64::MAX,
             file_grants: vec![],
             network_grants: vec![],
+            operation: WorkerOperation::Control,
             budget: ResourceBudget {
                 memory_max_bytes: 16 * 1024 * 1024,
                 cpu_quota_micros: 100_000,
@@ -334,6 +397,29 @@ mod tests {
     }
 
     #[test]
+    fn operation_selector_is_signed_and_legacy_control_claims_keep_their_wire_shape() {
+        let mut c = claims();
+        let legacy = serde_json::to_value(&c).expect("serialize legacy control claims");
+        assert!(legacy.get("operation").is_none());
+
+        c.operation = WorkerOperation::HashJson;
+        let hash = serde_json::to_value(&c).expect("serialize hash operation claims");
+        assert_eq!(
+            hash.get("operation").and_then(serde_json::Value::as_str),
+            Some("hash_json")
+        );
+
+        c.operation = WorkerOperation::DescribeJson;
+        let describe = serde_json::to_value(&c).expect("serialize describe operation claims");
+        assert_eq!(
+            describe
+                .get("operation")
+                .and_then(serde_json::Value::as_str),
+            Some("describe_json")
+        );
+    }
+
+    #[test]
     fn signed_capability_type_round_trips_without_unchecked_verification() {
         let c = claims();
         let wire = serde_json::to_vec(&SignedCapability {
@@ -347,13 +433,10 @@ mod tests {
     }
 
     #[test]
-    fn worker_seccomp_requires_the_pinned_broker_descriptor() {
-        assert!(apply_worker_seccomp(BROKER_FD + 1).is_err());
-    }
+    fn json_task_profiles_kill_unknown_syscalls() {
+        use std::os::unix::process::ExitStatusExt;
 
-    #[test]
-    fn seccomp_denies_path_open_socket_connect_exec_and_fd_metadata_mutation() {
-        const CHILD_MARKER: &str = "KLYN_SECCOMP_NEGATIVE_CHILD";
+        const CHILD_MARKER: &str = "KLYN_SECCOMP_HASH_JSON_CHILD";
         if std::env::var_os(CHILD_MARKER).is_some() {
             let (broker, peer) = UnixStream::pair().expect("socketpair for pinned broker fd");
             let raw = broker.as_raw_fd();
@@ -363,107 +446,141 @@ mod tests {
                 drop(broker);
             }
             drop(peer);
-
-            apply_worker_seccomp(BROKER_FD).expect("install seccomp filter");
-
-            let path = CString::new("/etc/passwd").unwrap();
-            let opened = unsafe {
+            apply_worker_seccomp_for(BROKER_FD, WorkerOperation::HashJson)
+                .expect("install strict hash JSON profile");
+            let path = CString::new("/etc/passwd").expect("static path");
+            unsafe {
                 libc::syscall(
                     libc::SYS_openat,
                     libc::AT_FDCWD,
                     path.as_ptr(),
                     libc::O_RDONLY,
                     0,
-                )
-            };
-            assert_eq!(opened, -1, "openat unexpectedly succeeded");
-            assert_eq!(
-                std::io::Error::last_os_error().raw_os_error(),
-                Some(libc::EPERM)
-            );
-
-            let socket =
-                unsafe { libc::syscall(libc::SYS_socket, libc::AF_INET, libc::SOCK_STREAM, 0) };
-            assert_eq!(socket, -1, "socket unexpectedly succeeded");
-            assert_eq!(
-                std::io::Error::last_os_error().raw_os_error(),
-                Some(libc::EPERM)
-            );
-
-            let address = unsafe { std::mem::zeroed::<libc::sockaddr>() };
-            let connected = unsafe {
-                libc::syscall(
-                    libc::SYS_connect,
-                    BROKER_FD,
-                    &address as *const libc::sockaddr,
-                    std::mem::size_of::<libc::sockaddr>() as libc::socklen_t,
-                )
-            };
-            assert_eq!(connected, -1, "connect unexpectedly succeeded");
-            assert_eq!(
-                std::io::Error::last_os_error().raw_os_error(),
-                Some(libc::EPERM)
-            );
-
-            let missing = CString::new("/__klyn_seccomp_execve_must_be_denied__").unwrap();
-            let argv = [missing.as_ptr(), std::ptr::null()];
-            let executed = unsafe {
-                libc::syscall(
-                    libc::SYS_execve,
-                    missing.as_ptr(),
-                    argv.as_ptr(),
-                    std::ptr::null::<*const libc::c_char>(),
-                )
-            };
-            assert_eq!(
-                executed, -1,
-                "execve unexpectedly returned from a missing target"
-            );
-            assert_eq!(
-                std::io::Error::last_os_error().raw_os_error(),
-                Some(libc::EPERM)
-            );
-
-            let changed = unsafe { libc::syscall(libc::SYS_fchmod, BROKER_FD, 0o777) };
-            assert_eq!(changed, -1, "fchmod unexpectedly succeeded");
-            assert_eq!(
-                std::io::Error::last_os_error().raw_os_error(),
-                Some(libc::EPERM)
-            );
-
-            let duplicated = unsafe { libc::syscall(libc::SYS_dup, BROKER_FD) };
-            assert_eq!(duplicated, -1, "dup unexpectedly succeeded");
-            assert_eq!(
-                std::io::Error::last_os_error().raw_os_error(),
-                Some(libc::EPERM)
-            );
-
-            let mut message = unsafe { std::mem::zeroed::<libc::msghdr>() };
-            let wrong_fd =
-                unsafe { libc::syscall(libc::SYS_recvmsg, BROKER_FD + 1, &mut message, 0) };
-            assert_eq!(
-                wrong_fd, -1,
-                "recvmsg on a non-broker fd unexpectedly succeeded"
-            );
-            assert_eq!(
-                std::io::Error::last_os_error().raw_os_error(),
-                Some(libc::EPERM)
-            );
-            return;
+                );
+            }
+            panic!("unauthorized openat returned to task code");
         }
-
-        let output = Command::new(std::env::current_exe().unwrap())
+        let output = Command::new(std::env::current_exe().expect("test executable"))
             .arg("--exact")
-            .arg("landlock_seccomp::tests::seccomp_denies_path_open_socket_connect_exec_and_fd_metadata_mutation")
+            .arg("landlock_seccomp::tests::json_task_profiles_kill_unknown_syscalls")
             .arg("--nocapture")
             .env(CHILD_MARKER, "1")
             .output()
-            .expect("spawn isolated seccomp test process");
+            .expect("spawn isolated strict-seccomp child");
         assert!(
-            output.status.success(),
-            "seccomp negative-case child failed: {}",
-            String::from_utf8_lossy(&output.stderr)
+            !output.status.success(),
+            "strict profile did not kill the child"
         );
+        assert!(
+            output.status.signal().is_some(),
+            "strict profile did not signal-kill the child"
+        );
+    }
+
+    #[test]
+    fn worker_seccomp_requires_the_pinned_broker_descriptor() {
+        assert!(apply_worker_seccomp(BROKER_FD + 1).is_err());
+    }
+
+    #[test]
+    fn seccomp_denies_path_open_socket_connect_exec_and_fd_metadata_mutation() {
+        use std::os::unix::process::ExitStatusExt;
+
+        const CHILD_MARKER: &str = "KLYN_SECCOMP_NEGATIVE_CHILD";
+        if let Ok(scenario) = std::env::var(CHILD_MARKER) {
+            let (broker, peer) = UnixStream::pair().expect("socketpair for pinned broker fd");
+            let raw = broker.as_raw_fd();
+            if raw != BROKER_FD {
+                let result = unsafe { libc::dup3(raw, BROKER_FD, 0) };
+                assert_eq!(result, BROKER_FD);
+                drop(broker);
+            }
+            drop(peer);
+            apply_worker_seccomp(BROKER_FD).expect("install seccomp filter");
+
+            match scenario.as_str() {
+                "openat" => {
+                    let path = CString::new("/etc/passwd").expect("static path");
+                    unsafe {
+                        libc::syscall(
+                            libc::SYS_openat,
+                            libc::AT_FDCWD,
+                            path.as_ptr(),
+                            libc::O_RDONLY,
+                            0,
+                        );
+                    }
+                }
+                "socket" => unsafe {
+                    libc::syscall(libc::SYS_socket, libc::AF_INET, libc::SOCK_STREAM, 0);
+                },
+                "connect" => {
+                    let address = unsafe { std::mem::zeroed::<libc::sockaddr>() };
+                    unsafe {
+                        libc::syscall(
+                            libc::SYS_connect,
+                            BROKER_FD,
+                            &address as *const libc::sockaddr,
+                            std::mem::size_of::<libc::sockaddr>() as libc::socklen_t,
+                        );
+                    }
+                }
+                "execve" => {
+                    let missing = CString::new("/__klyn_seccomp_execve_must_be_denied__")
+                        .expect("static path");
+                    let argv = [missing.as_ptr(), std::ptr::null()];
+                    unsafe {
+                        libc::syscall(
+                            libc::SYS_execve,
+                            missing.as_ptr(),
+                            argv.as_ptr(),
+                            std::ptr::null::<*const libc::c_char>(),
+                        );
+                    }
+                }
+                "fchmod" => unsafe {
+                    libc::syscall(libc::SYS_fchmod, BROKER_FD, 0o777);
+                },
+                "dup" => unsafe {
+                    libc::syscall(libc::SYS_dup, BROKER_FD);
+                },
+                "recvmsg-wrong-fd" => {
+                    let mut message = unsafe { std::mem::zeroed::<libc::msghdr>() };
+                    unsafe {
+                        libc::syscall(libc::SYS_recvmsg, BROKER_FD + 1, &mut message, 0);
+                    }
+                }
+                _ => panic!("unknown seccomp test scenario: {scenario}"),
+            }
+            panic!("unauthorized syscall scenario {scenario} returned to the caller");
+        }
+
+        for scenario in [
+            "openat",
+            "socket",
+            "connect",
+            "execve",
+            "fchmod",
+            "dup",
+            "recvmsg-wrong-fd",
+        ] {
+            let output = Command::new(std::env::current_exe().expect("test executable"))
+                .arg("--exact")
+                .arg("landlock_seccomp::tests::seccomp_denies_path_open_socket_connect_exec_and_fd_metadata_mutation")
+                .arg("--nocapture")
+                .env(CHILD_MARKER, scenario)
+                .output()
+                .expect("spawn isolated seccomp negative-case child");
+            assert!(
+                !output.status.success(),
+                "unauthorized syscall {scenario} unexpectedly returned successfully"
+            );
+            assert!(
+                output.status.signal().is_some(),
+                "unauthorized syscall {scenario} did not signal-kill the process: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
     }
 
     #[test]
