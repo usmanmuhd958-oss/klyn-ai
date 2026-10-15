@@ -24,6 +24,7 @@ use std::{
 };
 
 use crate::{
+    fs_txn::{FsTransaction, SharedFsTransaction},
     kel::{hash_payload, KelEventKind, SharedKelJournal},
     ResourceBudget, SandboxError,
 };
@@ -118,7 +119,7 @@ impl WorkerTelemetry {
         worker_pid: u32,
         budget: ResourceBudget,
     ) -> Result<Self, SandboxError> {
-        Self::start_internal(cgroup_path, worker_pid, budget, None)
+        Self::start_internal(cgroup_path, worker_pid, budget, None, None)
     }
 
     /// Start mandatory cgroup monitoring coupled to the worker's cryptographic
@@ -129,7 +130,24 @@ impl WorkerTelemetry {
         budget: ResourceBudget,
         kel_journal: SharedKelJournal,
     ) -> Result<Self, SandboxError> {
-        Self::start_internal(cgroup_path, worker_pid, budget, Some(kel_journal))
+        Self::start_internal(cgroup_path, worker_pid, budget, Some(kel_journal), None)
+    }
+
+    /// Start telemetry with filesystem rollback linked to terminal cgroup teardown.
+    pub fn start_with_kel_and_fs_transaction(
+        cgroup_path: impl AsRef<Path>,
+        worker_pid: u32,
+        budget: ResourceBudget,
+        kel_journal: SharedKelJournal,
+        filesystem_transaction: SharedFsTransaction,
+    ) -> Result<Self, SandboxError> {
+        Self::start_internal(
+            cgroup_path,
+            worker_pid,
+            budget,
+            Some(kel_journal),
+            Some(filesystem_transaction),
+        )
     }
 
     fn start_internal(
@@ -137,6 +155,7 @@ impl WorkerTelemetry {
         worker_pid: u32,
         budget: ResourceBudget,
         kel_journal: Option<SharedKelJournal>,
+        filesystem_transaction: Option<SharedFsTransaction>,
     ) -> Result<Self, SandboxError> {
         budget.validate()?;
         if worker_pid == 0 {
@@ -211,6 +230,7 @@ impl WorkerTelemetry {
                     kernel_tx,
                     kernel_rx,
                     kel_journal,
+                    filesystem_transaction,
                     startup_tx,
                 });
             })
@@ -285,6 +305,7 @@ struct MonitorConfig {
     kernel_tx: SyncSender<TelemetryEvent>,
     kernel_rx: Receiver<TelemetryEvent>,
     kel_journal: Option<SharedKelJournal>,
+    filesystem_transaction: Option<SharedFsTransaction>,
     startup_tx: SyncSender<TelemetryMode>,
 }
 
@@ -304,6 +325,7 @@ fn monitor_loop(config: MonitorConfig) {
         kernel_tx,
         kernel_rx,
         kel_journal,
+        filesystem_transaction,
         startup_tx,
     } = config;
     let cgroup_id = match fs::metadata(&cgroup_path) {
@@ -517,6 +539,17 @@ fn monitor_loop(config: MonitorConfig) {
 
                 match wait_for_cgroup_empty(&cgroup_path, Duration::from_millis(100)) {
                     Ok(()) => {
+                        if let Some(transaction) = filesystem_transaction.as_ref() {
+                            match transaction.lock() {
+                                Ok(mut transaction) => {
+                                    transaction.rollback_after_cgroup_empty_or_abort()
+                                }
+                                Err(_) => FsTransaction::abort_cleanup_failure(
+                                    None,
+                                    "filesystem transaction mutex poisoned in telemetry rollback",
+                                ),
+                            }
+                        }
                         if let Some(journal) = kel_journal.as_ref() {
                             let path_hash = hash_payload(cgroup_path.to_string_lossy().as_bytes());
                             if let Err(error) = record_kel_cgroup_destroyed(journal, path_hash) {
