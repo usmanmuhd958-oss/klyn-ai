@@ -1,9 +1,37 @@
 //! Kani proofs for IPC counter distance, slot geometry, and bounded queue traces.
 
-use crate::ipc_ring::{ring_distance, RING_SLOT_COUNT};
+use crate::ipc_ring::{
+    frame_length_is_valid, frame_payload_length_matches, ring_distance, RING_MAX_PAYLOAD_BYTES,
+    RING_SLOT_COUNT,
+};
 
 const CAPACITY: u32 = RING_SLOT_COUNT as u32;
 const SLOT_MASK: usize = RING_SLOT_COUNT - 1;
+
+#[kani::proof]
+fn every_symbolic_frame_length_is_nonzero_and_within_the_maximum() {
+    let length: usize = kani::any();
+    let accepted = frame_length_is_valid(length);
+
+    assert_eq!(accepted, length > 0 && length <= RING_MAX_PAYLOAD_BYTES);
+    if accepted {
+        assert!(length <= RING_MAX_PAYLOAD_BYTES);
+        assert!(length > 0);
+    }
+}
+
+#[kani::proof]
+fn frame_prefix_payload_geometry_never_underflows() {
+    let packet_length: usize = kani::any();
+    let declared_length: usize = kani::any();
+    let matches = frame_payload_length_matches(packet_length, declared_length);
+
+    if packet_length < 4 {
+        assert!(!matches);
+    } else {
+        assert_eq!(matches, packet_length - 4 == declared_length);
+    }
+}
 
 #[kani::proof]
 fn arbitrary_counter_distance_is_classified() {
