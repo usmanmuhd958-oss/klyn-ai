@@ -31,7 +31,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Configure verified GitLab SSH transport
+      - name: Reconcile and verify branches using pinned SSH transport
         shell: bash
         env:
           GITLAB_SSH_KEY: ${{ secrets.GITLAB_SSH_KEY }}
@@ -51,17 +51,9 @@ jobs:
           chmod 0644 "$HOME/.ssh/known_hosts"
           export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
           git remote add gitlab git@gitlab.com:usmanmuhd958-oss/klyn-ai.git
-          # Persist transport for the next step without persisting the private key.
-          printf '\nGIT_SSH_COMMAND=%s\n' "$GIT_SSH_COMMAND" >> "$GITHUB_ENV"
 
-      - name: Reconcile PR #82–#85 without force-pushes
-        shell: bash
-        run: bash scripts/reconcile_cross_provider.sh --apply
+          bash scripts/reconcile_cross_provider.sh --apply
 
-      - name: Verify the four feature branch tips are identical
-        shell: bash
-        run: |
-          set -Eeuo pipefail
           for branch in \
             feat/step4-shared-memory-ipc \
             feat/phase2-step2-ebpf-telemetry \

@@ -59,12 +59,20 @@ git remote get-url gitlab >/dev/null 2>&1 || { fail "gitlab remote is missing"; 
 
 fetch_heads() {
   local branch="$1"
-  git fetch --no-tags origin "refs/heads/$branch"
+  git fetch --no-tags origin "refs/heads/$branch" || {
+    fail "failed to fetch GitHub branch $branch"; return 1;
+  }
   local github_sha
-  github_sha="$(git rev-parse --verify FETCH_HEAD^{commit})"
-  git fetch --no-tags gitlab "refs/heads/$branch"
+  github_sha="$(git rev-parse --verify FETCH_HEAD^{commit})" || {
+    fail "GitHub fetch did not resolve to a commit for $branch"; return 1;
+  }
+  git fetch --no-tags gitlab "refs/heads/$branch" || {
+    fail "failed to fetch GitLab branch $branch; check GIT_SSH_COMMAND/key permissions"; return 1;
+  }
   local gitlab_sha
-  gitlab_sha="$(git rev-parse --verify FETCH_HEAD^{commit})"
+  gitlab_sha="$(git rev-parse --verify FETCH_HEAD^{commit})" || {
+    fail "GitLab fetch did not resolve to a commit for $branch"; return 1;
+  }
   printf '%s\n%s\n' "$github_sha" "$gitlab_sha"
 }
 remote_sha() {
@@ -88,7 +96,11 @@ assert_remote_heads_unchanged() {
 failed=0
 for branch in "${branches[@]}"; do
   printf '\n== %s ==\n' "$branch"
-  heads="$(fetch_heads "$branch")" || { fail "unable to fetch both heads for $branch"; failed=$((failed+1)); continue; }
+  if ! heads="$(fetch_heads "$branch")"; then
+    fail "unable to fetch both heads for $branch; no update was attempted"
+    failed=$((failed+1))
+    continue
+  fi
   github_sha="$(printf '%s\n' "$heads" | sed -n '1p')"
   gitlab_sha="$(printf '%s\n' "$heads" | sed -n '2p')"
   printf 'GitHub: %s\nGitLab: %s\n' "$github_sha" "$gitlab_sha"

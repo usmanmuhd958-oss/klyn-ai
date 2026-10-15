@@ -27,6 +27,13 @@ for name in \
   require_env "$name"
 done
 
+repository_real="$(realpath -e "$KLYN_REPOSITORY")" || fail "KLYN_REPOSITORY does not exist"
+working_tree_real="$(realpath -e "$PWD")" || fail "cannot resolve current working directory"
+[[ "$repository_real" == "$working_tree_real" ]] ||
+  fail "run the orchestrator from KLYN_REPOSITORY (repository=$repository_real cwd=$working_tree_real)"
+git -C "$repository_real" rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
+  fail "KLYN_REPOSITORY must be a disposable Git checkout"
+
 command -v cc >/dev/null 2>&1 || fail "a C compiler is required for the kernel Landlock ABI probe"
 command -v bpftool >/dev/null 2>&1 || fail "bpftool is required for BTF validation"
 command -v readelf >/dev/null 2>&1 || fail "readelf is required to inspect the eBPF ELF object"
