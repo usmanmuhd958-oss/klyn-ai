@@ -134,7 +134,16 @@ jobs:
           KLYN_REQUIRE_NATIVE_LINUX_QUALIFICATION: "1"
           KLYN_NATIVE_QUALIFICATION_READY: ${{ vars.KLYN_NATIVE_QUALIFICATION_READY }}
           KLYN_NATIVE_EPHEMERAL_VM: ${{ vars.KLYN_NATIVE_EPHEMERAL_VM }}
+          KLYN_NATIVE_EVIDENCE_ROOT: ${{ runner.temp }}
         run: bash scripts/orchestrate_native_qualification.sh
+      - name: Upload native qualification evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: klyn-native-qualification-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/klyn-native-qualification-*
+          if-no-files-found: ignore
+          retention-days: 14
 
   qualification-summary:
     name: Required CI and native qualification status

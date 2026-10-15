@@ -118,8 +118,15 @@ native_linux_qualification:
   timeout: 45m
   variables:
     KLYN_REQUIRE_NATIVE_LINUX_QUALIFICATION: "1"
+    KLYN_NATIVE_EVIDENCE_ROOT: "$CI_PROJECT_DIR/target/native-qualification-evidence"
   script:
+    - mkdir -p "$CI_PROJECT_DIR/target/native-qualification-evidence"
     - bash scripts/orchestrate_native_qualification.sh
+  artifacts:
+    when: always
+    expire_in: 14 days
+    paths:
+      - target/native-qualification-evidence/
   rules:
     - if: '$KLYN_NATIVE_QUALIFICATION_READY == "true" && ($CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "feat/phase2-step5-fuzz-native-qualification")'
       when: manual

@@ -67,7 +67,7 @@ done
 
 # Query the live kernel ABI, rather than inferring it from the installed headers
 # or accepting the Rust runtime's fail-closed fallback as qualification.
-evidence_root="${RUNNER_TEMP:-${CI_PROJECT_DIR:-${TMPDIR:-/tmp}}}"
+evidence_root="${KLYN_NATIVE_EVIDENCE_ROOT:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}}"
 evidence_dir="$evidence_root/klyn-native-qualification-${GITHUB_RUN_ID:-${CI_PIPELINE_ID:-local}}-$$"
 umask 077
 mkdir -p "$evidence_dir"
