@@ -43,6 +43,13 @@ use crate::SandboxError;
 pub const RING_SLOT_COUNT: usize = 8;
 pub const RING_MAX_PAYLOAD_BYTES: usize = 64 * 1024;
 
+/// Return a valid number of outstanding SPSC entries, or reject corruption.
+/// Wrapping subtraction keeps the sequence counters valid across u32 rollover.
+pub(crate) fn ring_distance(head: u32, tail: u32) -> Option<u32> {
+    let distance = head.wrapping_sub(tail);
+    (distance <= RING_SLOT_COUNT as u32).then_some(distance)
+}
+
 /// Decode the explicit little-endian length prefix used for fuzzable IPC frame
 /// packets. The input must contain exactly one non-empty frame and its payload;
 /// truncated, oversized, or trailing bytes are rejected.
@@ -314,12 +321,11 @@ impl RingProducer {
     pub fn try_reserve(&mut self) -> Result<Option<ProducerReservation<'_>>, SandboxError> {
         let head = unsafe { &*self.head }.load(Ordering::Relaxed);
         let tail = unsafe { &*self.tail }.load(Ordering::Acquire);
-        let used = head.wrapping_sub(tail);
-        if used > RING_SLOT_COUNT as u32 {
-            return Err(SandboxError::Enforcement(
+        let used = ring_distance(head, tail).ok_or_else(|| {
+            SandboxError::Enforcement(
                 "shared IPC producer observed corrupt head/tail distance".into(),
-            ));
-        }
+            )
+        })?;
         if used == RING_SLOT_COUNT as u32 {
             return Ok(None);
         }
@@ -565,12 +571,11 @@ impl RingConsumer {
     fn peek_next_slot(&self) -> Result<Option<PeekedSlotMetadata>, SandboxError> {
         let head = unsafe { &*self.head }.load(Ordering::Acquire);
         let tail = unsafe { &*self.tail }.load(Ordering::Relaxed);
-        let available = head.wrapping_sub(tail);
-        if available > RING_SLOT_COUNT as u32 {
-            return Err(SandboxError::Enforcement(
+        let available = ring_distance(head, tail).ok_or_else(|| {
+            SandboxError::Enforcement(
                 "shared IPC consumer observed corrupt head/tail distance".into(),
-            ));
-        }
+            )
+        })?;
         if available == 0 {
             return Ok(None);
         }

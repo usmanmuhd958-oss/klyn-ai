@@ -9,6 +9,12 @@
 //! * Every required kernel enforcement failure is fatal to the worker. Callers
 //!   must never downgrade to an unsandboxed execution path.
 
+/// Bounded Kani proofs for pure IPC/KEL invariants. Kani does not model
+/// cross-process scheduling; these harnesses are not data-race proofs.
+#[cfg(kani)]
+#[path = "kaniproofs/mod.rs"]
+mod kaniproofs;
+
 #[cfg(target_os = "linux")]
 pub mod kel;
 

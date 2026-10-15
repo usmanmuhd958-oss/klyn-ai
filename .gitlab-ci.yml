@@ -3,6 +3,7 @@ image: rust:1.99.0-bookworm
 stages:
   - validate
   - test
+  - formal
   - fuzz
   - qualification
 
@@ -40,6 +41,26 @@ test_sandbox:
   script:
     - cargo test --locked --workspace -- --nocapture
     - cargo clippy --locked --workspace --all-targets -- -D warnings
+
+kani_formal_verification:
+  stage: formal
+  timeout: 70m
+  variables:
+    KLYN_KANI_LOG: "$CI_PROJECT_DIR/target/kani-evidence/kani.log"
+  script:
+    - cargo fmt --all -- --check
+    - cargo metadata --locked --format-version 1 > /dev/null
+    - bash scripts/run_kani_proofs.sh
+  artifacts:
+    when: always
+    expire_in: 14 days
+    paths:
+      - target/kani-evidence/
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "feat/phase3-formal-native-qualification"'
+      when: on_success
+    - when: never
+
 fuzz_targets:
   stage: test
   timeout: 20m
@@ -114,22 +135,23 @@ fuzz_campaign:
 native_linux_qualification:
   stage: qualification
   tags:
-    - klyn-native-qualification
-  timeout: 45m
+    - klyn-kvm-qualification
+  timeout: 90m
   variables:
-    KLYN_REQUIRE_NATIVE_LINUX_QUALIFICATION: "1"
-    KLYN_NATIVE_EVIDENCE_ROOT: "$CI_PROJECT_DIR/target/native-qualification-evidence"
+    KLYN_NATIVE_EVIDENCE_ROOT: "$CI_PROJECT_DIR/target/native-microvm-evidence"
+    KLYN_VM_SOURCE_DIR: "$CI_PROJECT_DIR"
+    KLYN_VM_RUN_ID: "$CI_PIPELINE_ID"
   script:
-    - mkdir -p "$CI_PROJECT_DIR/target/native-qualification-evidence"
-    - bash scripts/orchestrate_native_qualification.sh
+    - mkdir -p "$CI_PROJECT_DIR/target/native-microvm-evidence"
+    - bash scripts/boot_qualification_vm.sh
   artifacts:
     when: always
     expire_in: 14 days
     paths:
       - target/native-qualification-evidence/
   rules:
-    - if: '$KLYN_NATIVE_QUALIFICATION_READY == "true" && ($CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "feat/phase2-step5-fuzz-native-qualification")'
-      when: manual
+    - if: '$KLYN_NATIVE_QUALIFICATION_READY == "true" && ($CI_COMMIT_BRANCH == "feat/phase2-step5-fuzz-native-qualification" || $CI_COMMIT_BRANCH == "feat/phase3-formal-native-qualification" || ($CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "feat/phase3-formal-native-qualification"))'
+      when: on_success
     - when: never
 
 native_qualification_status:
@@ -138,11 +160,11 @@ native_qualification_status:
   script:
     - |
       if [[ "${KLYN_NATIVE_QUALIFICATION_READY:-false}" == "true" ]]; then
-        echo "Native qualification runner is declared ready; execute the blocking manual native_linux_qualification job."
-        echo "This status job alone does not certify the native runtime."
+        echo "KVM microVM qualification is configured as an automatic job on the klyn-kvm-qualification runner."
+        echo "Inspect native_linux_qualification and its evidence artifact for the actual certification result."
       else
         echo "NATIVE QUALIFICATION: NOT RUN."
-        echo "KLYN_NATIVE_QUALIFICATION_READY is not true; the dedicated runner/trusted assets are not declared provisioned."
+        echo "KLYN_NATIVE_QUALIFICATION_READY is not true; approved VM image and trusted guest fixtures are not declared provisioned."
         echo "A green standard pipeline is not native Linux runtime certification."
       fi
   rules:
