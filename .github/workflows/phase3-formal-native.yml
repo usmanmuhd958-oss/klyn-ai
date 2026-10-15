@@ -85,7 +85,6 @@ jobs:
       KLYN_VM_SSH_USER: ${{ vars.KLYN_VM_SSH_USER }}
       KLYN_VM_SOURCE_DIR: ${{ github.workspace }}
       KLYN_VM_RUN_ID: ${{ github.run_id }}
-      KLYN_NATIVE_EVIDENCE_ROOT: ${{ runner.temp }}/klyn-native-microvm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -102,6 +101,8 @@ jobs:
           printf '%s\n' "$VM_SSH_PRIVATE_KEY" > "$key_path"
           echo "KLYN_VM_SSH_KEY=$key_path" >> "$GITHUB_ENV"
       - name: Boot disposable VM and run native qualification
+        env:
+          KLYN_NATIVE_EVIDENCE_ROOT: ${{ runner.temp }}/klyn-native-microvm
         run: bash scripts/boot_qualification_vm.sh
       - name: Upload VM, kernel, and native evidence
         if: ${{ always() }}

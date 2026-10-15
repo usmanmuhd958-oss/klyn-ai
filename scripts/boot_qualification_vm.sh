@@ -50,7 +50,7 @@ git -C "$source_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
 base_image="$(realpath -e "$KLYN_VM_BASE_IMAGE")"
 actual_image_sha="$(sha256sum "$base_image" | awk '{print $1}')"
 [[ "${actual_image_sha,,}" == "${KLYN_VM_BASE_IMAGE_SHA256,,}" ]] || fail "approved base image SHA-256 does not match KLYN_VM_BASE_IMAGE_SHA256"
-printf 'base_image_sha256=%s\\n' "$actual_image_sha" | tee "$artifact_dir/host-metadata.txt"
+printf 'base_image_sha256=%s\n' "$actual_image_sha" | tee -a "$artifact_dir/host-metadata.txt"
 image_info="$(qemu-img info --output=json "$base_image")" ||
   fail "qemu-img cannot inspect the approved base image"
 base_format="$(printf '%s' "$image_info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["format"])')" ||
