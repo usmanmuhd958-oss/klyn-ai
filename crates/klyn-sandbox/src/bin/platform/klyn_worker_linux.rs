@@ -1,92 +1,64 @@
-//! Minimal fail-closed protocol endpoint for native sandbox qualification.
+//! Minimal fail-closed worker protocol endpoint.
 //!
-//! It only supports ping and shutdown. No model-supplied command, shell,
-//! filesystem mutation, or arbitrary process execution is interpreted here.
-//! Access to resources remains broker-mediated and read-only in this phase.
+//! The control plane uses a bounded binary protocol over pre-mapped SPSC rings.
+//! No JSON serialization, heap allocation, or socket creation occurs in the
+//! command loop. This worker remains deliberately limited to ping and shutdown;
+//! no model-supplied command, shell, filesystem mutation, or process execution
+//! is interpreted here.
 
-use std::io::{self, BufRead, BufReader, Write};
+use std::time::Duration;
 
-use klyn_sandbox::worker_bootstrap;
+use klyn_sandbox::{
+    ipc_ring::{WORKER_CMD_PING, WORKER_CMD_SHUTDOWN, WORKER_RESP_PING, WORKER_RESP_SHUTDOWN},
+    worker_bootstrap,
+};
 
-const MAX_COMMAND_BYTES: usize = klyn_sandbox::MAX_BROKER_FRAME_BYTES;
+const RESPONSE_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub fn run() -> Result<(), String> {
     // Verify the sealed manifest, capability, image, cgroup controls, broker,
-    // Landlock and seccomp. This call returns only after final supervisor ACK.
-    let _context = worker_bootstrap::initialize().map_err(|error| error.to_string())?;
-    let stdin = io::stdin();
-    let mut reader = BufReader::new(stdin.lock());
-    let stdout = io::stdout();
-    let mut writer = stdout.lock();
+    // Landlock and seccomp. This call returns only after the final supervisor
+    // ACK, and ring mappings are established only after signed claims verify.
+    let context = worker_bootstrap::initialize().map_err(|error| error.to_string())?;
+    let mut command_ring = context.command_ring;
+    let mut response_ring = context.response_ring;
+    let _broker = context.broker;
 
-    while let Some(line) = read_bounded_line(&mut reader)? {
-        let request: serde_json::Value =
-            serde_json::from_slice(&line).map_err(|_| "invalid worker request JSON".to_owned())?;
-        let object = request
-            .as_object()
-            .ok_or_else(|| "worker request must be a JSON object".to_owned())?;
-        if object.len() != 1 {
-            return Err("worker request contains unknown fields".into());
-        }
-        let operation = object
-            .get("op")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| "worker operation is missing".to_owned())?;
-        match operation {
-            "ping" => {
-                let pid = unsafe { libc::getpid() };
-                let response = serde_json::json!({
-                    "ok": true,
-                    "namespace_init": pid == 1,
-                    "pid": pid
-                });
-                write_response(&mut writer, &response)?;
+    loop {
+        // Read only a single opcode into a scalar before retiring the frame.
+        // The mapping is bounded and read-only at the consumer endpoint.
+        let opcode = {
+            let frame = command_ring
+                .wait_peek(None)
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| "worker command ring unexpectedly timed out".to_owned())?;
+            let payload = frame.payload();
+            if payload.len() != 1 {
+                return Err("worker command frame has an invalid length".into());
             }
-            "shutdown" => {
-                write_response(
-                    &mut writer,
-                    &serde_json::json!({"ok": true, "state": "stopping"}),
-                )?;
+            let opcode = payload[0];
+            frame.consume().map_err(|error| error.to_string())?;
+            opcode
+        };
+
+        match opcode {
+            WORKER_CMD_PING => {
+                let pid = unsafe { libc::getpid() };
+                let mut response = [0u8; 6];
+                response[0] = WORKER_RESP_PING;
+                response[1..5].copy_from_slice(&(pid as u32).to_le_bytes());
+                response[5] = u8::from(pid == 1);
+                response_ring
+                    .push_wait(&response, RESPONSE_TIMEOUT)
+                    .map_err(|error| error.to_string())?;
+            }
+            WORKER_CMD_SHUTDOWN => {
+                response_ring
+                    .push_wait(&[WORKER_RESP_SHUTDOWN], RESPONSE_TIMEOUT)
+                    .map_err(|error| error.to_string())?;
                 return Ok(());
             }
-            _ => return Err("unsupported worker operation".into()),
+            _ => return Err("unsupported worker command opcode".into()),
         }
     }
-    Err("supervisor closed worker input without a shutdown request".into())
-}
-
-fn read_bounded_line<R: BufRead>(reader: &mut R) -> Result<Option<Vec<u8>>, String> {
-    let mut line = Vec::new();
-    loop {
-        let available = reader.fill_buf().map_err(|error| error.to_string())?;
-        if available.is_empty() {
-            return if line.is_empty() {
-                Ok(None)
-            } else {
-                Err("truncated worker request".into())
-            };
-        }
-        let newline = available.iter().position(|byte| *byte == b'\n');
-        let segment_len = newline.unwrap_or(available.len());
-        if line.len().saturating_add(segment_len) > MAX_COMMAND_BYTES {
-            return Err("worker request exceeds the frame limit".into());
-        }
-        line.extend_from_slice(&available[..segment_len]);
-        reader.consume(segment_len + if newline.is_some() { 1 } else { 0 });
-        if newline.is_some() {
-            return Ok(Some(line));
-        }
-    }
-}
-
-fn write_response(writer: &mut impl Write, value: &serde_json::Value) -> Result<(), String> {
-    let bytes = serde_json::to_vec(value).map_err(|error| error.to_string())?;
-    if bytes.is_empty() || bytes.len() > MAX_COMMAND_BYTES {
-        return Err("worker response exceeds the frame limit".into());
-    }
-    writer
-        .write_all(&bytes)
-        .map_err(|error| error.to_string())?;
-    writer.write_all(b"\n").map_err(|error| error.to_string())?;
-    writer.flush().map_err(|error| error.to_string())
 }

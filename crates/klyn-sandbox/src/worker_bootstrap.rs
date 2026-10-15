@@ -19,6 +19,11 @@ pub use crate::manifest::{WorkerManifest, WORKER_MANIFEST_VERSION};
 
 use crate::{
     broker::{BrokerClient, CapabilityVerifier, Ed25519CapabilityVerifier},
+    ipc_ring::{
+        RingConsumer, RingProducer, COMMAND_RING_HEAD_FD, COMMAND_RING_PAYLOAD_FD,
+        COMMAND_RING_TAIL_FD, RESPONSE_RING_HEAD_FD, RESPONSE_RING_PAYLOAD_FD,
+        RESPONSE_RING_TAIL_FD,
+    },
     landlock_seccomp, validate_trusted_root, CapabilityClaims, SandboxError, BROKER_FD,
     MANIFEST_FD, OCAP_VERSION,
 };
@@ -29,6 +34,8 @@ pub const VERIFY_KEY_PATH: &str = "/etc/klyn/ocap-ed25519.pub";
 pub struct WorkerBootstrapContext {
     pub manifest: WorkerManifest,
     pub broker: BrokerClient,
+    pub command_ring: RingConsumer,
+    pub response_ring: RingProducer,
 }
 
 /// Verify the sealed manifest and capability, connect to the broker, and apply
@@ -52,6 +59,28 @@ pub fn initialize() -> Result<WorkerBootstrapContext, SandboxError> {
         .map_err(|e| SandboxError::InvalidConfig(format!("capability verification failed: {e}")))?;
 
     validate_capability_context(&manifest.capability.claims)?;
+
+    // The sealed manifest and OCap signature are verified before the worker
+    // maps shared IPC. FD positions are fixed by the trusted supervisor; the
+    // ring constructors validate each memfd's exact size and resize seals.
+    // SAFETY: stage-0 inherits these six distinct descriptors at the fixed
+    // constants below, and ownership transfers to the ring endpoint constructors.
+    let command_ring = unsafe {
+        RingConsumer::from_inherited_fds(
+            COMMAND_RING_PAYLOAD_FD,
+            COMMAND_RING_HEAD_FD,
+            COMMAND_RING_TAIL_FD,
+        )?
+    };
+    // SAFETY: these are the three remaining, distinct response-ring descriptors
+    // created by the same trusted supervisor launch path.
+    let response_ring = unsafe {
+        RingProducer::from_inherited_fds(
+            RESPONSE_RING_PAYLOAD_FD,
+            RESPONSE_RING_HEAD_FD,
+            RESPONSE_RING_TAIL_FD,
+        )?
+    };
 
     // Bind the running process to the exact signed cgroup leaf and read back
     // every enforced memory/CPU/PID/I/O control plus cpu.weight.
@@ -78,7 +107,12 @@ pub fn initialize() -> Result<WorkerBootstrapContext, SandboxError> {
     // not values independently supplied by the worker.
     let _: &CapabilityClaims = &manifest.capability.claims;
 
-    Ok(WorkerBootstrapContext { manifest, broker })
+    Ok(WorkerBootstrapContext {
+        manifest,
+        broker,
+        command_ring,
+        response_ring,
+    })
 }
 
 pub fn validate_manifest_shape(manifest: &WorkerManifest) -> Result<(), SandboxError> {

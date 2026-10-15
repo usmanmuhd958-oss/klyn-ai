@@ -12,6 +12,7 @@ on:
     branches:
       - feat/step3-worker-bootstrap
       - reconcile/step3-platform-daemon
+      - feat/step4-shared-memory-ipc
   pull_request:
     branches:
       - main
@@ -41,7 +42,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
@@ -75,11 +76,11 @@ jobs:
   # Opt-in only: this job needs an ephemeral, isolated Linux runner with
   # delegated cgroup v2 and pre-provisioned trusted native worker files.
   native-linux-qualification:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/reconcile/step3-platform-daemon' && inputs.run_native_linux_qualification == true }}
+    if: ${{ github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/reconcile/step3-platform-daemon' || github.ref == 'refs/heads/feat/step4-shared-memory-ipc') && inputs.run_native_linux_qualification == true }}
     runs-on: [self-hosted, linux, klyn-native-qualification]
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249

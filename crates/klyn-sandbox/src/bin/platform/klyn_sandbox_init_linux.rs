@@ -19,6 +19,7 @@ use std::{
 use klyn_sandbox::{
     broker::{CapabilityVerifier, Ed25519CapabilityVerifier},
     cgroup::CgroupV2Boundary,
+    ipc_ring::{COMMAND_RING_PAYLOAD_FD, RESPONSE_RING_TAIL_FD},
     manifest::read_sealed_manifest_fd,
     start_gate::{START_GATE_FD, START_GATE_RELEASE, WORKER_POLICY_GATE_FD},
     validate_trusted_executable,
@@ -204,9 +205,12 @@ fn run() -> Result<(), String> {
     if pid > 0 {
         unsafe {
             libc::close(MANIFEST_FD);
-            // Only the PID-namespace worker may hold the policy-gate endpoint;
-            // retaining it here would suppress EOF if the worker exits early.
+            // Only the PID-namespace worker may hold these endpoints; keeping
+            // duplicates in stage-0 would extend their lifetime unnecessarily.
             libc::close(WORKER_POLICY_GATE_FD);
+            for fd in COMMAND_RING_PAYLOAD_FD..=RESPONSE_RING_TAIL_FD {
+                libc::close(fd);
+            }
         }
         let mut status: libc::c_int = 0;
         loop {
@@ -283,9 +287,9 @@ fn run() -> Result<(), String> {
     process.env("LANG", "C");
     let error = unsafe {
         process.pre_exec(|| {
-            // Preserve FD 4 (sealed manifest) and FD 6 (policy gate). Close FD 5
-            // and every other descriptor; no fallback for kernels lacking
-            // close_range is allowed.
+            // Preserve FD 4 (sealed manifest), FD 6 (policy gate), and FDs
+            // 7..=12 (the two ring endpoints). Close FD 5 and every other
+            // descriptor; no fallback for missing close_range is allowed.
             let low = libc::syscall(libc::SYS_close_range, 3u32, 3u32, 0u32);
             if low != 0 {
                 return Err(std::io::Error::last_os_error());
@@ -301,7 +305,7 @@ fn run() -> Result<(), String> {
             }
             let high = libc::syscall(
                 libc::SYS_close_range,
-                (WORKER_POLICY_GATE_FD + 1) as u32,
+                (RESPONSE_RING_TAIL_FD + 1) as u32,
                 u32::MAX,
                 0u32,
             );
