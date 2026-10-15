@@ -265,6 +265,73 @@ pub struct KelEvent {
     pub attestation: KelAttestationProof,
 }
 
+/// Reasons a proposed immutable KEL chain extension can be rejected.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum KelChainError {
+    InvalidTransition,
+    SequenceMismatch,
+    PreviousRootMismatch,
+    SequenceOverflow,
+}
+
+/// Immutable candidate head for the KEL lifecycle chain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct KelChainState {
+    pub(crate) next_sequence: u64,
+    pub(crate) head_root: [u8; 32],
+    pub(crate) last_kind: Option<KelEventKind>,
+}
+
+impl KelChainState {
+    pub(crate) const fn initial() -> Self {
+        Self {
+            next_sequence: 0,
+            head_root: ZERO_HASH,
+            last_kind: None,
+        }
+    }
+
+    /// Propose an extension without mutating the trusted head.
+    /// The caller must validate the event hash and signature before committing it.
+    pub(crate) fn advance(
+        &self,
+        event_sequence: u64,
+        event_previous_hash: &[u8; 32],
+        event_hash: &[u8; 32],
+        event_kind: KelEventKind,
+    ) -> Result<Self, KelChainError> {
+        if !transition_allowed(self.last_kind, event_kind) {
+            return Err(KelChainError::InvalidTransition);
+        }
+        if event_sequence != self.next_sequence {
+            return Err(KelChainError::SequenceMismatch);
+        }
+        if !chain_predecessor_matches(event_previous_hash, &self.head_root) {
+            return Err(KelChainError::PreviousRootMismatch);
+        }
+        let next_sequence =
+            checked_next_sequence(self.next_sequence).ok_or(KelChainError::SequenceOverflow)?;
+        Ok(Self {
+            next_sequence,
+            head_root: *event_hash,
+            last_kind: Some(event_kind),
+        })
+    }
+}
+
+/// Compare a record's claimed predecessor with the independently trusted root.
+pub(crate) fn chain_predecessor_matches(
+    event_previous_hash: &[u8; 32],
+    trusted_head: &[u8; 32],
+) -> bool {
+    event_previous_hash == trusted_head
+}
+
+/// Checked sequence advancement; overflow is always rejected.
+pub(crate) fn checked_next_sequence(sequence: u64) -> Option<u64> {
+    sequence.checked_add(1)
+}
+
 impl KelEvent {
     fn calculate_hash(&self) -> [u8; 32] {
         let mut hash = Sha256::new();
@@ -285,7 +352,7 @@ impl KelEvent {
         expected_previous_hash: &[u8; 32],
         daemon_key: &VerifyingKey,
     ) -> Result<(), SandboxError> {
-        if &self.previous_hash != expected_previous_hash {
+        if !chain_predecessor_matches(&self.previous_hash, expected_previous_hash) {
             return Err(SandboxError::Enforcement(
                 "KEL hash chain references an unexpected predecessor".into(),
             ));
@@ -669,7 +736,7 @@ impl KelJournal {
         if event.kind == KelEventKind::CapabilityValidated {
             self.validated_capability_hash = Some(event.payload_hash);
         }
-        self.next_sequence = self.next_sequence.checked_add(1).ok_or_else(|| {
+        self.next_sequence = checked_next_sequence(self.next_sequence).ok_or_else(|| {
             self.poisoned = true;
             SandboxError::Enforcement("KEL event sequence overflow".into())
         })?;
@@ -722,25 +789,35 @@ impl KelJournal {
 
         let record_count = bytes.len() / KEL_EVENT_ENCODED_LEN;
         let mut events: Vec<KelEvent> = Vec::with_capacity(record_count);
-        let mut previous_hash = ZERO_HASH;
-        let mut previous_kind = None;
+        let mut chain = KelChainState::initial();
         let mut previous_payload_hash = None;
         let mut validated_capability_hash = None;
-        let mut expected_sequence = 0_u64;
 
         for (record_index, record_bytes) in bytes.chunks_exact(KEL_EVENT_ENCODED_LEN).enumerate() {
             let event = KelEvent::decode_record(record_bytes)?;
-            if !transition_allowed(previous_kind, event.kind) {
-                return Err(SandboxError::Enforcement(format!(
-                    "KEL lifecycle transition from {previous_kind:?} to {:?} is invalid",
-                    event.kind
-                )));
-            }
-            if event.sequence != expected_sequence {
-                return Err(SandboxError::Enforcement(
-                    "KEL sequence number is missing, duplicated, or reordered".into(),
-                ));
-            }
+            let candidate = chain
+                .advance(
+                    event.sequence,
+                    &event.previous_hash,
+                    &event.event_hash,
+                    event.kind,
+                )
+                .map_err(|error| match error {
+                    KelChainError::InvalidTransition => SandboxError::Enforcement(format!(
+                        "KEL lifecycle transition from {:?} to {:?} is invalid",
+                        chain.last_kind, event.kind
+                    )),
+                    KelChainError::SequenceMismatch => SandboxError::Enforcement(
+                        "KEL sequence number is missing, duplicated, or reordered".into(),
+                    ),
+                    KelChainError::PreviousRootMismatch => SandboxError::Enforcement(
+                        "KEL hash chain references an unexpected predecessor".into(),
+                    ),
+                    KelChainError::SequenceOverflow => {
+                        SandboxError::Enforcement("KEL verification sequence overflow".into())
+                    }
+                })?;
+
             if event.kind == KelEventKind::WorkerAttested
                 && (validated_capability_hash != Some(event.attestation.capability_hash)
                     || previous_payload_hash != Some(event.attestation.spawn_payload_hash()))
@@ -749,7 +826,8 @@ impl KelJournal {
                     "KEL worker proof does not match the signed capability/Spawn records".into(),
                 ));
             }
-            event.verify(&previous_hash, trusted_daemon_key)?;
+            // No candidate state is committed until canonical hash and signatures pass.
+            event.verify(&chain.head_root, trusted_daemon_key)?;
             if let Some(last) = events.last() {
                 if last.session_id != event.session_id {
                     return Err(SandboxError::Enforcement(
@@ -765,17 +843,13 @@ impl KelJournal {
             if event.kind == KelEventKind::CapabilityValidated {
                 validated_capability_hash = Some(event.payload_hash);
             }
-            previous_hash = event.event_hash;
-            previous_kind = Some(event.kind);
             previous_payload_hash = Some(event.payload_hash);
-            expected_sequence = expected_sequence.checked_add(1).ok_or_else(|| {
-                SandboxError::Enforcement("KEL verification sequence overflow".into())
-            })?;
+            chain = candidate;
             events.push(event);
         }
 
         if let Some(expected) = expected_head {
-            if previous_hash != expected {
+            if chain.head_root != expected {
                 return Err(SandboxError::Enforcement(
                     "KEL final root differs from the independently anchored root".into(),
                 ));
@@ -783,7 +857,7 @@ impl KelJournal {
         }
         Ok(KelVerification {
             events,
-            head_root: previous_hash,
+            head_root: chain.head_root,
         })
     }
 }
@@ -802,7 +876,7 @@ pub struct KelVerification {
     pub head_root: [u8; 32],
 }
 
-fn transition_allowed(previous: Option<KelEventKind>, next: KelEventKind) -> bool {
+pub(crate) fn transition_allowed(previous: Option<KelEventKind>, next: KelEventKind) -> bool {
     match previous {
         None => matches!(
             next,

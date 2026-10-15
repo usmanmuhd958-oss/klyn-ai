@@ -1,0 +1,141 @@
+name: KLYN Phase 3 — Kani and QEMU/KVM qualification
+
+on:
+  push:
+    branches:
+      - feat/phase3-formal-native-qualification
+  pull_request:
+    branches:
+      - feat/phase2-step5-fuzz-native-qualification
+      - main
+      - master
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - crates/klyn-sandbox/**
+      - scripts/run_kani_proofs.sh
+      - scripts/boot_qualification_vm.sh
+      - docs/phase3-formal-verification-and-microvm.md
+      - .github/workflows/phase3-formal-native.yml
+      - .gitlab-ci.yml
+      - rust-toolchain.toml
+  workflow_dispatch:
+    inputs:
+      run_native_microvm_qualification:
+        description: "Boot a disposable QEMU/KVM guest and run strict native qualification"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: klyn-phase3-formal-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  formal-proofs:
+    name: Workspace checks and Kani proofs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
+        with:
+          toolchain: 1.99.0
+          components: rustfmt, clippy
+      - name: Format workspace
+        run: cargo fmt --all -- --check
+      - name: Validate locked workspace metadata
+        run: cargo metadata --locked --format-version 1 > /dev/null
+      - name: Check workspace with warnings denied
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo check --locked --workspace --all-targets
+      - name: Run workspace tests
+        run: cargo test --locked --workspace -- --nocapture
+      - name: Run strict Clippy
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Run Kani formal proof suite
+        env:
+          KLYN_KANI_LOG: target/kani-evidence/kani.log
+        run: bash scripts/run_kani_proofs.sh
+      - name: Upload formal verification logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: klyn-kani-evidence-${{ github.run_id }}
+          path: target/kani-evidence/
+          if-no-files-found: warn
+          retention-days: 14
+
+  native-microvm-qualification:
+    name: Disposable QEMU/KVM native qualification
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_native_microvm_qualification == true && vars.KLYN_NATIVE_QUALIFICATION_READY == 'true' }}
+    environment: klyn-native-qualification
+    runs-on: [self-hosted, linux, klyn-kvm-qualification]
+    timeout-minutes: 90
+    env:
+      KLYN_NATIVE_QUALIFICATION_READY: ${{ vars.KLYN_NATIVE_QUALIFICATION_READY }}
+      KLYN_VM_BASE_IMAGE: ${{ vars.KLYN_VM_BASE_IMAGE }}
+      KLYN_VM_BASE_IMAGE_SHA256: ${{ vars.KLYN_VM_BASE_IMAGE_SHA256 }}
+      KLYN_VM_SSH_USER: ${{ vars.KLYN_VM_SSH_USER }}
+      KLYN_VM_SOURCE_DIR: ${{ github.workspace }}
+      KLYN_VM_RUN_ID: ${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install isolated VM SSH identity
+        shell: bash
+        env:
+          VM_SSH_PRIVATE_KEY: ${{ secrets.KLYN_VM_SSH_PRIVATE_KEY }}
+        run: |
+          set -Eeuo pipefail
+          [[ -n "$VM_SSH_PRIVATE_KEY" ]] || { echo "::error::Secret KLYN_VM_SSH_PRIVATE_KEY is not configured"; exit 1; }
+          key_path="$RUNNER_TEMP/klyn-qualification-vm-key"
+          install -m 0600 /dev/null "$key_path"
+          printf '%s\n' "$VM_SSH_PRIVATE_KEY" > "$key_path"
+          echo "KLYN_VM_SSH_KEY=$key_path" >> "$GITHUB_ENV"
+      - name: Boot disposable VM and run native qualification
+        env:
+          KLYN_NATIVE_EVIDENCE_ROOT: ${{ runner.temp }}/klyn-native-microvm
+        run: bash scripts/boot_qualification_vm.sh
+      - name: Upload VM, kernel, and native evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: klyn-native-microvm-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/klyn-native-microvm/
+          if-no-files-found: warn
+          retention-days: 14
+
+  phase3-summary:
+    name: Phase 3 qualification status
+    if: ${{ always() }}
+    needs:
+      - formal-proofs
+      - native-microvm-qualification
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Enforce proof and native-job status boundaries
+        shell: bash
+        env:
+          FORMAL_RESULT: ${{ needs['formal-proofs'].result }}
+          NATIVE_RESULT: ${{ needs['native-microvm-qualification'].result }}
+          NATIVE_REQUESTED: ${{ github.event_name == 'workflow_dispatch' && inputs.run_native_microvm_qualification == true }}
+          NATIVE_READY: ${{ vars.KLYN_NATIVE_QUALIFICATION_READY }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$FORMAL_RESULT" == "success" ]] || { echo "::error::Formal proof job did not succeed: $FORMAL_RESULT"; exit 1; }
+          if [[ "$NATIVE_REQUESTED" == "true" ]]; then
+            [[ "$NATIVE_READY" == "true" ]] || { echo "::error::Native qualification was requested but KLYN_NATIVE_QUALIFICATION_READY is not true"; exit 1; }
+            [[ "$NATIVE_RESULT" == "success" ]] || { echo "::error::Native qualification requested but job result is $NATIVE_RESULT"; exit 1; }
+            echo "QEMU/KVM NATIVE QUALIFICATION PASSED"
+          else
+            echo "NATIVE QUALIFICATION: NOT RUN (not requested)"
+            echo "Green CI and Kani proofs do not certify live cgroup-v2, Landlock ABI v8, Seccomp-BPF, or eBPF runtime behavior."
+          fi
