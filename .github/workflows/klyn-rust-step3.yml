@@ -80,7 +80,24 @@ jobs:
           cargo --version
           uname -a
       - name: Syntax-check native and fuzz harnesses
-        run: bash -n scripts/qualify-native-linux.sh scripts/qualify_native_linux.sh scripts/run_fuzz_campaign.sh
+        run: |
+          bash -n scripts/qualify-native-linux.sh scripts/qualify_native_linux.sh scripts/orchestrate_native_qualification.sh scripts/reconcile_cross_provider.sh scripts/run_fuzz_campaign.sh
+          # Verify native qualification rejects an unprovisioned host before any kernel test runs.
+          probe_log="$(mktemp)"
+          if env -u KLYN_NATIVE_QUALIFICATION_READY -u KLYN_NATIVE_EPHEMERAL_VM bash scripts/orchestrate_native_qualification.sh >"$probe_log" 2>&1; then
+            cat "$probe_log"
+            rm -f "$probe_log"
+            echo "::error::native orchestrator unexpectedly accepted an unprovisioned host"
+            exit 1
+          fi
+          grep -q "KLYN_NATIVE_QUALIFICATION_READY must be exactly 'true'" "$probe_log" || {
+            cat "$probe_log"
+            rm -f "$probe_log"
+            echo "::error::native orchestrator failed for an unexpected reason"
+            exit 1
+          }
+          cat "$probe_log"
+          rm -f "$probe_log"
       - name: Install Android target for platform-boundary check
         run: rustup target add aarch64-linux-android
       - name: Check workspace for Android with warnings denied
