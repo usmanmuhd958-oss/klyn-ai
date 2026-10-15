@@ -813,9 +813,9 @@ impl KelJournal {
                     KelChainError::PreviousRootMismatch => SandboxError::Enforcement(
                         "KEL hash chain references an unexpected predecessor".into(),
                     ),
-                    KelChainError::SequenceOverflow => SandboxError::Enforcement(
-                        "KEL verification sequence overflow".into(),
-                    ),
+                    KelChainError::SequenceOverflow => {
+                        SandboxError::Enforcement("KEL verification sequence overflow".into())
+                    }
                 })?;
 
             if event.kind == KelEventKind::WorkerAttested

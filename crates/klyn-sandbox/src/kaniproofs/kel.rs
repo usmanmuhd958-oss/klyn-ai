@@ -9,7 +9,10 @@ use crate::kel::{
 fn terminal_lifecycle_states_reject_every_successor() {
     let next: KelEventKind = kani::any();
     assert!(!transition_allowed(Some(KelEventKind::CgroupDestroy), next));
-    assert!(!transition_allowed(Some(KelEventKind::CapabilityRejected), next));
+    assert!(!transition_allowed(
+        Some(KelEventKind::CapabilityRejected),
+        next
+    ));
 }
 
 #[kani::proof]
