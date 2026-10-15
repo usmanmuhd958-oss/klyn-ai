@@ -57,6 +57,10 @@ fi
 git remote get-url origin >/dev/null 2>&1 || { fail "origin (GitHub) remote is missing"; exit 1; }
 git remote get-url gitlab >/dev/null 2>&1 || { fail "gitlab remote is missing"; exit 1; }
 
+# A deterministic, non-personal identity for generated reconciliation commits.
+git config user.name "${KLYN_RECONCILIATION_GIT_NAME:-KLYN Cross-Provider Reconciler}"
+git config user.email "${KLYN_RECONCILIATION_GIT_EMAIL:-klyn-ci-reconciler@users.noreply.github.com}"
+
 fetch_heads() {
   local branch="$1"
   git fetch --no-tags origin "refs/heads/$branch" || {
@@ -134,18 +138,36 @@ for branch in "${branches[@]}"; do
 
     git switch --detach "$github_sha" >/dev/null
     if ! git merge --no-commit --no-ff "$gitlab_sha"; then
+      conflict_paths="$(git diff --name-only --diff-filter=U || true)"
       git merge --abort >/dev/null 2>&1 || true
       git switch --detach "$github_sha" >/dev/null
-      fail "merge conflict on $branch; aborted safely; resolve IPC/workflow conflicts in a review branch and rerun"
+      if [[ -n "$conflict_paths" ]]; then
+        fail "merge conflict on $branch (unmerged paths: $conflict_paths); aborted safely; no refs written"
+      else
+        fail "git merge failed on $branch; aborted safely; no refs written"
+      fi
       failed=$((failed+1)); continue
     fi
-    if ! git commit --allow-empty -m "ci: reconcile GitHub and GitLab history for $branch"; then
-      git merge --abort >/dev/null 2>&1 || true
-      git switch --detach "$github_sha" >/dev/null
-      fail "could not create reconciliation merge commit for $branch"
-      failed=$((failed+1)); continue
+
+    # Normally --no-commit leaves MERGE_HEAD for this commit. If a Git version
+    # nevertheless completed the merge commit, verify its ancestry instead of
+    # accidentally creating a single-parent empty commit on top.
+    if git rev-parse --verify -q MERGE_HEAD >/dev/null; then
+      if ! git commit --allow-empty -m "ci: reconcile GitHub and GitLab history for $branch"; then
+        git merge --abort >/dev/null 2>&1 || true
+        git switch --detach "$github_sha" >/dev/null
+        fail "could not create reconciliation merge commit for $branch; no refs written"
+        failed=$((failed+1)); continue
+      fi
     fi
     merged_sha="$(git rev-parse HEAD)"
+    if ! git merge-base --is-ancestor "$github_sha" "$merged_sha" ||
+       ! git merge-base --is-ancestor "$gitlab_sha" "$merged_sha"; then
+      git merge --abort >/dev/null 2>&1 || true
+      git switch --detach "$github_sha" >/dev/null
+      fail "candidate reconciliation commit does not preserve both histories for $branch"
+      failed=$((failed+1)); continue
+    fi
     printf 'Reconciliation merge: %s\n' "$merged_sha"
     if ! git push origin "$merged_sha:refs/heads/$branch"; then
       fail "GitHub rejected the safe non-force update for $branch; GitLab was not pushed"
