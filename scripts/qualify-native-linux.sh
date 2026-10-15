@@ -13,17 +13,24 @@ require_env() {
   [[ -n "${!name:-}" ]] || fail "required environment variable $name is unset"
 }
 
+[[ "${KLYN_NATIVE_QUALIFICATION_READY:-false}" == "true" ]] || fail "KLYN_NATIVE_QUALIFICATION_READY must be exactly 'true'"
+[[ "${KLYN_NATIVE_EPHEMERAL_VM:-false}" == "true" ]] || fail "KLYN_NATIVE_EPHEMERAL_VM must be exactly 'true' on an attested disposable VM"
 [[ "$(uname -s)" == "Linux" ]] || fail "native qualification requires Linux"
 [[ "$(id -u)" -ne 0 ]] || fail "do not run the daemon qualification as UID 0"
 
 for name in \
   KLYN_TEST_CGROUP_ROOT KLYN_CGROUP_ROOT KLYN_REPOSITORY KLYN_FS_STATE_DIR \
   KLYN_DAEMON_SOCKET KLYN_POLICY_FILE KLYN_SIGNING_KEY_FILE KLYN_REVOCATION_FILE \
-  KLYN_SANDBOX_INIT KLYN_WORKER_EXECUTABLE KLYN_READ_ONLY_ROOT KLYN_BROKER_DIR; do
+  KLYN_SANDBOX_INIT KLYN_WORKER_EXECUTABLE KLYN_READ_ONLY_ROOT KLYN_BROKER_DIR \
+  KLYN_EBPF_OBJECT; do
   require_env "$name"
 done
 
 export KLYN_REQUIRE_NATIVE_LINUX_QUALIFICATION=1
+[[ -f "$KLYN_EBPF_OBJECT" && -r "$KLYN_EBPF_OBJECT" ]] || fail "KLYN_EBPF_OBJECT must point to a readable, compiled CO-RE eBPF object"
+[[ -r /sys/kernel/btf/vmlinux ]] || fail "kernel BTF is unavailable at /sys/kernel/btf/vmlinux"
+command -v bpftool >/dev/null 2>&1 || fail "bpftool is required for native BTF qualification"
+bpftool btf dump file /sys/kernel/btf/vmlinux format raw >/dev/null || fail "kernel BTF could not be parsed by bpftool"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}"
 if [[ "$CARGO_TARGET_DIR" != /* ]]; then
   export CARGO_TARGET_DIR="$PWD/$CARGO_TARGET_DIR"
@@ -66,6 +73,8 @@ rustc --version
 cargo --version
 printf 'daemon uid/gid: %s/%s\n' "$(id -u)" "$(id -g)"
 printf 'delegated cgroup root: %s\n' "$test_cgroup_root"
+printf 'CO-RE eBPF object: %s\n' "$(realpath -e "$KLYN_EBPF_OBJECT")"
+printf 'Landlock ABI requirement: v8 or newer (enforced by strict Rust test mode)\n'
 
 cargo fmt --all -- --check
 cargo metadata --locked --format-version 1 >/dev/null
@@ -98,4 +107,4 @@ printf '\n== End-to-end worker smoke test ==\n'
 # setup. Any bootstrap or policy failure must make this command fail.
 timeout 120s "$CARGO_TARGET_DIR/debug/klyn-daemon" --worker-smoke
 
-printf '\nNATIVE QUALIFICATION PASSED: cgroup v2, mandatory Landlock/seccomp probes, gate tests, daemon worker smoke, and workspace quality gates.\n'
+printf '\nNATIVE QUALIFICATION PASSED: live cgroup-v2 membership/kill, Landlock ABI v8+, seccomp negative tests, eBPF verifier/load and ring-buffer event delivery, daemon worker smoke, and workspace quality gates.\n'

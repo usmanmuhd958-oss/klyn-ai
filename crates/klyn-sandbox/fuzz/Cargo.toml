@@ -1,0 +1,29 @@
+[package]
+name = "klyn-sandbox-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+klyn-sandbox = { path = ".." }
+ed25519-dalek = "2.2"
+
+[[bin]]
+name = "fuzz_ipc_frame"
+path = "fuzz_targets/fuzz_ipc_frame.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_kel_parser"
+path = "fuzz_targets/fuzz_kel_parser.rs"
+test = false
+doc = false
+bench = false

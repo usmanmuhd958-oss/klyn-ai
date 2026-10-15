@@ -43,6 +43,36 @@ use crate::SandboxError;
 pub const RING_SLOT_COUNT: usize = 8;
 pub const RING_MAX_PAYLOAD_BYTES: usize = 64 * 1024;
 
+/// Decode the explicit little-endian length prefix used for fuzzable IPC frame
+/// packets. The input must contain exactly one non-empty frame and its payload;
+/// truncated, oversized, or trailing bytes are rejected.
+pub fn decode_ipc_frame(packet: &[u8]) -> Result<&[u8], SandboxError> {
+    if packet.len() < LEN_PREFIX_BYTES {
+        return Err(SandboxError::Enforcement(
+            "shared IPC frame is missing its length prefix".into(),
+        ));
+    }
+    let length = u32::from_le_bytes(packet[..LEN_PREFIX_BYTES].try_into().map_err(|_| {
+        SandboxError::Enforcement("shared IPC frame length prefix is malformed".into())
+    })?) as usize;
+    validate_frame_length(length)?;
+    if packet.len() - LEN_PREFIX_BYTES != length {
+        return Err(SandboxError::Enforcement(
+            "shared IPC encoded frame length does not match its payload".into(),
+        ));
+    }
+    Ok(&packet[LEN_PREFIX_BYTES..])
+}
+
+fn validate_frame_length(length: usize) -> Result<usize, SandboxError> {
+    if length == 0 || length > RING_MAX_PAYLOAD_BYTES {
+        return Err(SandboxError::Enforcement(
+            "shared IPC slot contains an invalid frame length".into(),
+        ));
+    }
+    Ok(length)
+}
+
 /// Fixed inherited descriptor layout used by the trusted stage-0 launcher.
 pub const COMMAND_RING_PAYLOAD_FD: RawFd = 7;
 pub const COMMAND_RING_HEAD_FD: RawFd = 8;
@@ -547,12 +577,7 @@ impl RingConsumer {
 
         let index = (tail as usize) & (RING_SLOT_COUNT - 1);
         let slot = unsafe { self.payload.as_ptr().add(index * SLOT_STRIDE) };
-        let length = unsafe { ptr::read(slot.cast::<u32>()) } as usize;
-        if length == 0 || length > RING_MAX_PAYLOAD_BYTES {
-            return Err(SandboxError::Enforcement(
-                "shared IPC slot contains an invalid frame length".into(),
-            ));
-        }
+        let length = validate_frame_length(unsafe { ptr::read(slot.cast::<u32>()) } as usize)?;
         Ok(Some(PeekedSlotMetadata {
             slot,
             sequence: tail,

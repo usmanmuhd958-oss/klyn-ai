@@ -1,33 +1,98 @@
-name: Mirror to GitLab
+name: Safe KLYN cross-provider branch reconciliation
 
 on:
   push:
     branches:
       - main
+      - feat/step3-worker-bootstrap
+      - reconcile/step3-platform-daemon
+      - feat/step4-shared-memory-ipc
+      - feat/phase2-step2-ebpf-telemetry
+      - feat/phase2-step3-kel-attestation
+      - feat/phase2-step4-fs-rollback
+      - feat/phase2-step5-fuzz-native-qualification
   workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: klyn-cross-provider-reconciliation
+  cancel-in-progress: false
+
 jobs:
-  mirror:
-    runs-on: ubuntu-latest
+  reconcile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - name: Checkout full Git history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: true
 
-      - name: Set up SSH Key
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.GITLAB_SSH_KEY }}
-
-      - name: Add GitLab to Known Hosts
+      - name: Reconcile and verify branches using pinned SSH transport
+        shell: bash
+        env:
+          GITLAB_SSH_KEY: ${{ secrets.GITLAB_SSH_KEY }}
         run: |
-          mkdir -p ~/.ssh
-          ssh-keyscan gitlab.com >> ~/.ssh/known_hosts
+          set -Eeuo pipefail
+          [[ -n "$GITLAB_SSH_KEY" ]] || {
+            echo "::error::GITLAB_SSH_KEY is not configured; refusing cross-provider writes." >&2
+            exit 1
+          }
+          install -d -m 0700 "$HOME/.ssh"
+          key="$HOME/.ssh/klyn_gitlab_ed25519"
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$GITLAB_SSH_KEY" > "$key"
+          chmod 0600 "$key"
+          # Pin GitLab.com's published host key; never trust runtime ssh-keyscan.
+          printf '%s\n' 'gitlab.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAfuCHKVTjquxvt6CM6tdG4SLp1Btn/nOeHHE5UOzRdf' > "$HOME/.ssh/known_hosts"
+          chmod 0644 "$HOME/.ssh/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
+          git remote add gitlab git@gitlab.com:usmanmuhd958-oss/klyn-ai.git
 
-      - name: Push to GitLab
-        run: |
-          git push --force git@gitlab.com:usmanmuhd958-oss/klyn-ai.git main:main
+          bash scripts/reconcile_cross_provider.sh --apply
+
+          # Preserve the legacy mirror contract for non-PR branches, without
+          # force-pushes. Diverged branch histories are reported for review.
+          current_branch="$GITHUB_REF_NAME"
+          case "$current_branch" in
+            main|feat/step3-worker-bootstrap|reconcile/step3-platform-daemon)
+              git fetch --no-tags origin "refs/heads/$current_branch"
+              github_tip="$(git rev-parse --verify FETCH_HEAD^{commit})"
+              git fetch --no-tags gitlab "refs/heads/$current_branch"
+              gitlab_tip="$(git rev-parse --verify FETCH_HEAD^{commit})"
+              if [[ "$github_tip" != "$gitlab_tip" ]]; then
+                if git merge-base --is-ancestor "$gitlab_tip" "$github_tip"; then
+                  git push gitlab "$github_tip:refs/heads/$current_branch"
+                elif git merge-base --is-ancestor "$github_tip" "$gitlab_tip"; then
+                  git push origin "$gitlab_tip:refs/heads/$current_branch"
+                else
+                  echo "::error::Non-managed branch $current_branch has divergent histories; refusing to overwrite either provider." >&2
+                  exit 1
+                fi
+              fi
+              gh_check="$(git ls-remote --heads origin "refs/heads/$current_branch" | awk 'NR==1 {print $1}')"
+              gl_check="$(git ls-remote --heads gitlab "refs/heads/$current_branch" | awk 'NR==1 {print $1}')"
+              [[ -n "$gh_check" && "$gh_check" == "$gl_check" ]] || {
+                echo "::error::SHA parity failed for $current_branch (GitHub=$gh_check GitLab=$gl_check)" >&2
+                exit 1
+              }
+              ;;
+          esac
+
+          for branch in \
+            feat/step4-shared-memory-ipc \
+            feat/phase2-step2-ebpf-telemetry \
+            feat/phase2-step3-kel-attestation \
+            feat/phase2-step4-fs-rollback \
+            feat/phase2-step5-fuzz-native-qualification; do
+            gh_sha="$(git ls-remote --heads origin "refs/heads/$branch" | awk 'NR==1 {print $1}')"
+            gl_sha="$(git ls-remote --heads gitlab "refs/heads/$branch" | awk 'NR==1 {print $1}')"
+            [[ -n "$gh_sha" && "$gh_sha" == "$gl_sha" ]] || {
+              echo "::error::SHA parity failed for $branch (GitHub=$gh_sha GitLab=$gl_sha)" >&2
+              exit 1
+            }
+            echo "PARITY $branch $gh_sha"
+          done
