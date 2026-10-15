@@ -3,6 +3,7 @@ image: rust:1.99.0-bookworm
 stages:
   - validate
   - test
+  - fuzz
   - qualification
 
 variables:
@@ -72,6 +73,43 @@ fuzz_targets:
       cargo +nightly fuzz build fuzz_ipc_frame
       cargo +nightly fuzz build fuzz_kel_parser
       git -C "$CI_PROJECT_DIR" diff --exit-code -- crates/klyn-sandbox/fuzz/Cargo.lock
+
+
+fuzz_campaign:
+  stage: fuzz
+  timeout: 45m
+  variables:
+    RUSTUP_TOOLCHAIN: "nightly"
+    KLYN_FUZZ_RUNS: "1000000"
+  cache:
+    key:
+      files:
+        - crates/klyn-sandbox/fuzz/Cargo.lock
+        - crates/klyn-sandbox/fuzz/Cargo.toml
+      prefix: "klyn-fuzz-nightly-0.13.2"
+    paths:
+      - .cargo/registry/index/
+      - .cargo/registry/cache/
+      - .cargo/bin/cargo-fuzz
+      - crates/klyn-sandbox/fuzz/target/
+    policy: pull
+  script:
+    - export PATH="$CARGO_HOME/bin:$PATH"
+    - rustup toolchain install nightly --profile minimal --component rustfmt --component clippy
+    - |
+      installed_version="$(cargo-fuzz --version 2>/dev/null || true)"
+      if [[ "$installed_version" == "cargo-fuzz 0.13.2" ]]; then
+        echo "Using cached cargo-fuzz 0.13.2"
+      else
+        cargo +nightly install cargo-fuzz --version 0.13.2 --locked --force
+      fi
+    - cargo +nightly metadata --locked --format-version 1 --manifest-path crates/klyn-sandbox/fuzz/Cargo.toml > /dev/null
+    - bash scripts/run_fuzz_campaign.sh
+    - git diff --exit-code -- crates/klyn-sandbox/fuzz/Cargo.lock
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "feat/phase2-step5-fuzz-native-qualification"'
+      when: on_success
+    - when: never
 
 native_linux_qualification:
   stage: qualification
