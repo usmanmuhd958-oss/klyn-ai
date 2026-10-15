@@ -5,9 +5,43 @@ use crate::kel::{
     KelChainState, KelEventKind,
 };
 
+/// Generate enum values from symbolic primitive inputs.
+fn any_event_kind() -> KelEventKind {
+    match kani::any::<u8>() % 7 {
+        0 => KelEventKind::CapabilityValidated,
+        1 => KelEventKind::Spawn,
+        2 => KelEventKind::WorkerAttested,
+        3 => KelEventKind::PolicyGateClear,
+        4 => KelEventKind::TelemetryAnomaly,
+        5 => KelEventKind::CgroupDestroy,
+        _ => KelEventKind::CapabilityRejected,
+    }
+}
+
+fn any_previous_kind() -> Option<KelEventKind> {
+    match kani::any::<u8>() % 8 {
+        0 => None,
+        1 => Some(KelEventKind::CapabilityValidated),
+        2 => Some(KelEventKind::Spawn),
+        3 => Some(KelEventKind::WorkerAttested),
+        4 => Some(KelEventKind::PolicyGateClear),
+        5 => Some(KelEventKind::TelemetryAnomaly),
+        6 => Some(KelEventKind::CgroupDestroy),
+        _ => Some(KelEventKind::CapabilityRejected),
+    }
+}
+
+fn any_chain_state() -> KelChainState {
+    KelChainState {
+        next_sequence: kani::any(),
+        head_root: kani::any(),
+        last_kind: any_previous_kind(),
+    }
+}
+
 #[kani::proof]
 fn terminal_lifecycle_states_reject_every_successor() {
-    let next: KelEventKind = kani::any();
+    let next = any_event_kind();
     assert!(!transition_allowed(Some(KelEventKind::CgroupDestroy), next));
     assert!(!transition_allowed(
         Some(KelEventKind::CapabilityRejected),
@@ -17,8 +51,8 @@ fn terminal_lifecycle_states_reject_every_successor() {
 
 #[kani::proof]
 fn accepted_transitions_have_only_documented_predecessors() {
-    let previous: Option<KelEventKind> = kani::any();
-    let next: KelEventKind = kani::any();
+    let previous = any_previous_kind();
+    let next = any_event_kind();
 
     if transition_allowed(previous, next) {
         match next {
@@ -85,12 +119,12 @@ fn predecessor_is_accepted_only_when_it_matches_trusted_root() {
 
 #[kani::proof]
 fn proposing_a_chain_extension_does_not_mutate_the_current_head() {
-    let state: KelChainState = kani::any();
+    let state = any_chain_state();
     let before = state;
     let sequence: u64 = kani::any();
     let previous_hash: [u8; 32] = kani::any();
     let event_hash: [u8; 32] = kani::any();
-    let event_kind: KelEventKind = kani::any();
+    let event_kind = any_event_kind();
 
     let result = state.advance(sequence, &previous_hash, &event_hash, event_kind);
     assert_eq!(state, before);
@@ -108,11 +142,11 @@ fn proposing_a_chain_extension_does_not_mutate_the_current_head() {
 
 #[kani::proof]
 fn chain_extension_rejects_bad_order_link_or_overflow() {
-    let state: KelChainState = kani::any();
+    let state = any_chain_state();
     let sequence: u64 = kani::any();
     let previous_hash: [u8; 32] = kani::any();
     let event_hash: [u8; 32] = kani::any();
-    let event_kind: KelEventKind = kani::any();
+    let event_kind = any_event_kind();
 
     let result = state.advance(sequence, &previous_hash, &event_hash, event_kind);
     if result.is_ok() {
