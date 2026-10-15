@@ -54,11 +54,40 @@ jobs:
 
           bash scripts/reconcile_cross_provider.sh --apply
 
+          # Preserve the legacy mirror contract for non-PR branches, without
+          # force-pushes. Diverged branch histories are reported for review.
+          current_branch="$GITHUB_REF_NAME"
+          case "$current_branch" in
+            main|feat/step3-worker-bootstrap|reconcile/step3-platform-daemon)
+              git fetch --no-tags origin "refs/heads/$current_branch"
+              github_tip="$(git rev-parse --verify FETCH_HEAD^{commit})"
+              git fetch --no-tags gitlab "refs/heads/$current_branch"
+              gitlab_tip="$(git rev-parse --verify FETCH_HEAD^{commit})"
+              if [[ "$github_tip" != "$gitlab_tip" ]]; then
+                if git merge-base --is-ancestor "$gitlab_tip" "$github_tip"; then
+                  git push gitlab "$github_tip:refs/heads/$current_branch"
+                elif git merge-base --is-ancestor "$github_tip" "$gitlab_tip"; then
+                  git push origin "$gitlab_tip:refs/heads/$current_branch"
+                else
+                  echo "::error::Non-managed branch $current_branch has divergent histories; refusing to overwrite either provider." >&2
+                  exit 1
+                fi
+              fi
+              gh_check="$(git ls-remote --heads origin "refs/heads/$current_branch" | awk 'NR==1 {print $1}')"
+              gl_check="$(git ls-remote --heads gitlab "refs/heads/$current_branch" | awk 'NR==1 {print $1}')"
+              [[ -n "$gh_check" && "$gh_check" == "$gl_check" ]] || {
+                echo "::error::SHA parity failed for $current_branch (GitHub=$gh_check GitLab=$gl_check)" >&2
+                exit 1
+              }
+              ;;
+          esac
+
           for branch in \
             feat/step4-shared-memory-ipc \
             feat/phase2-step2-ebpf-telemetry \
             feat/phase2-step3-kel-attestation \
-            feat/phase2-step4-fs-rollback; do
+            feat/phase2-step4-fs-rollback \
+            feat/phase2-step5-fuzz-native-qualification; do
             gh_sha="$(git ls-remote --heads origin "refs/heads/$branch" | awk 'NR==1 {print $1}')"
             gl_sha="$(git ls-remote --heads gitlab "refs/heads/$branch" | awk 'NR==1 {print $1}')"
             [[ -n "$gh_sha" && "$gh_sha" == "$gl_sha" ]] || {

@@ -57,7 +57,7 @@ The wrapper invokes the reviewed `scripts/qualify-native-linux.sh` implementatio
 
 ## Cross-provider reconciliation
 
-Run `bash scripts/reconcile_cross_provider.sh --dry-run` to inspect the #82–#85 branch-tip relationships. The CI reconciler fetches both provider histories and uses ordinary fast-forward pushes when one tip is an ancestor of the other. Diverged histories receive a two-parent merge commit; a merge conflict aborts that branch before any push. The script verifies both remote heads have not moved before writing, never uses force-push, and checks exact tip-SHA equality after syncing. If the GitHub push succeeds but the GitLab push fails, rerunning is safe because the merged GitHub tip contains the previous GitLab tip as an ancestor.
+Run `bash scripts/reconcile_cross_provider.sh --dry-run` to inspect the #82–#86 branch-tip relationships. The CI reconciler fetches both provider histories and uses ordinary fast-forward pushes when one tip is an ancestor of the other. Diverged histories receive a two-parent merge commit; a merge conflict aborts that branch before any push. The script verifies both remote heads have not moved before writing, never uses force-push, and checks exact tip-SHA equality after syncing. If the GitHub push succeeds but the GitLab push fails, rerunning is safe because the merged GitHub tip contains the previous GitLab tip as an ancestor.
 
 ## Evidence and limits
 

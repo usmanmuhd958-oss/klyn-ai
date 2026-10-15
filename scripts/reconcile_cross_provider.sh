@@ -13,6 +13,7 @@ Branches managed by this script:
   feat/phase2-step2-ebpf-telemetry              (PR #83)
   feat/phase2-step3-kel-attestation             (PR #84)
   feat/phase2-step4-fs-rollback                 (PR #85)
+  feat/phase2-step5-fuzz-native-qualification   (PR #86)
 
 No force-push is performed. Diverged branches are merged with both provider heads
 as parents. Conflicts are aborted without pushing either branch. Each push uses
@@ -41,6 +42,7 @@ branches=(
   "feat/phase2-step2-ebpf-telemetry"
   "feat/phase2-step3-kel-attestation"
   "feat/phase2-step4-fs-rollback"
+  "feat/phase2-step5-fuzz-native-qualification"
 )
 if [[ -n "$selected_branch" ]]; then
   found=false
