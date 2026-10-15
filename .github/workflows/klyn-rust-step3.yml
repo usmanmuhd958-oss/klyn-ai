@@ -43,6 +43,7 @@ on:
       - .github/workflows/klyn-rust-step3.yml
       - .gitlab-ci.yml
       - rust-toolchain.toml
+      - scripts/**
 
 permissions:
   contents: read
