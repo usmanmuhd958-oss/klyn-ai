@@ -115,7 +115,9 @@ jobs:
       - name: Run mandatory native Linux kernel qualification
         env:
           KLYN_REQUIRE_NATIVE_LINUX_QUALIFICATION: "1"
-        run: bash scripts/qualify_native_linux.sh
+          KLYN_NATIVE_QUALIFICATION_READY: ${{ vars.KLYN_NATIVE_QUALIFICATION_READY }}
+          KLYN_NATIVE_EPHEMERAL_VM: ${{ vars.KLYN_NATIVE_EPHEMERAL_VM }}
+        run: bash scripts/orchestrate_native_qualification.sh
 
   qualification-summary:
     name: Required CI and native qualification status

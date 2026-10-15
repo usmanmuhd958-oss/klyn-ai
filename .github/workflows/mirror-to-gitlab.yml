@@ -1,4 +1,4 @@
-name: Mirror KLYN branches to GitLab
+name: Safe KLYN cross-provider branch reconciliation
 
 on:
   push:
@@ -14,45 +14,64 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: gitlab-mirror-${{ github.ref }}
+  group: klyn-cross-provider-reconciliation
   cancel-in-progress: false
 
 jobs:
-  mirror:
+  reconcile:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
-      - name: Checkout repository
+      - name: Checkout full Git history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          persist-credentials: false
+          persist-credentials: true
 
-      - name: Push current branch to GitLab
+      - name: Configure verified GitLab SSH transport
         shell: bash
         env:
           GITLAB_SSH_KEY: ${{ secrets.GITLAB_SSH_KEY }}
         run: |
-          set -euo pipefail
-          if [[ -z "${GITLAB_SSH_KEY}" ]]; then
-            echo "::error::GITLAB_SSH_KEY is not configured; refusing to mirror." >&2
+          set -Eeuo pipefail
+          [[ -n "$GITLAB_SSH_KEY" ]] || {
+            echo "::error::GITLAB_SSH_KEY is not configured; refusing cross-provider writes." >&2
             exit 1
-          fi
-
-          install -d -m 0700 "${HOME}/.ssh"
-          ssh_key="${HOME}/.ssh/klyn_gitlab_ed25519"
-          trap 'rm -f "${ssh_key}"' EXIT
-          printf '%s\n' "${GITLAB_SSH_KEY}" > "${ssh_key}"
-          chmod 0600 "${ssh_key}"
-
-          # Pin GitLab.com's published ED25519 host key. Do not trust a key
-          # discovered by ssh-keyscan at runtime (MITM risk).
-          printf '%s\n' 'gitlab.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAfuCHKVTjquxvt6CM6tdG4SLp1Btn/nOeHHE5UOzRdf' > "${HOME}/.ssh/known_hosts"
-          chmod 0644 "${HOME}/.ssh/known_hosts"
-
-          export GIT_SSH_COMMAND="ssh -i ${ssh_key} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=${HOME}/.ssh/known_hosts"
+          }
+          install -d -m 0700 "$HOME/.ssh"
+          key="$HOME/.ssh/klyn_gitlab_ed25519"
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$GITLAB_SSH_KEY" > "$key"
+          chmod 0600 "$key"
+          # Pin GitLab.com's published host key; never trust runtime ssh-keyscan.
+          printf '%s\n' 'gitlab.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAfuCHKVTjquxvt6CM6tdG4SLp1Btn/nOeHHE5UOzRdf' > "$HOME/.ssh/known_hosts"
+          chmod 0644 "$HOME/.ssh/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
           git remote add gitlab git@gitlab.com:usmanmuhd958-oss/klyn-ai.git
-          git push gitlab "${GITHUB_REF_NAME}:${GITHUB_REF_NAME}"
+          # Persist transport for the next step without persisting the private key.
+          printf '\nGIT_SSH_COMMAND=%s\n' "$GIT_SSH_COMMAND" >> "$GITHUB_ENV"
+
+      - name: Reconcile PR #82–#85 without force-pushes
+        shell: bash
+        run: bash scripts/reconcile_cross_provider.sh --apply
+
+      - name: Verify the four feature branch tips are identical
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for branch in \
+            feat/step4-shared-memory-ipc \
+            feat/phase2-step2-ebpf-telemetry \
+            feat/phase2-step3-kel-attestation \
+            feat/phase2-step4-fs-rollback; do
+            gh_sha="$(git ls-remote --heads origin "refs/heads/$branch" | awk 'NR==1 {print $1}')"
+            gl_sha="$(git ls-remote --heads gitlab "refs/heads/$branch" | awk 'NR==1 {print $1}')"
+            [[ -n "$gh_sha" && "$gh_sha" == "$gl_sha" ]] || {
+              echo "::error::SHA parity failed for $branch (GitHub=$gh_sha GitLab=$gl_sha)" >&2
+              exit 1
+            }
+            echo "PARITY $branch $gh_sha"
+          done

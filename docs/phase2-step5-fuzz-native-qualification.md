@@ -34,19 +34,30 @@ The native run must execute on an **ephemeral, dedicated Linux VM**, as a non-ro
 
 Required environment variables inherited by the self-hosted runner:
 
+- `KLYN_NATIVE_QUALIFICATION_READY=true`: readiness attestation set only after the labelled runner and trusted fixtures pass provisioning checks. GitHub also requires this repository Actions variable to enable the job.
+- `KLYN_NATIVE_EPHEMERAL_VM=true`: set by the trusted runner-image/provisioning configuration only when the worker is an isolated, disposable VM. Do not hardcode this value in an ordinary hosted job.
+
 - `KLYN_TEST_CGROUP_ROOT` and `KLYN_CGROUP_ROOT`: the same writable delegated cgroup-v2 directory with cpu, memory, and pids enabled and `cgroup.kill` available.
 - `KLYN_EBPF_OBJECT`: readable, precompiled CO-RE eBPF object matching the qualification host's architecture/kernel.
 - `KLYN_REPOSITORY`, `KLYN_FS_STATE_DIR`: a disposable clean checkout and absent/empty transaction state.
 - `KLYN_DAEMON_SOCKET`, `KLYN_POLICY_FILE`, `KLYN_SIGNING_KEY_FILE`, `KLYN_REVOCATION_FILE`, `KLYN_SANDBOX_INIT`, `KLYN_WORKER_EXECUTABLE`, `KLYN_READ_ONLY_ROOT`, and `KLYN_BROKER_DIR`: trusted deployment-specific fixtures for the existing daemon smoke test.
 - Optionally `KLYN_PUBLICATION_REF`: the ref checked for freshness; defaults to `refs/heads/klyn-published`.
 
-Run from the checkout root:
+Run from the checkout root on the provisioner-attested ephemeral VM:
 
 ```bash
-bash scripts/qualify_native_linux.sh
+KLYN_NATIVE_QUALIFICATION_READY=true \\
+KLYN_NATIVE_EPHEMERAL_VM=true \\
+bash scripts/orchestrate_native_qualification.sh
 ```
 
+The orchestrator directly queries the live Landlock ABI using `landlock_create_ruleset( VERSION )` and fails if it is below v8; checks writable delegated cgroup-v2 roots and `cpu`, `memory`, and `pids`; validates kernel BTF and the eBPF ELF type; records the commit/kernel/controller/object digests; then invokes the strict end-to-end suite. The Rust integration test must observe `TelemetryMode::EbpfRingBuffer` and a cgroup-filtered process-fork event. A hosted BPF object compile is not substituted for this runtime test. Evidence and logs are written to a private directory under the runner temporary area.
+
 The wrapper invokes the reviewed `scripts/qualify-native-linux.sh` implementation. Qualification sets `KLYN_REQUIRE_NATIVE_LINUX_QUALIFICATION=1`, so the cgroup-v2 membership/kill test and Landlock ABI test fail instead of silently skipping. The native eBPF integration test also requires `KLYN_EBPF_OBJECT`, demands `TelemetryMode::EbpfRingBuffer` rather than cgroup-only fallback, starts a gated child inside a disposable cgroup, and requires a cgroup-filtered process-fork event to arrive through the ring buffer. The test then stops telemetry and kills/waits for the cgroup.
+
+## Cross-provider reconciliation
+
+Run `bash scripts/reconcile_cross_provider.sh --dry-run` to inspect the #82–#85 branch-tip relationships. The CI reconciler fetches both provider histories and uses ordinary fast-forward pushes when one tip is an ancestor of the other. Diverged histories receive a two-parent merge commit; a merge conflict aborts that branch before any push. The script verifies both remote heads have not moved before writing, never uses force-push, and checks exact tip-SHA equality after syncing. If the GitHub push succeeds but the GitLab push fails, rerunning is safe because the merged GitHub tip contains the previous GitLab tip as an ancestor.
 
 ## Evidence and limits
 

@@ -119,7 +119,7 @@ native_linux_qualification:
   variables:
     KLYN_REQUIRE_NATIVE_LINUX_QUALIFICATION: "1"
   script:
-    - bash scripts/qualify_native_linux.sh
+    - bash scripts/orchestrate_native_qualification.sh
   rules:
     - if: '$KLYN_NATIVE_QUALIFICATION_READY == "true" && ($CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "feat/phase2-step5-fuzz-native-qualification")'
       when: manual

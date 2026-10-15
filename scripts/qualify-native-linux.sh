@@ -13,6 +13,8 @@ require_env() {
   [[ -n "${!name:-}" ]] || fail "required environment variable $name is unset"
 }
 
+[[ "${KLYN_NATIVE_QUALIFICATION_READY:-false}" == "true" ]] || fail "KLYN_NATIVE_QUALIFICATION_READY must be exactly 'true'"
+[[ "${KLYN_NATIVE_EPHEMERAL_VM:-false}" == "true" ]] || fail "KLYN_NATIVE_EPHEMERAL_VM must be exactly 'true' on an attested disposable VM"
 [[ "$(uname -s)" == "Linux" ]] || fail "native qualification requires Linux"
 [[ "$(id -u)" -ne 0 ]] || fail "do not run the daemon qualification as UID 0"
 
