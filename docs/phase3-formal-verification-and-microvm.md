@@ -9,7 +9,7 @@ The Kani verifier is pinned to release 0.68.0 by scripts/run_kani_proofs.sh. The
 
 These are bounded proofs of the listed kernels, not an unbounded proof of the whole sandbox. Kani does not model the actual OS thread or cross-process scheduling, shared mmap aliasing, or Release/Acquire behavior across separate processes. The IPC harnesses must not be reported as a data-race proof; the existing cross-thread/process ring tests remain necessary. Likewise, the KEL proofs do not establish SHA-256 collision resistance, Ed25519 correctness, filesystem durability, or OS key protection. The production chain verifier commits an immutable candidate head only after its canonical event hash and signatures have been verified.
 
-The 16-step ring model is explicitly bounded. Its unwind annotation is not a claim about unbounded program executions. The harnesses are designed to prove their assertions with no accepted arithmetic wraparound and no unwinding assertion failure.
+The 16-step ring model is explicitly bounded with an explicit unwind bound of 20. KEL proofs use a default unwind bound of 100 to fully unwind Kani's byte-array comparison model; that does not turn the bounded proofs into claims about unbounded program executions. The harnesses are designed to prove their assertions with no accepted arithmetic wraparound and no unwinding assertion failure.
 
 ## Disposable native qualification VM
 

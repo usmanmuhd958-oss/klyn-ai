@@ -27,11 +27,11 @@ mkdir -p "$(dirname "$evidence_log")"
   printf 'Kani verifier: %s\n' "$(cargo kani --version)"
   printf 'Rust toolchain: %s\n' "$(rustc --version)"
   printf 'Proof package: klyn-sandbox\n'
-  printf 'Finite model unwind bound: 20\n'
+  printf 'Default harness unwind bound: 100; finite SPSC trace bound: 20\n'
 } | tee "$(dirname "$evidence_log")/metadata.txt"
 
 set +e
-cargo kani --package klyn-sandbox --default-unwind 20 --output-format terse "$@" 2>&1 | tee "$evidence_log"
+cargo kani --package klyn-sandbox --default-unwind 100 --output-format terse "$@" 2>&1 | tee "$evidence_log"
 kani_status=${PIPESTATUS[0]}
 set -e
 
