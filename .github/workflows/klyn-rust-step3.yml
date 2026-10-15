@@ -101,7 +101,7 @@ jobs:
   # Opt-in only: this job needs an ephemeral, isolated Linux runner with
   # delegated cgroup v2 and pre-provisioned trusted native worker files.
   native-linux-qualification:
-    if: ${{ github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/reconcile/step3-platform-daemon' || github.ref == 'refs/heads/feat/step4-shared-memory-ipc' || github.ref == 'refs/heads/feat/phase2-step3-kel-attestation' || github.ref == 'refs/heads/feat/phase2-step4-fs-rollback' || github.ref == 'refs/heads/feat/phase2-step5-fuzz-native-qualification') && inputs.run_native_linux_qualification == true }}
+    if: ${{ github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/reconcile/step3-platform-daemon' || github.ref == 'refs/heads/feat/step4-shared-memory-ipc' || github.ref == 'refs/heads/feat/phase2-step3-kel-attestation' || github.ref == 'refs/heads/feat/phase2-step4-fs-rollback' || github.ref == 'refs/heads/feat/phase2-step5-fuzz-native-qualification') && inputs.run_native_linux_qualification == true && vars.KLYN_NATIVE_QUALIFICATION_READY == 'true' }}
     runs-on: [self-hosted, linux, klyn-native-qualification]
     timeout-minutes: 45
     steps:
@@ -116,6 +116,60 @@ jobs:
         env:
           KLYN_REQUIRE_NATIVE_LINUX_QUALIFICATION: "1"
         run: bash scripts/qualify_native_linux.sh
+
+  qualification-summary:
+    name: Required CI and native qualification status
+    if: ${{ always() }}
+    needs:
+      - verify
+      - fuzz-targets
+      - fuzz-campaign
+      - ebpf-object-compile
+      - native-linux-qualification
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - name: Enforce required jobs and report native qualification state
+        shell: bash
+        env:
+          VERIFY_RESULT: ${{ needs.verify.result }}
+          FUZZ_TARGETS_RESULT: ${{ needs['fuzz-targets'].result }}
+          FUZZ_CAMPAIGN_RESULT: ${{ needs['fuzz-campaign'].result }}
+          EBPF_RESULT: ${{ needs['ebpf-object-compile'].result }}
+          NATIVE_RESULT: ${{ needs['native-linux-qualification'].result }}
+          NATIVE_REQUESTED: ${{ github.event_name == 'workflow_dispatch' && inputs.run_native_linux_qualification == true }}
+          NATIVE_READY: ${{ vars.KLYN_NATIVE_QUALIFICATION_READY }}
+          FUZZ_CAMPAIGN_REQUIRED: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.run_fuzz_campaign == true) }}
+        run: |
+          set -euo pipefail
+          [[ "$VERIFY_RESULT" == "success" ]] || { echo "::error::verify did not succeed (result=$VERIFY_RESULT)"; exit 1; }
+          [[ "$FUZZ_TARGETS_RESULT" == "success" ]] || { echo "::error::fuzz-targets did not succeed (result=$FUZZ_TARGETS_RESULT)"; exit 1; }
+          [[ "$EBPF_RESULT" == "success" ]] || { echo "::error::ebpf-object-compile did not succeed (result=$EBPF_RESULT)"; exit 1; }
+
+          if [[ "$FUZZ_CAMPAIGN_REQUIRED" == "true" ]]; then
+            [[ "$FUZZ_CAMPAIGN_RESULT" == "success" ]] || { echo "::error::required fuzz-campaign did not succeed (result=$FUZZ_CAMPAIGN_RESULT)"; exit 1; }
+          fi
+
+          if [[ "$NATIVE_REQUESTED" == "true" ]]; then
+            if [[ "$NATIVE_READY" != "true" ]]; then
+              echo "::error::Native qualification was requested, but repository variable KLYN_NATIVE_QUALIFICATION_READY is not 'true'. Provision the dedicated runner and trusted assets first."
+              exit 1
+            fi
+            [[ "$NATIVE_RESULT" == "success" ]] || { echo "::error::Native qualification was requested but the job result is $NATIVE_RESULT"; exit 1; }
+            {
+              echo "## Native Linux qualification"
+              echo "PASS — mandatory native qualification completed on the dedicated runner."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "## Native Linux qualification"
+              echo "NOT RUN — this workflow did not request native qualification."
+              echo "This run is not evidence of live cgroup-v2, Landlock ABI v8, Seccomp-BPF, or eBPF ring-buffer qualification."
+              echo "To run it, provision the dedicated self-hosted runner and trusted assets, set repository Actions variable KLYN_NATIVE_QUALIFICATION_READY=true, then dispatch with run_native_linux_qualification=true."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::Native Linux qualification was not requested. This workflow run is not a native runtime certification."
+          fi
+
   fuzz-targets:
     runs-on: ubuntu-26.04
     timeout-minutes: 20
@@ -132,7 +186,7 @@ jobs:
             ~/.cargo/git/db
             ~/.cargo/bin/cargo-fuzz
             crates/klyn-sandbox/fuzz/target
-          key: ${{ runner.os }}-nightly-cargo-fuzz-0.13.2-${{ hashFiles('Cargo.lock', 'crates/klyn-sandbox/Cargo.toml', 'crates/klyn-sandbox/fuzz/Cargo.toml') }}
+          key: ${{ runner.os }}-nightly-cargo-fuzz-0.13.2-${{ hashFiles('Cargo.lock', 'crates/klyn-sandbox/Cargo.toml', 'crates/klyn-sandbox/fuzz/Cargo.toml', 'crates/klyn-sandbox/fuzz/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-nightly-cargo-fuzz-0.13.2-
       - name: Install nightly and cargo-fuzz
@@ -144,22 +198,18 @@ jobs:
           else
             cargo +nightly install cargo-fuzz --version 0.13.2 --locked --force
           fi
-      - name: Export generated fuzz lockfile for pinning
-        if: ${{ !hashFiles('crates/klyn-sandbox/fuzz/Cargo.lock') }}
-        run: |
-          cargo +nightly generate-lockfile --manifest-path crates/klyn-sandbox/fuzz/Cargo.toml
-          printf 'KLYN_FUZZ_LOCK_BASE64='
-          base64 -w0 crates/klyn-sandbox/fuzz/Cargo.lock
-          printf '\n'
+      - name: Validate committed fuzz lockfile
+        run: cargo +nightly metadata --locked --format-version 1 --manifest-path crates/klyn-sandbox/fuzz/Cargo.toml > /dev/null
       - name: Format fuzz workspace
         run: cargo +nightly fmt --manifest-path crates/klyn-sandbox/fuzz/Cargo.toml -- --check
       - name: Clippy fuzz workspace with warnings denied
-        run: cargo +nightly clippy --manifest-path crates/klyn-sandbox/fuzz/Cargo.toml --all-targets -- -D warnings
+        run: cargo +nightly clippy --locked --manifest-path crates/klyn-sandbox/fuzz/Cargo.toml --all-targets -- -D warnings
       - name: Compile both fuzz targets
         working-directory: crates/klyn-sandbox/fuzz
         run: |
           cargo +nightly fuzz build fuzz_ipc_frame
           cargo +nightly fuzz build fuzz_kel_parser
+          git -C "$GITHUB_WORKSPACE" diff --exit-code -- crates/klyn-sandbox/fuzz/Cargo.lock
 
   fuzz-campaign:
     # Every PR runs the full fuzz budget; workflow_dispatch can opt in on a
@@ -180,7 +230,7 @@ jobs:
             ~/.cargo/git/db
             ~/.cargo/bin/cargo-fuzz
             crates/klyn-sandbox/fuzz/target
-          key: ${{ runner.os }}-nightly-cargo-fuzz-0.13.2-${{ hashFiles('Cargo.lock', 'crates/klyn-sandbox/Cargo.toml', 'crates/klyn-sandbox/fuzz/Cargo.toml') }}
+          key: ${{ runner.os }}-nightly-cargo-fuzz-0.13.2-${{ hashFiles('Cargo.lock', 'crates/klyn-sandbox/Cargo.toml', 'crates/klyn-sandbox/fuzz/Cargo.toml', 'crates/klyn-sandbox/fuzz/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-nightly-cargo-fuzz-0.13.2-
       - name: Install nightly and cargo-fuzz
@@ -197,6 +247,8 @@ jobs:
           RUSTUP_TOOLCHAIN: nightly
           KLYN_FUZZ_RUNS: "1000000"
         run: bash scripts/run_fuzz_campaign.sh
+      - name: Verify campaign preserved the pinned fuzz lockfile
+        run: git diff --exit-code -- crates/klyn-sandbox/fuzz/Cargo.lock
 
   ebpf-object-compile:
     runs-on: ubuntu-26.04

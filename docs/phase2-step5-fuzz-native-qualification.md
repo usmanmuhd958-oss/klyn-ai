@@ -22,6 +22,12 @@ The default campaign executes 1,000,000 iterations for each target. Set `KLYN_FU
 
 `crates/klyn-sandbox/tests/adversarial_protocol.rs` checks malformed IPC lengths and control frames, invalid lifecycle transitions, corrupted KEL signatures, and an attestation response replayed against a different nonce. `fs_txn_rollback.rs` from Step 4 continues to test forced-process termination and removal of the disposable workspace.
 
+## CI gating and dependency reproducibility
+
+The isolated fuzz workspace commits its own `crates/klyn-sandbox/fuzz/Cargo.lock`; it must not rely on an unlocked dependency refresh in CI. GitHub Actions and GitLab CI validate the isolated lockfile with `cargo metadata --locked`, run fuzz-workspace Clippy with `--locked`, and key fuzz build caches to the committed lockfile and manifest. Fuzz build/campaign jobs also fail if the lockfile is modified.
+
+Native qualification is deliberately separate from hosted compile/test jobs. Set the GitHub repository Actions variable `KLYN_NATIVE_QUALIFICATION_READY=true` only after the dedicated self-hosted runner labelled `klyn-native-qualification` is online and every trusted fixture/environment variable listed below is provisioned. With that variable unset, normal CI reports native qualification as **NOT RUN** instead of queueing a job that cannot start. Explicitly requesting native qualification without the readiness declaration fails the workflow qualification summary with a diagnostic. GitLab uses the same readiness variable to expose a blocking manual job tagged `klyn-native-qualification`; if not declared ready, a status job reports that native qualification was not run. A green hosted pipeline is not a native certification.
+
 ## Native qualification host
 
 The native run must execute on an **ephemeral, dedicated Linux VM**, as a non-root daemon identity with delegated cgroup-v2 controls and the capabilities required by the deployment's BPF policy. It must not run against a developer's live host state. The native runner requires a clean disposable Git checkout, a clean/empty filesystem-transaction test area, a fresh publication ref, and pre-provisioned trusted daemon assets.

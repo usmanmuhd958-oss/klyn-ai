@@ -3,6 +3,7 @@ image: rust:1.99.0-bookworm
 stages:
   - validate
   - test
+  - qualification
 
 variables:
   CARGO_HOME: "$CI_PROJECT_DIR/.cargo"
@@ -44,7 +45,7 @@ fuzz_targets:
   cache:
     key:
       files:
-        - Cargo.lock
+        - crates/klyn-sandbox/fuzz/Cargo.lock
         - crates/klyn-sandbox/fuzz/Cargo.toml
       prefix: "klyn-fuzz-nightly-0.13.2"
     paths:
@@ -63,6 +64,43 @@ fuzz_targets:
       else
         cargo +nightly install cargo-fuzz --version 0.13.2 --locked --force
       fi
+    - cargo +nightly metadata --locked --format-version 1 --manifest-path crates/klyn-sandbox/fuzz/Cargo.toml > /dev/null
     - cargo +nightly fmt --manifest-path crates/klyn-sandbox/fuzz/Cargo.toml -- --check
-    - cargo +nightly clippy --manifest-path crates/klyn-sandbox/fuzz/Cargo.toml --all-targets -- -D warnings
-    - cd crates/klyn-sandbox/fuzz && cargo +nightly fuzz build fuzz_ipc_frame && cargo +nightly fuzz build fuzz_kel_parser
+    - cargo +nightly clippy --locked --manifest-path crates/klyn-sandbox/fuzz/Cargo.toml --all-targets -- -D warnings
+    - |
+      cd crates/klyn-sandbox/fuzz
+      cargo +nightly fuzz build fuzz_ipc_frame
+      cargo +nightly fuzz build fuzz_kel_parser
+      git -C "$CI_PROJECT_DIR" diff --exit-code -- crates/klyn-sandbox/fuzz/Cargo.lock
+
+native_linux_qualification:
+  stage: qualification
+  tags:
+    - klyn-native-qualification
+  timeout: 45m
+  variables:
+    KLYN_REQUIRE_NATIVE_LINUX_QUALIFICATION: "1"
+  script:
+    - bash scripts/qualify_native_linux.sh
+  rules:
+    - if: '$KLYN_NATIVE_QUALIFICATION_READY == "true" && ($CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "feat/phase2-step5-fuzz-native-qualification")'
+      when: manual
+    - when: never
+
+native_qualification_status:
+  stage: qualification
+  before_script: []
+  script:
+    - |
+      if [[ "${KLYN_NATIVE_QUALIFICATION_READY:-false}" == "true" ]]; then
+        echo "Native qualification runner is declared ready; execute the blocking manual native_linux_qualification job."
+        echo "This status job alone does not certify the native runtime."
+      else
+        echo "NATIVE QUALIFICATION: NOT RUN."
+        echo "KLYN_NATIVE_QUALIFICATION_READY is not true; the dedicated runner/trusted assets are not declared provisioned."
+        echo "A green standard pipeline is not native Linux runtime certification."
+      fi
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "feat/phase2-step5-fuzz-native-qualification"'
+      when: on_success
+    - when: never
