@@ -10,10 +10,10 @@ use std::{
     fs::{self, OpenOptions},
     io::Read,
     os::unix::fs::{MetadataExt, OpenOptionsExt},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use ed25519_dalek::VerifyingKey;
+use ed25519_dalek::{SigningKey, VerifyingKey};
 
 pub use crate::manifest::{WorkerManifest, WORKER_MANIFEST_VERSION};
 
@@ -24,6 +24,7 @@ use crate::{
         COMMAND_RING_TAIL_FD, RESPONSE_RING_HEAD_FD, RESPONSE_RING_PAYLOAD_FD,
         RESPONSE_RING_TAIL_FD,
     },
+    kel::{self, KelAttestationChallenge, KEL_CHALLENGE_FRAME_LEN, KEL_RESPONSE_FRAME_LEN},
     landlock_seccomp, validate_trusted_root, CapabilityClaims, SandboxError, BROKER_FD,
     MANIFEST_FD, OCAP_VERSION,
 };
@@ -60,12 +61,20 @@ pub fn initialize() -> Result<WorkerBootstrapContext, SandboxError> {
 
     validate_capability_context(&manifest.capability.claims)?;
 
+    // Compute attestation commitments and obtain the ephemeral worker identity
+    // before seccomp is installed. The private key never leaves this process.
+    let kel_session_id = kel::session_id_from_token_id(&manifest.capability.claims.token_id);
+    let manifest_hash = kel::hash_serializable(&manifest)?;
+    let capability_hash = kel::hash_serializable(&manifest.capability)?;
+    let executable_hash = kel::parse_sha256_hex(&manifest.worker_executable_sha256)?;
+    let attestation_key = generate_attestation_key()?;
+
     // The sealed manifest and OCap signature are verified before the worker
     // maps shared IPC. FD positions are fixed by the trusted supervisor; the
     // ring constructors validate each memfd's exact size and resize seals.
     // SAFETY: stage-0 inherits these six distinct descriptors at the fixed
     // constants below, and ownership transfers to the ring endpoint constructors.
-    let command_ring = unsafe {
+    let mut command_ring = unsafe {
         RingConsumer::from_inherited_fds(
             COMMAND_RING_PAYLOAD_FD,
             COMMAND_RING_HEAD_FD,
@@ -74,7 +83,7 @@ pub fn initialize() -> Result<WorkerBootstrapContext, SandboxError> {
     };
     // SAFETY: these are the three remaining, distinct response-ring descriptors
     // created by the same trusted supervisor launch path.
-    let response_ring = unsafe {
+    let mut response_ring = unsafe {
         RingProducer::from_inherited_fds(
             RESPONSE_RING_PAYLOAD_FD,
             RESPONSE_RING_HEAD_FD,
@@ -89,6 +98,8 @@ pub fn initialize() -> Result<WorkerBootstrapContext, SandboxError> {
         &manifest.capability.claims.budget,
         manifest.cpu_weight,
     )?;
+    // Capture the cgroup identity before seccomp denies path-based metadata calls.
+    let cgroup_id = fs::metadata(&manifest.cgroup_path)?.ino();
 
     // Connect before seccomp: after enforcement, socket creation/connect is
     // intentionally unavailable to the worker. Broker requests re-check
@@ -98,9 +109,42 @@ pub fn initialize() -> Result<WorkerBootstrapContext, SandboxError> {
 
     landlock_seccomp::enforce_worker(&manifest.capability.claims, &manifest.roots, BROKER_FD)?;
 
-    // Do not return control to mission/runtime code until the supervisor has
-    // observed this process after policy installation and sent the final ACK.
-    // Failure or supervisor death is fatal; callers must not process input.
+    // Complete the KEL challenge-response after the kernel policy is installed
+    // but BEFORE reporting policy readiness or accepting mission release.
+    let identity = kel::KelAttestationIdentity {
+        session_id: kel_session_id,
+        cgroup_id,
+        manifest_hash,
+        capability_hash,
+        executable_hash,
+        daemon_public_key: verification_key.to_bytes(),
+    };
+    let mut challenge_frame = [0u8; KEL_CHALLENGE_FRAME_LEN];
+    {
+        let frame = command_ring
+            .wait_peek(Some(Duration::from_secs(15)))?
+            .ok_or_else(|| {
+                SandboxError::Enforcement("supervisor did not provide the KEL challenge".into())
+            })?;
+        if frame.payload().len() != KEL_CHALLENGE_FRAME_LEN {
+            return Err(SandboxError::Enforcement(
+                "supervisor KEL challenge frame has an invalid length".into(),
+            ));
+        }
+        challenge_frame.copy_from_slice(frame.payload());
+        frame.consume()?;
+    }
+    let mut response_frame = [0u8; KEL_RESPONSE_FRAME_LEN];
+    respond_to_attestation_challenge(
+        &challenge_frame,
+        &attestation_key,
+        identity,
+        &mut response_frame,
+    )?;
+    response_ring.push_wait(&response_frame, Duration::from_secs(15))?;
+
+    // The supervisor now verifies the worker's KEL proof and persists both
+    // WorkerAttested and PolicyGateClear before sending the mission-release ACK.
     crate::start_gate::worker_wait_for_supervisor_release()?;
 
     // Keep this reference explicit: the signed claims are the policy input,
@@ -113,6 +157,55 @@ pub fn initialize() -> Result<WorkerBootstrapContext, SandboxError> {
         command_ring,
         response_ring,
     })
+}
+
+/// Validate the launch commitments before answering the first shared-ring frame.
+/// No command other than this one-shot challenge is permitted before attestation.
+pub fn respond_to_attestation_challenge(
+    frame: &[u8],
+    worker_key: &SigningKey,
+    identity: kel::KelAttestationIdentity,
+    response: &mut [u8; KEL_RESPONSE_FRAME_LEN],
+) -> Result<(), SandboxError> {
+    let challenge = KelAttestationChallenge::decode_frame(frame)?;
+    if challenge.session_id != identity.session_id
+        || challenge.manifest_hash != identity.manifest_hash
+        || challenge.capability_hash != identity.capability_hash
+        || challenge.executable_hash != identity.executable_hash
+        || challenge.daemon_public_key != identity.daemon_public_key
+        || challenge.launcher_pid == 0
+        || challenge.cgroup_id != identity.cgroup_id
+    {
+        return Err(SandboxError::Enforcement(
+            "KEL challenge does not match the verified worker manifest and capability".into(),
+        ));
+    }
+    challenge.build_worker_response(worker_key, response);
+    Ok(())
+}
+
+fn generate_attestation_key() -> Result<SigningKey, SandboxError> {
+    let mut secret = [0u8; 32];
+    let mut filled = 0usize;
+    while filled < secret.len() {
+        let result = unsafe {
+            libc::getrandom(
+                secret[filled..].as_mut_ptr().cast(),
+                secret.len() - filled,
+                0,
+            )
+        };
+        if result > 0 {
+            filled += result as usize;
+            continue;
+        }
+        let error = std::io::Error::last_os_error();
+        if error.kind() == std::io::ErrorKind::Interrupted {
+            continue;
+        }
+        return Err(SandboxError::Io(error));
+    }
+    Ok(SigningKey::from_bytes(&secret))
 }
 
 pub fn validate_manifest_shape(manifest: &WorkerManifest) -> Result<(), SandboxError> {
@@ -261,6 +354,51 @@ mod tests {
             signature: vec![],
         };
         assert!(validate_manifest_shape(&manifest).is_err());
+    }
+
+    #[test]
+    fn attestation_response_requires_exact_verified_lineage() {
+        let daemon = SigningKey::from_bytes(&[7; 32]);
+        let worker = SigningKey::from_bytes(&[9; 32]);
+        let identity = kel::KelAttestationIdentity {
+            session_id: kel::session_id_from_token_id("worker-test"),
+            cgroup_id: 5678,
+            manifest_hash: [1; 32],
+            capability_hash: [2; 32],
+            executable_hash: [3; 32],
+            daemon_public_key: daemon.verifying_key().to_bytes(),
+        };
+        let challenge = KelAttestationChallenge {
+            session_id: identity.session_id,
+            nonce: [0xA5; 32],
+            launcher_pid: 1234,
+            cgroup_id: 5678,
+            manifest_hash: identity.manifest_hash,
+            capability_hash: identity.capability_hash,
+            executable_hash: identity.executable_hash,
+            daemon_public_key: identity.daemon_public_key,
+        };
+        let mut frame = [0u8; kel::KEL_CHALLENGE_FRAME_LEN];
+        challenge.encode_frame(&mut frame);
+        let mut response = [0u8; KEL_RESPONSE_FRAME_LEN];
+        respond_to_attestation_challenge(&frame, &worker, identity, &mut response)
+            .expect("matching verified identity should respond");
+        challenge
+            .verify_worker_response(&response)
+            .expect("supervisor must verify the worker signature");
+
+        let mut wrong_identity = identity;
+        wrong_identity.capability_hash[0] ^= 0x80;
+        assert!(
+            respond_to_attestation_challenge(&frame, &worker, wrong_identity, &mut response)
+                .is_err()
+        );
+
+        let mut wrong_cgroup = identity;
+        wrong_cgroup.cgroup_id += 1;
+        assert!(
+            respond_to_attestation_challenge(&frame, &worker, wrong_cgroup, &mut response).is_err()
+        );
     }
 
     #[test]

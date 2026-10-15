@@ -10,6 +10,9 @@
 //!   must never downgrade to an unsandboxed execution path.
 
 #[cfg(target_os = "linux")]
+pub mod kel;
+
+#[cfg(target_os = "linux")]
 pub mod broker;
 #[cfg(target_os = "linux")]
 pub mod cgroup;

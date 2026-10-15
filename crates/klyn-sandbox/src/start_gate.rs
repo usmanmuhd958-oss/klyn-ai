@@ -88,6 +88,7 @@ impl StartGate {
 /// default-deny seccomp filter. Only this verified state receives MISSION_RELEASE.
 pub struct WorkerPolicyGate {
     supervisor: UnixStream,
+    ready: bool,
     released: bool,
 }
 
@@ -97,16 +98,20 @@ impl WorkerPolicyGate {
         Ok((
             Self {
                 supervisor,
+                ready: false,
                 released: false,
             },
             child,
         ))
     }
 
-    pub fn verify_policy_and_release(&mut self, timeout: Duration) -> Result<(), SandboxError> {
-        if self.released {
+    /// Consume and validate the worker's policy-ready signal without releasing
+    /// mission execution. The supervisor persists PolicyGateClear after this
+    /// succeeds and before calling release_verified_mission.
+    pub fn verify_policy_ready(&mut self, timeout: Duration) -> Result<(), SandboxError> {
+        if self.ready || self.released {
             return Err(SandboxError::Enforcement(
-                "mission start gate has already been released".into(),
+                "mission policy readiness has already been verified or released".into(),
             ));
         }
         self.supervisor.set_read_timeout(Some(timeout))?;
@@ -121,10 +126,29 @@ impl WorkerPolicyGate {
                 "worker sent an invalid policy-ready token".into(),
             ));
         }
+        self.ready = true;
+        Ok(())
+    }
+
+    /// Send the final mission-release byte only after the KEL gate-clear event
+    /// has been durably appended by the caller.
+    pub fn release_verified_mission(&mut self) -> Result<(), SandboxError> {
+        if !self.ready || self.released {
+            return Err(SandboxError::Enforcement(
+                "mission release requested before verified policy readiness".into(),
+            ));
+        }
         self.supervisor.write_all(&[MISSION_RELEASE])?;
         self.supervisor.flush()?;
         self.released = true;
         Ok(())
+    }
+
+    /// Compatibility wrapper for callers that do not need an intermediate
+    /// attestation/ledger step between policy-ready and mission release.
+    pub fn verify_policy_and_release(&mut self, timeout: Duration) -> Result<(), SandboxError> {
+        self.verify_policy_ready(timeout)?;
+        self.release_verified_mission()
     }
 }
 
@@ -203,6 +227,13 @@ mod tests {
             .set_read_timeout(Some(Duration::from_millis(20)))
             .expect("set no-duplicate timeout");
         assert!(child.read(&mut received[1..]).is_err());
+    }
+
+    #[test]
+    fn policy_gate_refuses_mission_release_before_policy_ready() {
+        let (mut gate, worker) = WorkerPolicyGate::pair().expect("create worker policy gate");
+        assert!(gate.release_verified_mission().is_err());
+        drop(worker);
     }
 
     #[test]

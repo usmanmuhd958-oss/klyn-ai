@@ -1,9 +1,9 @@
 //! Linux daemon adapter for the canonical PR #79 worker lifecycle.
 //!
 //! The worker is admitted only for an active, owner-authenticated transaction.
-//! Until RuntimeLeaseV1 and mandatory KEL dispatch evidence are integrated, the
-//! worker receives a separately provisioned read-only runtime root; it does not
-//! receive the live candidate worktree or write authority.
+//! KEL lifecycle attestation is mandatory at the supervisor boundary. Until
+//! RuntimeLeaseV1 and KEL dispatch authorization are integrated, the worker
+//! receives a separately provisioned read-only runtime root and no write authority.
 
 use std::{
     collections::BTreeMap,
@@ -22,7 +22,8 @@ use std::{
 use ed25519_dalek::{Signer, SigningKey};
 use klyn_sandbox::{
     broker::{BrokerConfig, Ed25519CapabilityVerifier, ResourceBroker, RevocationOracle},
-    supervisor::{launch_worker, SpawnedWorker, WorkerLaunchConfig},
+    kel,
+    supervisor::{launch_worker_with_kel, SpawnedWorker, WorkerLaunchConfig},
     validate_trusted_root, CapabilityClaims, FileAccess, FileGrant, ResourceBudget, SandboxError,
     SignedCapability, WorkerOperation, OCAP_VERSION,
 };
@@ -77,6 +78,7 @@ pub struct SandboxService {
     fs_service: Arc<FsService>,
     signing_key: SigningKey,
     revocations: Arc<dyn RevocationOracle>,
+    kel_directory: PathBuf,
 }
 
 impl SandboxService {
@@ -118,6 +120,7 @@ impl SandboxService {
             .into());
         }
         let broker_directory = ensure_private_directory(&config.broker_directory)?;
+        let kel_directory = ensure_private_directory(&broker_directory.join("kel"))?;
         let init_executable = fs::canonicalize(&config.init_executable)?;
 
         Ok(Self {
@@ -134,6 +137,7 @@ impl SandboxService {
             fs_service,
             signing_key,
             revocations,
+            kel_directory,
         })
     }
 
@@ -185,13 +189,13 @@ impl SandboxService {
             .as_secs();
         let sequence = NEXT_WORKER.fetch_add(1, Ordering::Relaxed);
         let token_id = format!("worker-{transaction_id}-{sequence:x}");
+        let session_id = kel::session_id_from_token_id(&token_id);
         let host_uid = nix::unistd::geteuid().as_raw();
         let host_gid = nix::unistd::getegid().as_raw();
         let expires_at_unix = now
             .checked_add(TOKEN_LIFETIME_SECONDS)
             .ok_or_else(|| SandboxError::InvalidConfig("capability expiry overflow".into()))?;
 
-        let telemetry_budget = budget.clone();
         let claims = CapabilityClaims {
             version: OCAP_VERSION,
             token_id,
@@ -217,6 +221,7 @@ impl SandboxService {
             .config
             .broker_directory
             .join(format!("{worker_id}.sock"));
+        let kel_path = self.kel_directory.join(format!("{worker_id}.kel"));
         let roots = BTreeMap::from([(
             "runtime".to_owned(),
             self.config.trusted_read_only_root.clone(),
@@ -239,7 +244,7 @@ impl SandboxService {
             .spawn(move || broker.serve_until(thread_stop))
             .map_err(|_| SandboxServiceError::BrokerThreadStart)?;
 
-        let launch = launch_worker(
+        let launch = launch_worker_with_kel(
             WorkerLaunchConfig {
                 init_executable: self.config.init_executable.clone(),
                 worker_executable: self.config.worker_executable.clone(),
@@ -251,28 +256,29 @@ impl SandboxService {
                 cpu_weight: self.config.cpu_weight,
             },
             &self.signing_key,
+            &kel_path,
+            session_id,
         );
 
         match launch {
             Ok(worker) => {
-                let telemetry = match klyn_sandbox::telemetry::WorkerTelemetry::start(
-                    worker.cgroup_path(),
-                    worker.pid(),
-                    telemetry_budget,
-                ) {
-                    Ok(telemetry) => telemetry,
-                    Err(error) => {
+                let kel_journal = match worker.kel_recorder() {
+                    Some(journal) => journal,
+                    None => {
                         drop(worker);
                         stop.store(true, Ordering::Release);
                         let _ = broker_thread.join();
-                        return Err(error.into());
+                        return Err(SandboxError::Enforcement(
+                            "KEL-bound supervisor returned a worker without a journal".into(),
+                        )
+                        .into());
                     }
                 };
+                drop(kel_journal);
                 Ok(ManagedSandboxedWorker {
                     worker: Some(worker),
                     stop,
                     broker_thread: Some(broker_thread),
-                    telemetry: Some(telemetry),
                 })
             }
             Err(error) => {
@@ -288,7 +294,6 @@ pub struct ManagedSandboxedWorker {
     worker: Option<SpawnedWorker>,
     stop: Arc<AtomicBool>,
     broker_thread: Option<JoinHandle<Result<(), SandboxError>>>,
-    telemetry: Option<klyn_sandbox::telemetry::WorkerTelemetry>,
 }
 
 impl ManagedSandboxedWorker {
@@ -335,16 +340,28 @@ impl ManagedSandboxedWorker {
         Ok(status)
     }
 
+    /// Latest verified KEL session/sequence/root for a TPM, HSM, or remote
+    /// append-only anchor. This method does not itself persist an external anchor.
+    pub fn kel_head_snapshot(
+        &self,
+    ) -> Result<Option<klyn_sandbox::kel::KelHeadSnapshot>, SandboxServiceError> {
+        self.worker
+            .as_ref()
+            .ok_or(SandboxServiceError::WorkerFinished)?
+            .kel_head_snapshot()
+            .map_err(SandboxServiceError::from)
+    }
+
     /// Receive one bounded asynchronous kernel/cgroup telemetry event.
     pub fn try_telemetry_event(&self) -> Option<klyn_sandbox::telemetry::TelemetryEvent> {
-        self.telemetry
+        self.worker
             .as_ref()
-            .and_then(|telemetry| telemetry.try_recv())
+            .and_then(SpawnedWorker::try_telemetry_event)
     }
 
     fn stop_telemetry(&mut self) -> Result<(), SandboxServiceError> {
-        if let Some(mut telemetry) = self.telemetry.take() {
-            telemetry.stop_and_join()?;
+        if let Some(worker) = self.worker.as_mut() {
+            worker.stop_telemetry()?;
         }
         Ok(())
     }
@@ -362,9 +379,10 @@ impl ManagedSandboxedWorker {
 
 impl Drop for ManagedSandboxedWorker {
     fn drop(&mut self) {
-        // Kill the cgroup before joining its monitor and broker threads.
-        self.worker.take();
+        // Stop monitoring before intentional teardown so process exit cannot be
+        // misclassified as an anomaly after the terminal KEL event is appended.
         let _ = self.stop_telemetry();
+        self.worker.take();
         self.stop.store(true, Ordering::Release);
         if let Some(thread) = self.broker_thread.take() {
             let _ = thread.join();
