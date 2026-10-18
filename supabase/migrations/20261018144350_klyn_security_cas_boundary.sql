@@ -1,3 +1,4 @@
+
 BEGIN;
 
 -- 1. Restrict public.bugs to service_role at both RLS-policy and SQL-grant layers.
