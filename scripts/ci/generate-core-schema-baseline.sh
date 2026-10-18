@@ -14,7 +14,7 @@ mkdir -p "$(dirname "$out")"
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 
-pg_dump "$DATABASE_URL"   --schema-only   --no-owner   --no-privileges   --schema=public   --schema=private   --file="$tmp"
+pg_dump "$DATABASE_URL"   --schema-only   --no-owner   --no-privileges   --schema=public   --schema=private   --schema=extensions   --file="$tmp"
 
 [[ -s "$tmp" ]] || { echo "pg_dump produced an empty schema snapshot" >&2; exit 1; }
 
