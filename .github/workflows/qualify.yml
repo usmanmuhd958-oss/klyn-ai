@@ -56,7 +56,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          pattern='(sb_secret_[A-Za-z0-9]{20,}|eyJ[A-Za-z0-9_-]{16,}\.eyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|postgres(ql)?://[^[:space:]/]+:[^<@[:space:]][^@[:space:]]*@|SUPABASE_SERVICE_ROLE_KEY[[:space:]]*=[[:space:]]*[^<[:space:]])'
+          pattern='(sb_secret_[A-Za-z0-9]{20,}|eyJ[A-Za-z0-9_-]{16,}\.eyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|postgres(ql)?://[^[:space:]/]+:[^<@[:space:]][^@[:space:]]*@|SUPABASE_SERVICE_ROLE_KEY[[:space:]]*=[[:space:]]*(eyJ[A-Za-z0-9_-]{20,}|sb_secret_[A-Za-z0-9]{20,}))'
           if git grep -I -l -E "$pattern" -- . ':(exclude)**/*.lock'; then
             echo "::error::Potential credential material found in tracked files."
             exit 1
