@@ -1,4 +1,4 @@
-import { createDatabaseClient } from "@klyn/database";
+import { createDatabaseClient } from "@klyn/db-client";
 
 export type ExecutionStatus = "pending" | "queued" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
 export type AgentLogLevel = "debug" | "info" | "warn" | "error";
