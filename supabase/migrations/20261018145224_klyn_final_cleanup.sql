@@ -1,3 +1,4 @@
+
 BEGIN;
 
 -- Guard against accidentally dropping a table that gained data after inspection.
