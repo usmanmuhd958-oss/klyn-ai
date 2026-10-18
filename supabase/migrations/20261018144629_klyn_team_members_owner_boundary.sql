@@ -1,3 +1,4 @@
+
 BEGIN;
 
 CREATE OR REPLACE FUNCTION private.klyn_is_org_owner(p_org_id uuid)
