@@ -7,8 +7,9 @@
 use std::{collections::BTreeMap, os::fd::RawFd, path::PathBuf};
 
 use landlock::{
-    make_bitflags, AccessFs, CompatLevel, PathBeneath, PathFd, RestrictSelfAttr, RestrictionStatus,
-    Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus, ABI,
+    make_bitflags, Access, AccessFs, CompatLevel, Compatible, PathBeneath, PathFd,
+    RestrictSelfAttr, RestrictionStatus, Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus,
+    ABI,
 };
 use seccompiler::{
     BpfProgram, SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition, SeccompFilter,
@@ -17,7 +18,7 @@ use seccompiler::{
 
 use crate::{validate_relative_path, CapabilityClaims, FileAccess, SandboxError, BROKER_FD};
 
-/// Apply a hard-required ABI-v3 Landlock ruleset.
+/// Apply a hard-required ABI-v8 Landlock ruleset.
 ///
 /// Roots must be daemon-controlled mappings from OCap root IDs to trusted
 /// directory paths. Grant paths that traverse symlinks are rejected.
@@ -26,7 +27,7 @@ pub fn apply_landlock(
     roots: &BTreeMap<String, PathBuf>,
 ) -> Result<RestrictionStatus, SandboxError> {
     claims.validate()?;
-    let abi = ABI::V3;
+    let abi = ABI::V8;
     let mut ruleset = Ruleset::default()
         .set_compatibility(CompatLevel::HardRequirement)
         .handle_access(AccessFs::from_all(abi))

@@ -14,7 +14,7 @@ use std::{
     os::{
         fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
         unix::{
-            fs::{FileTypeExt, MetadataExt, OpenOptionsExt},
+            fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
             net::{UnixListener, UnixStream},
         },
     },
@@ -93,14 +93,14 @@ pub struct ResourceBroker {
     queue_capacity: usize,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BrokerRequest {
     capability: SignedCapability,
     operation: BrokerOperation,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 enum BrokerOperation {
     OpenFile {
@@ -613,36 +613,61 @@ impl BrokerClient {
 
 fn receive_fd(socket: RawFd) -> io::Result<OwnedFd> {
     let mut marker = [0u8; 1];
-    let mut iov = [io::IoSliceMut::new(&mut marker)];
-    let mut cmsgspace = nix::cmsg_space!([RawFd; 8]);
-    let msg = recvmsg::<()>(
-        socket,
-        &mut iov,
-        Some(&mut cmsgspace),
-        MsgFlags::MSG_CMSG_CLOEXEC,
-    )
-    .map_err(io::Error::from)?;
-    if msg.flags.contains(MsgFlags::MSG_CTRUNC) || msg.bytes != 1 || marker[0] != b'F' {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "invalid SCM_RIGHTS marker or truncated control data",
-        ));
-    }
-    let mut received = Vec::new();
-    for cmsg in msg.cmsgs().map_err(io::Error::from)? {
-        if let ControlMessageOwned::ScmRights(fds) = cmsg {
-            for raw in fds {
-                received.push(unsafe { OwnedFd::from_raw_fd(raw) });
+    let mut received: Vec<OwnedFd> = Vec::new();
+
+    let (bytes, flags, unexpected_control) = {
+        let mut iov = [io::IoSliceMut::new(&mut marker)];
+        let mut cmsgspace = nix::cmsg_space!([RawFd; 8]);
+
+        let msg = recvmsg::<()>(
+            socket,
+            &mut iov,
+            Some(&mut cmsgspace),
+            MsgFlags::MSG_CMSG_CLOEXEC,
+        )
+        .map_err(io::Error::from)?;
+
+        let bytes = msg.bytes;
+        let flags = msg.flags;
+        let mut unexpected_control = false;
+
+        for cmsg in msg.cmsgs().map_err(io::Error::from)? {
+            match cmsg {
+                ControlMessageOwned::ScmRights(fds) => {
+                    for raw in fds {
+                        // Own received descriptors immediately. RAII closes
+                        // them if a later validation check fails.
+                        received.push(unsafe { OwnedFd::from_raw_fd(raw) });
+                    }
+                }
+                _ => unexpected_control = true,
             }
         }
+
+        (bytes, flags, unexpected_control)
+    };
+
+    // The iovec borrow has ended; marker can now be inspected.
+    if unexpected_control
+        || flags.contains(MsgFlags::MSG_CTRUNC)
+        || flags.contains(MsgFlags::MSG_TRUNC)
+        || bytes != 1
+        || marker[0] != b'F'
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid SCM_RIGHTS marker or unexpected/truncated control data",
+        ));
     }
+
     if received.len() != 1 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "broker must transfer exactly one descriptor",
         ));
     }
-    Ok(received.pop().expect("length checked"))
+
+    Ok(received.pop().expect("descriptor count checked"))
 }
 
 #[cfg(test)]
