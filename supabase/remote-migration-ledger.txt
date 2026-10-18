@@ -1,0 +1,18 @@
+# Read-only snapshot of supabase_migrations.schema_migrations for
+# project fxuiljecdjgyffkjzqzl, inspected on 2026-10-18.
+# This version list is a parity target, not evidence that historical SQL files exist.
+001
+002
+003
+004
+005
+006
+007
+008
+20260915063124
+20260915163336
+20260915202015
+20261018144350
+20261018144629
+20261018145224
+20261018151415

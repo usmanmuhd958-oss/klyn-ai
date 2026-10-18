@@ -1,55 +1,45 @@
-# ===============================
-# KLYN AI OS Enterprise Ignore
-# ===============================
-
-# Build outputs & cache
+# Node / frontend build artifacts
+node_modules/
 .next/
 dist/
 build/
 .turbo/
-node_modules/
-*.log
+coverage/
+*.tsbuildinfo
 
-# Environment secrets
+# Rust build outputs
+target/
+
+# Environment secrets: keep .env.example tracked and all real .env files ignored.
 .env
-.env.local
 .env.*
 !.env.example
 
-# Runtime logs
+# Runtime logs and ephemeral state
+*.log
 klyn-runtime.log
+.klyn/
+.vercel/
 
-# Native build outputs
-target/
-
-# Backups
+# Backups and editor temporaries; review tracked historical files separately.
 backups/
 *.backup
-bin/*.backup
-
-# Generated dumps
-dump_*.sh
-*.dump
-
-# Repository intelligence exports
-repomix-output.xml
-klyn-codebase.txt
-klyn-codebase-lean.txt
-
-# KLYN internal runtime cache
-.klyn/
-
-# Temporary files
+*.save
 *.tmp
 *.temp
 *.swp
 .DS_Store
 
-# Coverage
-coverage/
-
-# TypeScript cache
-*.tsbuildinfo
+# Generated dumps / archives / repository exports
+dump_*.sh
+*.dump
 *.zip
-.vercel
-.env*
+repomix-output.xml
+repomix-output.xml.gz
+klyn-codebase.txt
+klyn-codebase-lean.txt
+
+# Generated repository-dump artifacts (recreated by scripts/find_and_prep.sh)
+darepomix-output.xml
+darepomix-output.xml.gz
+xml_chunks/

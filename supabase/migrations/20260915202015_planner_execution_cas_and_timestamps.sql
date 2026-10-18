@@ -35,20 +35,17 @@ $$;
 drop trigger if exists planner_execution_states_updated_at on public.planner_execution_states;
 create trigger planner_execution_states_updated_at
 before update on public.planner_execution_states
-for each row
-execute function public.touch_planner_execution_updated_at();
+for each row execute function public.touch_planner_execution_updated_at();
 
 drop trigger if exists planner_execution_states_version_guard on public.planner_execution_states;
 create trigger planner_execution_states_version_guard
 before update on public.planner_execution_states
-for each row
-execute function public.enforce_planner_execution_version();
+for each row execute function public.enforce_planner_execution_version();
 
 drop trigger if exists task_graph_batches_updated_at on public.task_graph_batches;
 create trigger task_graph_batches_updated_at
 before update on public.task_graph_batches
-for each row
-execute function public.touch_planner_execution_updated_at();
+for each row execute function public.touch_planner_execution_updated_at();
 
 revoke execute on function public.touch_planner_execution_updated_at() from public, anon, authenticated;
 revoke execute on function public.enforce_planner_execution_version() from public, anon, authenticated;

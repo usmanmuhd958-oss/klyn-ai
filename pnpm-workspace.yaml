@@ -6,7 +6,7 @@ packages:
   - "packages/ai-engine"
   - "packages/autonomy"
   - "packages/cognitive-engine"
-  - "packages/database"
+  - "packages/db-client"
   - "packages/evolution-controller"
   - "packages/execution-runtime"
   - "packages/governance"

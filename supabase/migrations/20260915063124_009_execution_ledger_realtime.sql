@@ -68,12 +68,10 @@ alter table public.provider_telemetry enable row level security;
 do $$
 begin
   if not exists (select 1 from pg_trigger where tgname = 'executions_set_updated_at') then
-    begin
-      create trigger executions_set_updated_at before update on public.executions for each row execute function public.update_updated_at_column();
-    exception when undefined_function then
-      null;
-    end;
+    create trigger executions_set_updated_at before update on public.executions for each row execute function public.update_updated_at_column();
   end if;
+exception when undefined_function then
+  null;
 end $$;
 
 do $$
