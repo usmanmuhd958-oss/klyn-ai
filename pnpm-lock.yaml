@@ -54,9 +54,9 @@ importers:
       '@klyn/ai-engine':
         specifier: workspace:*
         version: link:../../packages/ai-engine
-      '@klyn/database':
+      '@klyn/db-client':
         specifier: workspace:*
-        version: link:../../packages/database
+        version: link:../../packages/db-client
       '@klyn/execution-runtime':
         specifier: workspace:*
         version: link:../../packages/execution-runtime
@@ -142,7 +142,7 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
-  packages/database:
+  packages/db-client:
     dependencies:
       '@supabase/supabase-js':
         specifier: ^2.57.0
